@@ -1,0 +1,28 @@
+# 敏感配置
+.env
+
+# 运行数据
+data/
+memes/
+
+# NapCat 配置
+napcat/config/
+napcat/qq/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Docker
+*.log
+
+# claude code
+.claude/settings.local.json
+.codegraph/

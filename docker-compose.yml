@@ -1,0 +1,48 @@
+version: "3.8"
+
+services:
+  napcat:
+    image: mlikiowa/napcat-docker:latest
+    container_name: qq-meme-napcat
+    restart: always
+    environment:
+      - ACCOUNT=${QQ_ACCOUNT:?请设置 QQ_ACCOUNT 环境变量}
+      - WS_ENABLE=true
+      - WS_PORT=3001
+      - TZ=Asia/Shanghai
+    ports:
+      - "6099:6099"
+    volumes:
+      - ./napcat/config:/app/napcat/config
+      - ./napcat/qq:/app/.config/QQ
+    networks:
+      - meme-bot-net
+
+  bot:
+    build:
+      context: ./bot
+      dockerfile: Dockerfile
+    container_name: qq-meme-bot
+    restart: always
+    depends_on:
+      - napcat
+    environment:
+      - BOT_HOST=0.0.0.0
+      - BOT_PORT=${BOT_PORT:-8080}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:?请设置 DEEPSEEK_API_KEY 环境变量}
+      - DEEPSEEK_BASE_URL=https://api.deepseek.com
+      - DEEPSEEK_MODEL=deepseek-chat
+      - SILICONFLOW_API_KEY=${SILICONFLOW_API_KEY:?请设置 SILICONFLOW_API_KEY 环境变量}
+      - SILICONFLOW_BASE_URL=https://api.siliconflow.cn/v1
+      - SILICONFLOW_EMBEDDING_MODEL=Qwen/Qwen3-Embedding-8B
+      - LOG_LEVEL=INFO
+      - TZ=Asia/Shanghai
+    volumes:
+      - ./memes:/app/memes
+      - ./data:/app/data
+    networks:
+      - meme-bot-net
+
+networks:
+  meme-bot-net:
+    driver: bridge
