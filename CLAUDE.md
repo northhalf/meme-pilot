@@ -5,6 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 必读文档
 
 - 修改需求、架构、命令交互、索引格式或权限逻辑前，必须先查看 `docs/PRD.md`。
+- 当每实现一个模块后，需要将其添加到`docs/process.md`中。
 - 修改术语、领域概念或用户可见命名时，必须查看 `CONTEXT.md` 并保持术语一致。
 - 修改部署、环境变量或用户操作说明时，同时检查 `README.md`、`.env.example` 和 `docker-compose.yml`。
 
@@ -57,17 +58,17 @@ docker compose up -d bot
 
 ### 本地安装 Python 依赖
 
-项目 Python 依赖在 `bot/requirements.txt`。本地开发优先使用 `uv`：
+本地开发优先使用 `uv`，`python`版本为`3.12`：
 
 ```bash
-uv venv
-uv pip install -r bot/requirements.txt
+uv add <包名>         # 添加包依赖
+uv add --dev pytest  # 开发依赖(测试框架)
 ```
 
 如环境尚未安装 `uv`，先安装：
 
 ```bash
-pip install uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
 用途：`uv` 用于创建虚拟环境并安装 Python 依赖。
