@@ -148,7 +148,14 @@ class IndexManager:
         _embeddings_stale: embedding 是否需要重建。
         _lock: 写操作异步锁。
         index_version: 索引版本号。
+
+    Class Attributes:
+        SUPPORTED_EXTENSIONS: 支持的图片扩展名集合。
     """
+
+    SUPPORTED_EXTENSIONS: frozenset[str] = frozenset(
+        {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
+    )
 
     def __init__(
         self,
@@ -215,9 +222,7 @@ class IndexManager:
             raw = index_path.read_text(encoding="utf-8")
             data = ujson.loads(raw)
         except (ValueError, UnicodeDecodeError) as exc:
-            raise IndexCorruptedError(
-                f"index.json 解析失败: {exc}"
-            ) from exc
+            raise IndexCorruptedError(f"index.json 解析失败: {exc}") from exc
 
         self.validate_index(data)
 
@@ -226,9 +231,7 @@ class IndexManager:
 
         for entry_id, entry in entries.items():
             if not isinstance(entry, dict):
-                raise IndexCorruptedError(
-                    f"entry '{entry_id}' 不是有效的字典对象"
-                )
+                raise IndexCorruptedError(f"entry '{entry_id}' 不是有效的字典对象")
             for field in ("filename", "text", "text_hash"):
                 if field not in entry:
                     raise IndexCorruptedError(
@@ -444,9 +447,7 @@ class IndexManager:
         """
         emb_path = self._data_dir / "embeddings.json"
         self._atomic_write(emb_path, self._embeddings)
-        logger.info(
-            "embeddings.json 已保存，共 %d 条记录", len(self._embeddings)
-        )
+        logger.info("embeddings.json 已保存，共 %d 条记录", len(self._embeddings))
         self._embeddings_stale = False
 
     # ------------------------------------------------------------------
@@ -548,10 +549,6 @@ class IndexManager:
     # 文件系统同步
     # ------------------------------------------------------------------
 
-    SUPPORTED_EXTENSIONS: frozenset[str] = frozenset(
-        {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
-    )
-
     async def sync_with_filesystem(self) -> SyncResult:
         """按文件名同步索引与 memes/ 目录。
 
@@ -572,8 +569,7 @@ class IndexManager:
         existing_files: set[str] = {
             f.name
             for f in self._memes_dir.iterdir()
-            if f.is_file()
-            and f.suffix.lower() in self.SUPPORTED_EXTENSIONS
+            if f.is_file() and f.suffix.lower() in self.SUPPORTED_EXTENSIONS
         }
 
         # 构建文件名 → id 映射
@@ -594,9 +590,7 @@ class IndexManager:
                 deleted_count += 1
 
         # 2. 找出新增图片（按文件名升序）
-        new_files = sorted(
-            f for f in existing_files if f not in filename_to_id
-        )
+        new_files = sorted(f for f in existing_files if f not in filename_to_id)
 
         added_count = 0
         failed: list[str] = []
@@ -627,7 +621,9 @@ class IndexManager:
                     "embedding": embedding,
                 }
                 added_count += 1
-                logger.info("新增图片已加入索引: id=%s, filename=%s", entry_id, filename)
+                logger.info(
+                    "新增图片已加入索引: id=%s, filename=%s", entry_id, filename
+                )
 
             except Exception as exc:
                 logger.error("处理图片失败: filename=%s, error=%s", filename, exc)

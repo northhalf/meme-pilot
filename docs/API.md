@@ -416,7 +416,11 @@ class IndexProvider(Protocol):
 
 ### 3.1 模块级函数
 
-#### `setup_logging() -> None`
+#### `setup_logging(log_dir: str = "log") -> None`
+
+| 参数 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `log_dir` | `str` | `"log"` | 日志目录路径 |
 
 | | 类型 | 说明 |
 |--|------|------|
@@ -427,10 +431,10 @@ class IndexProvider(Protocol):
 
 | 处理器 | 目标 | 级别 | 格式 |
 |--------|------|------|------|
-| `RotatingFileHandler` | `log/bot.log`（≤1MB，保留 1 个备份） | DEBUG | `时间 - 模块名 - 级别 - 消息` |
+| `RotatingFileHandler` | `<log_dir>/bot.log`（≤1MB，保留 1 个备份） | DEBUG | `时间 - 模块名 - 级别 - 消息` |
 | `StreamHandler` | stdout | INFO | `时间 - 模块名 - 级别 - 消息` |
 
-启动时调用一次。自动创建 `log/` 目录。
+启动时调用一次。自动创建 `<log_dir>` 目录。
 
 ---
 

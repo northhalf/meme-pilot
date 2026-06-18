@@ -714,8 +714,8 @@ class TestSyncWithFilesystem:
 
         # 使用 mock OCR/embedding provider
         class MockOcr:
-            async def ocr(self, path: str) -> str:
-                return f"text of {Path(path).name}"
+            async def ocr(self, image_path: str) -> str:
+                return f"text of {Path(image_path).name}"
 
         class MockEmbed:
             async def embed(self, text: str) -> list[float]:
@@ -819,7 +819,7 @@ class TestSyncWithFilesystem:
         )
 
         class MockOcr:
-            async def ocr(self, path: str) -> str:
+            async def ocr(self, image_path: str) -> str:
                 return "new text"
 
         class MockEmbed:
@@ -872,7 +872,7 @@ class TestSyncWithFilesystem:
         call_count = 0
 
         class CountingOcr:
-            async def ocr(self, path: str) -> str:
+            async def ocr(self, image_path: str) -> str:
                 nonlocal call_count
                 call_count += 1
                 return "should not be called"
@@ -909,8 +909,8 @@ class TestSyncWithFilesystem:
         )
 
         class FailingOcr:
-            async def ocr(self, path: str) -> str:
-                if "bad" in path:
+            async def ocr(self, image_path: str) -> str:
+                if "bad" in image_path:
                     raise RuntimeError("OCR failed")
                 return "good text"
 
@@ -959,8 +959,8 @@ class TestSyncWithFilesystem:
         processed_order: list[str] = []
 
         class OrderedOcr:
-            async def ocr(self, path: str) -> str:
-                processed_order.append(Path(path).name)
+            async def ocr(self, image_path: str) -> str:
+                processed_order.append(Path(image_path).name)
                 return "text"
 
         class MockEmbed:
