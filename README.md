@@ -91,6 +91,9 @@ docker compose up -d
 
 # 5. 查看日志
 docker compose logs -f bot
+
+# 日志同时写入 log/bot.log（滚动日志，单文件 <= 1MB，最多保留 1 个备份 bot.log.1）
+# 文件日志级别为 DEBUG，控制台为 INFO
 ```
 
 首次启动会自动扫描 `memes/` 目录中的图片，用 PaddleOCR 提取文字并建立索引。
@@ -163,6 +166,9 @@ meme-pilot/
 ├── data/                    # 索引数据
 │   ├── index.json
 │   └── embeddings.json
+├── log/                     # 日志目录（Docker 卷挂载）
+│   ├── bot.log              # 当前日志（<= 1MB）
+│   └── bot.log.1            # 上一份日志备份
 ├── tests/                   # 测试目录规划
 │   ├── unit/                # 单元测试
 │   │   ├── engine/
@@ -174,6 +180,7 @@ meme-pilot/
     ├── requirements.txt
     ├── bot.py               # 入口
     ├── config.py            # 配置读取
+    ├── logging_config.py    # 日志滚动配置
     ├── plugins/
     │   ├── meme_search.py   # /search 命令
     │   ├── meme_ai.py       # /ai 命令

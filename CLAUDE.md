@@ -2,10 +2,15 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 严禁事项
+
+- 禁止自行 `git add` 或 `git commit`，此操作必须由用户审核和确定。
+- 在撰写完 specs 之后不可跳过用户审阅步骤，设计文档必须由用户确认。
+
 ## 必读文档
 
 - 修改需求、架构、命令交互、索引格式或权限逻辑前，必须先查看 `docs/PRD.md`。
-- 当每实现一个模块后，需要将其添加到`docs/process.md`中。
+- 当每实现一个模块后，需要将其添加到`docs/process.md`中，只需简要说明实现了哪一个模块。
 - 修改术语、领域概念或用户可见命名时，必须查看 `CONTEXT.md` 并保持术语一致。
 - 修改部署、环境变量或用户操作说明时，同时检查 `README.md`、`.env.example` 和 `docker-compose.yml`。
 
@@ -110,7 +115,6 @@ uv run python -m compileall bot
 - `DEEPSEEK_MODEL`。
 - `SILICONFLOW_BASE_URL`。
 - `SILICONFLOW_EMBEDDING_MODEL`，v1.0 默认 `Qwen/Qwen3-Embedding-8B`。
-- `LOG_LEVEL`。
 
 ## 系统架构概览
 
@@ -127,6 +131,7 @@ uv run python -m compileall bot
 - `memes/`：本地表情包图片文件。
 - `data/index.json`：用户可维护主索引，保存 id、文件名、OCR 文本和 `text_hash`。
 - `data/embeddings.json`：系统生成的向量索引，不建议手动编辑。
+- `log/bot.log`：滚动日志文件，同时输出到 stdout（`docker compose logs` 可查看）。单文件上限 1 MB，保留 1 个备份 `bot.log.1`。stdout 级别 INFO，文件级别 DEBUG。
 
 隐私边界：表情包图片始终本地存储；OCR 文本会按功能需要发送给 SiliconFlow 和 DeepSeek。
 

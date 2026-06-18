@@ -15,6 +15,7 @@ __pycache__/
 *.pyo
 .venv/
 venv/
+.pytest_cache/
 
 # IDE
 .vscode/
@@ -22,6 +23,9 @@ venv/
 
 # Docker
 *.log
+
+# 日志目录
+log/
 
 # claude code
 .claude/settings.local.json
