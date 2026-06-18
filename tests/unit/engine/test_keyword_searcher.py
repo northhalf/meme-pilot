@@ -23,32 +23,32 @@ class MockIndex:
 def sample_entries() -> dict[str, dict[str, str]]:
     """标准测试用的表情包索引数据。"""
     return {
-        "001": {
+        "1": {
             "filename": "cat.jpg",
             "text": "一只猫在跳起来抓蝴蝶 哈哈哈",
             "text_hash": "sha256:abc",
         },
-        "002": {
+        "2": {
             "filename": "overtime.jpg",
             "text": "加班到凌晨三点的我",
             "text_hash": "sha256:def",
         },
-        "003": {
+        "3": {
             "filename": "suspect.jpg",
             "text": "人家一片热忱 你怎能以小人之心 度君子之腹呢",
             "text_hash": "sha256:ghi",
         },
-        "004": {
+        "4": {
             "filename": "empty.jpg",
             "text": "",
             "text_hash": "sha256:jkl",
         },
-        "005": {
+        "5": {
             "filename": "boss.jpg",
             "text": "当你的老板说今天要加班",
             "text_hash": "sha256:mno",
         },
-        "006": {
+        "6": {
             "filename": "sunday.jpg",
             "text": "周日晚上的加班通知",
             "text_hash": "sha256:pqr",
@@ -68,12 +68,12 @@ class TestSearchResult:
     def test_create(self) -> None:
         """验证创建 SearchResult 实例。"""
         r = SearchResult(
-            entry_id="001",
+            entry_id="1",
             filename="cat.jpg",
             text="一只猫",
             similarity=85.5,
         )
-        assert r.entry_id == "001"
+        assert r.entry_id == "1"
         assert r.filename == "cat.jpg"
         assert r.text == "一只猫"
         assert r.similarity == 85.5
@@ -110,7 +110,7 @@ class TestSearchExactSubstring:
         """短关键词应命中长 OCR 文本中的连续子串。"""
         results = searcher.search("小人之心")
         assert len(results) == 1
-        assert results[0].entry_id == "003"
+        assert results[0].entry_id == "3"
         assert results[0].similarity == 100.0
 
     def test_keyword_hits_multiple(self, searcher: KeywordSearcher) -> None:
@@ -119,13 +119,13 @@ class TestSearchExactSubstring:
         assert len(results) == 3
         assert all(r.similarity == 100.0 for r in results)
         ids = {r.entry_id for r in results}
-        assert ids == {"002", "005", "006"}
+        assert ids == {"2", "5", "6"}
 
     def test_full_text_match(self, searcher: KeywordSearcher) -> None:
         """关键词与 OCR 文本完全相同时，应返回 100 分。"""
         results = searcher.search("加班到凌晨三点的我")
         assert len(results) == 1
-        assert results[0].entry_id == "002"
+        assert results[0].entry_id == "2"
         assert results[0].similarity == 100.0
 
 
@@ -136,7 +136,7 @@ class TestSearchFuzzy:
         """关键词与 OCR 文本部分重叠，应命中但分数低于 100。"""
         results = searcher.search("猫抓蝴蝶")
         assert len(results) == 1
-        assert results[0].entry_id == "001"
+        assert results[0].entry_id == "1"
         assert 60.0 <= results[0].similarity < 100.0
 
     def test_typo_keyword(self, searcher: KeywordSearcher) -> None:
@@ -169,8 +169,8 @@ class TestSearchEdgeCases:
     def test_entries_with_all_empty_text(self) -> None:
         """所有条目 text 为空时返回空列表。"""
         entries = {
-            "001": {"filename": "a.jpg", "text": "", "text_hash": "x"},
-            "002": {"filename": "b.jpg", "text": "   ", "text_hash": "y"},
+            "1": {"filename": "a.jpg", "text": "", "text_hash": "x"},
+            "2": {"filename": "b.jpg", "text": "   ", "text_hash": "y"},
         }
         s = KeywordSearcher(MockIndex(entries))
         assert s.search("加班") == []
@@ -178,7 +178,7 @@ class TestSearchEdgeCases:
     def test_below_threshold_filtered(self) -> None:
         """相似度低于阈值的条目应被过滤。"""
         entries = {
-            "001": {"filename": "x.jpg", "text": "今天天气真好", "text_hash": "a"},
+            "1": {"filename": "x.jpg", "text": "今天天气真好", "text_hash": "a"},
         }
         s = KeywordSearcher(MockIndex(entries), threshold=90.0)
         # "加班" vs "今天天气真好" partial_ratio 远低于 90
@@ -187,7 +187,7 @@ class TestSearchEdgeCases:
     def test_threshold_boundary(self) -> None:
         """相似度等于阈值时应被保留。"""
         entries = {
-            "001": {"filename": "x.jpg", "text": "abc", "text_hash": "a"},
+            "1": {"filename": "x.jpg", "text": "abc", "text_hash": "a"},
         }
         # partial_ratio("ab", "abc") = 100 or close to 100
         # Let's test boundary more precisely
@@ -203,7 +203,7 @@ class TestSearchEdgeCases:
         # "当你的老板说今天要加班" 是长关键词的子串 → 100 分
         results = searcher.search("当你的老板说今天要加班而且不给加班费")
         assert len(results) == 1
-        assert results[0].entry_id == "005"
+        assert results[0].entry_id == "5"
         assert results[0].similarity == 100.0
 
 
@@ -219,7 +219,7 @@ class TestSearchResultOrder:
     def test_limit_truncation(self) -> None:
         """超过 limit 的结果应被截断。"""
         entries = {
-            str(i).zfill(3): {
+            str(i): {
                 "filename": f"meme_{i}.jpg",
                 "text": f"加班第{i}天",
                 "text_hash": "x",

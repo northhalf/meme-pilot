@@ -15,7 +15,7 @@
 ```python
 @dataclass
 class SearchResult:
-    entry_id: str      # 索引 id，如 "001"
+    entry_id: str      # 索引 id，如 "1"
     filename: str      # 文件名，如 "cat_jump.jpg"
     text: str          # OCR 文本
     similarity: float  # 相似度 0-100

@@ -145,7 +145,7 @@ ws://bot:8080/onebot/v11/ws
 {
   "version": 1,
   "entries": {
-    "001": {
+    "1": {
       "filename": "cat_jump.jpg",
       "text": "一只猫抓蝴蝶 哈哈哈",
       "text_hash": "sha256:..."

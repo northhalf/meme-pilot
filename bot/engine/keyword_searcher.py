@@ -23,7 +23,7 @@ class IndexProvider(Protocol):
         """返回 index.json 中的 entries 字典。
 
         Returns:
-            key 为索引 id（如 "001"），value 为包含 filename、text、text_hash 的字典。
+            key 为索引 id（如 "1"），value 为包含 filename、text、text_hash 的字典。
         """
         ...
 
@@ -33,7 +33,7 @@ class SearchResult:
     """单条关键词搜索结果。
 
     Attributes:
-        entry_id: 索引 id，如 "001"。
+        entry_id: 索引 id，如 "1"。
         filename: 表情包文件名，如 "cat_jump.jpg"。
         text: OCR 文本。
         similarity: 相似度分数，0-100。

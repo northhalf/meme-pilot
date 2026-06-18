@@ -10,9 +10,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 必读文档
 
 - 修改需求、架构、命令交互、索引格式或权限逻辑前，必须先查看 `docs/PRD.md`。
-- 当每实现一个模块后，需要将其添加到`docs/process.md`中，只需简要说明实现了哪一个模块。
 - 修改术语、领域概念或用户可见命名时，必须查看 `CONTEXT.md` 并保持术语一致。
 - 修改部署、环境变量或用户操作说明时，同时检查 `README.md`、`.env.example` 和 `docker-compose.yml`。
+- **优先查阅 `docs/API.md`**：编写调用已有模块的代码、新增模块间交互、或了解模块对外接口时，先查看 `docs/API.md` 中相关模块的参数签名和返回值说明，不要直接阅读大量源码。仅在 API 文档描述与实际行为不符、缺少所需信息、或需要查看具体实现细节时，才去读源代码。
+- 当每实现一个模块后，需要将其添加到`docs/process.md`中，只需简要说明实现了哪一个模块。并对`docs/API.md`进行更新，说明模块的对外接口。
 
 ## 代码风格要求
 
@@ -143,7 +144,7 @@ uv run python -m compileall bot
 {
   "version": 1,
   "entries": {
-    "001": {
+    "1": {
       "filename": "cat_jump.jpg",
       "text": "一只猫抓蝴蝶 哈哈哈",
       "text_hash": "sha256:..."
