@@ -177,7 +177,6 @@ meme-pilot/
 │   └── fixtures/            # 测试样本和基准数据
 └── bot/
     ├── Dockerfile
-    ├── requirements.txt
     ├── bot.py               # 入口
     ├── config.py            # 配置读取
     ├── logging_config.py    # 日志滚动配置

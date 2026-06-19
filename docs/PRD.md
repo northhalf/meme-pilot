@@ -411,7 +411,6 @@ meme-pilot/
 │       └── images/
 └── bot/
     ├── Dockerfile
-    ├── requirements.txt
     ├── bot.py                 # NoneBot2 入口
     ├── config.py              # 配置读取
     ├── logging_config.py      # 日志滚动配置（RotatingFileHandler + StreamHandler）
@@ -437,18 +436,22 @@ meme-pilot/
 
 ### bot 容器
 
-```txt
-# requirements.txt
-nonebot2>=2.3.0
-nonebot-adapter-onebot>=2.4.0
-paddlepaddle>=2.6.0
-paddleocr>=2.8.0
-rapidfuzz>=3.0.0
-# 图片无损压缩能力由实现阶段选择具体工具或库；需求要求支持 .jpg/.jpeg/.png/.webp/.gif 的无损压缩，.bmp 跳过压缩
-httpx>=0.27.0
-openai>=1.0.0             # DeepSeek 兼容 OpenAI SDK
-pydantic>=2.0.0
-python-dotenv>=1.0.0
+依赖由 `pyproject.toml` 管理，通过 `uv sync --no-dev` 安装：
+
+```toml
+[project]
+dependencies = [
+    "nonebot2>=2.3.0",
+    "nonebot-adapter-onebot>=2.4.0",
+    "paddlepaddle>=2.6.0",
+    "paddleocr>=2.8.0",
+    "rapidfuzz>=3.0.0",
+    "httpx>=0.27.0",
+    "openai>=1.0.0",             # DeepSeek 兼容 OpenAI SDK
+    "pydantic>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "ujson>=5.10.0",
+]
 ```
 
 ### 系统依赖（Dockerfile 中安装）

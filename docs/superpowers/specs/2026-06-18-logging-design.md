@@ -197,4 +197,4 @@ log/
 
 ## 9. 不依赖第三方库
 
-仅使用 Python 标准库 `logging` 和 `logging.handlers`，`requirements.txt` 无需新增依赖。
+仅使用 Python 标准库 `logging` 和 `logging.handlers`，`pyproject.toml` 无需新增依赖。
