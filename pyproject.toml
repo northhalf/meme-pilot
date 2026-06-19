@@ -5,6 +5,9 @@ description = "QQ 私聊表情包机器人"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "httpx>=0.28.1",
+    "openai>=2.43.0",
+    "python-dotenv>=1.2.2",
     "rapidfuzz>=3.14.5",
     "ujson>=5.13.0",
 ]

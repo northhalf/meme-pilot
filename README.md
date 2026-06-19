@@ -96,7 +96,7 @@ docker compose logs -f bot
 # 文件日志级别为 DEBUG，控制台为 INFO
 ```
 
-首次启动会自动扫描 `memes/` 目录中的图片，用 PaddleOCR 提取文字并建立索引。
+首次启动会自动扫描 `memes/` 目录中的图片，用 DeepSeek-OCR 提取文字并建立索引。
 
 ### 扫码登录与反向 WebSocket
 
@@ -188,7 +188,7 @@ meme-pilot/
     │   └── meme_refresh.py  # /refresh 命令
     └── engine/
         ├── image_optimizer.py   # 图片无损压缩
-        ├── ocr_service.py       # PaddleOCR
+        ├── ocr_service.py       # DeepSeek-OCR 封装（硅基流动 API）
         ├── index_manager.py     # 索引管理
         ├── keyword_searcher.py  # 模糊搜索
         └── ai_matcher.py        # DeepSeek AI 匹配
@@ -217,7 +217,7 @@ tests/
 
 - [NapCatQQ](https://github.com/NapNeko/NapCatQQ) — QQ 协议端 (9.4k ⭐)
 - [NoneBot2](https://github.com/nonebot/nonebot2) — 聊天机器人框架 (7.5k ⭐)
-- [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) — OCR 引擎
+- [DeepSeek-OCR](https://siliconflow.cn) — 视觉 OCR 模型（硅基流动）
 - [DeepSeek](https://platform.deepseek.com) — LLM 精排 API
 - [SiliconFlow](https://siliconflow.cn) — Embedding API，默认模型 `Qwen/Qwen3-Embedding-8B`
 - [rapidfuzz](https://github.com/maxbachmann/rapidfuzz) — 模糊字符串匹配

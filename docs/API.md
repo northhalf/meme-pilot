@@ -444,11 +444,85 @@ class IndexProvider(Protocol):
 
 ---
 
-## 4. 尚未实现的计划模块
+## 4. bot/engine/ocr_service.py — DeepSeek-OCR 模块
+
+### 4.1 DeepSeekOcrService 类
+
+实现 `index_manager.OcrProvider` 协议，通过硅基流动 chat completions API 调用 `deepseek-ocr` 模型进行图片文字识别。
+
+#### `__init__(api_key=None, base_url=None, model=None) -> None`
+
+| 参数 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `api_key` | `str \| None` | `None` | 硅基流动 API Key，默认从 `SILICONFLOW_API_KEY` 环境变量读取 |
+| `base_url` | `str \| None` | `None` | API 地址，默认从 `SILICONFLOW_BASE_URL` 环境变量读取，回退 `https://api.siliconflow.cn/v1` |
+| `model` | `str \| None` | `None` | OCR 模型名，默认从 `SILICONFLOW_OCR_MODEL` 环境变量读取，回退 `deepseek-ai/DeepSeek-OCR` |
+
+---
+
+#### `async ocr(image_path: str) -> str`
+
+| | 类型 | 说明 |
+|--|------|------|
+| **参数** `image_path` | `str` | 图片文件绝对路径 |
+| **返回** | `str` | 识别到的文本字符串 |
+| **异常** | `FileNotFoundError` | 图片文件不存在 |
+| | `ValueError` | 不支持的图片格式（不在 MIME_MAP 中） |
+| | `RuntimeError` | API 调用失败（网络异常、认证失败等） |
+
+行为：
+1. 检查文件是否存在
+2. 根据扩展名确定 MIME 类型，不支持则抛出 `ValueError`
+3. 读取图片二进制 → base64 编码 → 构造 data URL
+4. 通过 `AsyncOpenAI.chat.completions.create()` 调用硅基流动 vision API
+5. Prompt 使用 `"<image>\n<|grounding|>OCR this image."`
+6. 返回 `_clean_ocr_result(response.choices[0].message.content)` — 清洗定位标记，仅保留纯文本
+
+---
+
+### 4.2 模块级函数
+
+#### `_clean_ocr_result(raw: str) -> str`
+
+清洗 DeepSeek-OCR 原始输出。
+
+| | 类型 | 说明 |
+|--|------|------|
+| **参数** `raw` | `str` | DeepSeek-OCR 原始 API 输出，含 `<|ref|>` `<|/ref|>` `<|det|>` 等定位标记 |
+| **返回** | `str` | 提取纯文本，多段之间用空格连接 |
+
+```python
+_clean_ocr_result("<|ref|>不可惊扰<|/ref|><|det|>[[...]]<|/det|>")  # → "不可惊扰"
+_clean_ocr_result("<|ref|>A<|/ref|>\n<|ref|>B<|/ref|>")           # → "A B"
+```
+
+---
+
+### 4.3 类属性
+
+| 属性 | 类型 | 值 | 说明 |
+|------|------|------|------|
+| `MIME_MAP` | `dict[str, str]` | `{".jpg": "image/jpeg", ...}` | 支持的图片扩展名→MIME 类型映射 |
+| `OCR_PROMPT` | `str` | `"<image>\n<|grounding|>OCR this image."` | DeepSeek-OCR 通用文字识别 prompt |
+
+---
+
+### 4.4 模块依赖
+
+| 依赖类型 | 名称 | 来源 | 状态 |
+|---------|------|------|------|
+| 第三方库 | `openai` | PyPI | 已安装 |
+| 标准库 | `base64`, `re`, `os`, `logging`, `pathlib` | CPython | 内置 |
+| 环境变量 | `SILICONFLOW_API_KEY` | `.env` | 必填 |
+| 环境变量 | `SILICONFLOW_BASE_URL` | `.env` | 可选 |
+| 环境变量 | `SILICONFLOW_OCR_MODEL` | `.env` | 可选，默认 `deepseek-ai/DeepSeek-OCR` |
+
+---
+
+## 5. 尚未实现的计划模块
 
 | 模块 | 预计对外接口 | 预计依赖 |
 |------|------------|---------|
-| `engine/ocr_service.py` | 实现 `OcrProvider` 协议：`async ocr(path: str) -> str` | PaddleOCR |
 | `engine/image_optimizer.py` | 无损压缩函数（接口待定） | 图片处理库 |
 | `engine/ai_matcher.py` | 实现 `EmbeddingProvider` 协议 + AI 匹配逻辑（接口待定） | SiliconFlow API、DeepSeek API |
 | `plugins/meme_search.py` | `/search` 命令处理 | `KeywordSearcher`、`IndexManager` |
@@ -467,7 +541,7 @@ class IndexProvider(Protocol):
 logging_config.py ──(无依赖)──
 
 index_manager.py
-  ├── 依赖注入: OcrProvider (ocr_service.py, 待实现)
+  ├── 依赖注入: OcrProvider (ocr_service.py, 已实现 → SiliconFlow DeepSeek-OCR)
   ├── 依赖注入: EmbeddingProvider (ai_matcher.py, 待实现)
   ├── 第三方: ujson
   └── 标准库: hashlib, pathlib, os, asyncio, logging

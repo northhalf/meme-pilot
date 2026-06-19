@@ -26,7 +26,7 @@
 |------|------|
 | **NapCatQQ** | QQ 协议端，基于 NTQQ 的 OneBot v11 实现，负责收发 QQ 消息 |
 | **NoneBot2** | Python 异步聊天机器人框架，负责业务逻辑 |
-| **PaddleOCR** | 百度开源的 OCR 引擎，用于提取图片中的中文文字 |
+| **DeepSeek-OCR** | 硅基流动上的视觉 OCR 模型（`deepseek-ai/DeepSeek-OCR`），通过 chat completions API 调用，用于从图片中提取文字 |
 | **index.json** | 业务索引文件，采用 JSON 对象结构，保存每个当前索引 id 对应的文件名、OCR 文本和 `text_hash` |
 | **原子索引更新** | 更新 `index.json`、`embeddings.json` 时先写临时文件，全部成功后再替换正式文件；失败时保留旧索引 |
 | **embeddings.json** | AI 匹配必需的向量索引文件，采用 id 映射对象结构，保存每条索引文本对应的 embedding；首次建索引和 `/refresh` 时维护；`text_hash` 使用规范化 OCR 文本的 SHA-256 |
