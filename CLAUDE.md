@@ -116,6 +116,8 @@ uv run python -m compileall bot
 - `DEEPSEEK_MODEL`。
 - `SILICONFLOW_BASE_URL`。
 - `SILICONFLOW_EMBEDDING_MODEL`，v1.0 默认 `Qwen/Qwen3-Embedding-8B`。
+- `SILICONFLOW_OCR_MODEL`，默认 `deepseek-ai/DeepSeek-OCR`。
+- `SYNC_CONCURRENCY`，索引同步并发上限，默认 `5`。控制启动同步与 `/refresh` 处理新增图片时同时发起的 OCR/embedding 请求数，避免触发 SiliconFlow 限流。
 
 ## 系统架构概览
 

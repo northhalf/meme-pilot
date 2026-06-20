@@ -147,15 +147,21 @@ class IndexManager:
         _embeddings: 内存中的 embedding 数据。
         _embeddings_stale: embedding 是否需要重建。
         _lock: 写操作异步锁。
+        _sync_semaphore: 文件系统同步并发上限信号量。
+        _sync_concurrency: 当前同步并发上限值。
         index_version: 索引版本号。
 
     Class Attributes:
         SUPPORTED_EXTENSIONS: 支持的图片扩展名集合。
+        DEFAULT_SYNC_CONCURRENCY: 并行同步默认并发上限。
     """
 
     SUPPORTED_EXTENSIONS: frozenset[str] = frozenset(
         {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
     )
+
+    # 并行同步默认并发上限：避免一次性发起大量请求触发 API 限流
+    DEFAULT_SYNC_CONCURRENCY: int = 5
 
     def __init__(
         self,
@@ -163,6 +169,7 @@ class IndexManager:
         memes_dir: str = "memes",
         ocr_provider: OcrProvider | None = None,
         embedding_provider: EmbeddingProvider | None = None,
+        sync_concurrency: int | None = None,
     ) -> None:
         """初始化 IndexManager。
 
@@ -171,6 +178,9 @@ class IndexManager:
             memes_dir: 表情包图片目录路径，默认 "memes"。
             ocr_provider: OCR 服务提供者，未注入时无法执行 OCR。
             embedding_provider: Embedding 服务提供者，未注入时无法生成 embedding。
+            sync_concurrency: sync_with_filesystem() 并行处理新增图片时的
+                最大并发数。None 或非正数时使用 DEFAULT_SYNC_CONCURRENCY。
+                建议由插件层从 SYNC_CONCURRENCY 环境变量读取后注入。
         """
         import asyncio
 
@@ -185,6 +195,15 @@ class IndexManager:
         self._lock = asyncio.Lock()
         self._locked: bool = False
         self.index_version: int = 1
+
+        # 并发上限：约束 sync_with_filesystem 同时发起的 OCR/embedding 任务数
+        concurrency = (
+            sync_concurrency
+            if isinstance(sync_concurrency, int) and sync_concurrency > 0
+            else self.DEFAULT_SYNC_CONCURRENCY
+        )
+        self._sync_semaphore = asyncio.Semaphore(concurrency)
+        self._sync_concurrency = concurrency
 
     # ------------------------------------------------------------------
     # 加载 / 校验
@@ -552,34 +571,101 @@ class IndexManager:
     async def sync_with_filesystem(self) -> SyncResult:
         """按文件名同步索引与 memes/ 目录。
 
-        1. 扫描 memes/ 获取当前图片文件列表。
-        2. 对比 index entries 找出已删除的文件，移除对应记录。
-        3. 找出新增文件，按文件名升序处理：
-           - 调用 OCR 识别文本
-           - 调用 embedding 生成向量
-           - 写入索引
-        4. 单个图片处理失败不影响其他图片。
-        5. 原子写入更新后的索引文件。
+        三阶段并行同步：
+
+        1. 删除阶段：扫描 memes/，移除已不存在的图片对应记录。
+        2. 重建阶段（embedding 过期修复 + 全量重建）：
+           - 对文件仍存在的已有条目，比较 _entries[id].text_hash 与
+             _embeddings[id].text_hash（或 _embeddings 缺该 id）；
+           - 不一致则用当前 text 重建对应 embedding，覆盖 _embeddings[id]。
+           - 该判定同时覆盖两类 PRD 要求：
+             a) 用户手动编辑 index.json 的 text 导致 text_hash 不一致
+                （load 阶段已按新 text 修复 _entries[id].text_hash）；
+             b) embeddings.json 缺失/损坏导致 _embeddings 为空，全部条目
+               触发全量重建。
+        3. 新增阶段：对新增图片按文件名升序创建并行任务，每个任务内部
+           OCR→embed 串行，任务间受 _sync_semaphore 约束并发。
+           结果收集后按文件名升序统一分配 ID 写入索引（复用最小空洞 id）。
+
+        各阶段内部并行，阶段间串行（先完成全部重建再开始新增）。
+        单个图片失败不影响其他图片，记入 failed。全部处理完成后统一原子写入。
 
         Returns:
-            SyncResult(added, deleted, failed)
+            SyncResult(added, deleted, failed)。重建数量仅在日志中输出，
+            不计入 SyncResult（PRD /refresh 回复只要求新增/删除/失败数）。
         """
         self._memes_dir.mkdir(parents=True, exist_ok=True)
 
-        existing_files: set[str] = {
+        existing_files = self._scan_meme_files()
+        filename_to_id = self._build_filename_to_id()
+
+        # 1. 删除已不存在的图片
+        deleted_count = self._sync_deletions(existing_files, filename_to_id)
+
+        # 2. 重建过期/缺失的 embedding（仅在删除后剩余的条目中）
+        failed: list[str] = []
+        rebuild_count = await self._sync_rebuilds(failed)
+
+        # 3. 新增图片并行 OCR + embedding
+        added_count = await self._sync_additions(existing_files, filename_to_id, failed)
+
+        # 4. 全部完成后统一原子写入
+        self._persist_sync_results(added_count, deleted_count, rebuild_count)
+
+        logger.info(
+            "索引同步完成: 新增=%d, 删除=%d, 重建=%d, 失败=%d",
+            added_count,
+            deleted_count,
+            rebuild_count,
+            len(failed),
+        )
+        return SyncResult(added=added_count, deleted=deleted_count, failed=failed)
+
+    # ------------------------------------------------------------------
+    # 文件系统同步 — 私有阶段方法
+    # ------------------------------------------------------------------
+
+    def _scan_meme_files(self) -> set[str]:
+        """扫描 memes/ 目录，返回受支持扩展名的文件名集合。
+
+        Returns:
+            memes/ 下所有 SUPPORTED_EXTENSIONS 内的文件名集合。
+        """
+        return {
             f.name
             for f in self._memes_dir.iterdir()
             if f.is_file() and f.suffix.lower() in self.SUPPORTED_EXTENSIONS
         }
 
-        # 构建文件名 → id 映射
+    def _build_filename_to_id(self) -> dict[str, str]:
+        """根据当前 _entries 构建 filename → id 映射。
+
+        Returns:
+            文件名到索引 ID 的映射字典。
+        """
         filename_to_id: dict[str, str] = {}
         for eid, entry in self._entries.items():
             fn = entry.get("filename", "")
             if fn:
                 filename_to_id[fn] = eid
+        return filename_to_id
 
-        # 1. 删除已不存在的图片
+    def _sync_deletions(
+        self,
+        existing_files: set[str],
+        filename_to_id: dict[str, str],
+    ) -> int:
+        """删除阶段：移除 memes/ 中已不存在的图片对应索引记录。
+
+        会就地修改 _entries、_embeddings 和传入的 filename_to_id。
+
+        Args:
+            existing_files: memes/ 当前文件名集合。
+            filename_to_id: filename → id 映射（就地修改，删除时同步移除）。
+
+        Returns:
+            本次删除的条目数量。
+        """
         deleted_count = 0
         for filename, eid in list(filename_to_id.items()):
             if filename not in existing_files:
@@ -588,60 +674,204 @@ class IndexManager:
                 self._embeddings.pop(eid, None)
                 del filename_to_id[filename]
                 deleted_count += 1
+        return deleted_count
 
-        # 2. 找出新增图片（按文件名升序）
-        new_files = sorted(f for f in existing_files if f not in filename_to_id)
+    async def _sync_rebuilds(self, failed: list[str]) -> int:
+        """重建阶段：为过期/缺失 embedding 的已有条目并行重建。
 
-        added_count = 0
-        failed: list[str] = []
+        判定：_embeddings 缺该 id，或其 text_hash 与 _entries[id].text_hash
+        不一致 → 用当前 text 调用 embed 重建，不重新 OCR。该判定同时覆盖
+        「用户改 text」增量重建与「embeddings.json 损坏/缺失」全量重建。
 
-        for filename in new_files:
-            image_path = self._memes_dir / filename
-            try:
-                # OCR
-                if self._ocr_provider is None:
-                    raise RuntimeError("OCR 服务未注入")
-                text = await self._ocr_provider.ocr(str(image_path))
+        Args:
+            failed: 失败文件名收集列表（就地追加重建失败的 filename）。
 
-                # Embedding
-                if self._embedding_provider is None:
-                    raise RuntimeError("Embedding 服务未注入")
-                embedding = await self._embedding_provider.embed(text)
+        Returns:
+            成功重建的条目数量。
+        """
+        import asyncio
 
-                # 写入索引
-                entry_id = self._find_next_id()
-                text_hash = compute_text_hash(text)
-                self._entries[entry_id] = {
-                    "filename": filename,
-                    "text": text,
-                    "text_hash": text_hash,
-                }
-                self._embeddings[entry_id] = {
-                    "text_hash": text_hash,
-                    "embedding": embedding,
-                }
-                added_count += 1
-                logger.info(
-                    "新增图片已加入索引: id=%s, filename=%s", entry_id, filename
-                )
-
-            except Exception as exc:
-                logger.error("处理图片失败: filename=%s, error=%s", filename, exc)
-                failed.append(filename)
-
-        # 3. 原子写入
-        if added_count > 0 or deleted_count > 0:
-            self.save_index()
-            if added_count > 0:
-                self.save_embeddings()
+        rebuild_targets: list[str] = [
+            eid
+            for eid in self._entries
+            if eid not in self._embeddings
+            or self._embeddings[eid].get("text_hash")
+            != self._entries[eid].get("text_hash")
+        ]
+        if not rebuild_targets:
+            return 0
 
         logger.info(
-            "索引同步完成: 新增=%d, 删除=%d, 失败=%d",
-            added_count,
-            deleted_count,
-            len(failed),
+            "开始并行重建 %d 条过期 embedding，并发上限 %d",
+            len(rebuild_targets),
+            self._sync_concurrency,
         )
-        return SyncResult(added=added_count, deleted=deleted_count, failed=failed)
+
+        rebuild_results = await asyncio.gather(
+            *(self._rebuild_one_embedding(eid) for eid in rebuild_targets),
+            return_exceptions=True,
+        )
+
+        rebuild_count = 0
+        for eid, result in zip(rebuild_targets, rebuild_results):
+            if isinstance(result, BaseException):
+                filename = self._entries[eid].get("filename", eid)
+                logger.error(
+                    "重建 embedding 失败: id=%s, filename=%s, error=%s",
+                    eid,
+                    filename,
+                    result,
+                )
+                failed.append(filename)
+            else:
+                rebuild_count += 1
+                logger.info(
+                    "已重建 embedding: id=%s, filename=%s",
+                    eid,
+                    self._entries[eid].get("filename", ""),
+                )
+        return rebuild_count
+
+    async def _rebuild_one_embedding(self, eid: str) -> str:
+        """为单条已有索引重建 embedding。
+
+        使用 _entries[eid] 中当前的 text 调用 embed，不重新 OCR（text 已存在）。
+        回写 embedding 与最新 text_hash，保持两者绑定一致。
+
+        Args:
+            eid: 需重建的索引 ID。
+
+        Returns:
+            重建成功的索引 ID。
+
+        Raises:
+            RuntimeError: embedding 服务未注入。
+            Exception: embedding 调用失败时向上抛出，由调用方捕获。
+        """
+        text = self._entries[eid].get("text", "")
+        if self._embedding_provider is None:
+            raise RuntimeError("Embedding 服务未注入")
+        async with self._sync_semaphore:
+            embedding = await self._embedding_provider.embed(text)
+        self._embeddings[eid] = {
+            "text_hash": self._entries[eid].get("text_hash", ""),
+            "embedding": embedding,
+        }
+        return eid
+
+    async def _sync_additions(
+        self,
+        existing_files: set[str],
+        filename_to_id: dict[str, str],
+        failed: list[str],
+    ) -> int:
+        """新增阶段：对新增图片并行执行 OCR → embedding，按文件名升序分配 ID。
+
+        每个任务内部 OCR→embed 串行，任务间受 _sync_semaphore 约束并发。
+        结果收集后按文件名升序统一分配 ID 写入索引（复用最小空洞 id）。
+
+        Args:
+            existing_files: memes/ 当前文件名集合。
+            filename_to_id: filename → id 映射（用于判断哪些是新增）。
+            failed: 失败文件名收集列表（就地追加新增失败的 filename）。
+
+        Returns:
+            成功新增的图片数量。
+        """
+        import asyncio
+
+        new_files = sorted(f for f in existing_files if f not in filename_to_id)
+        if not new_files:
+            return 0
+
+        logger.info(
+            "开始并行处理 %d 张新增图片，并发上限 %d",
+            len(new_files),
+            self._sync_concurrency,
+        )
+
+        raw_results = await asyncio.gather(
+            *(self._process_new_file(fn) for fn in new_files),
+            return_exceptions=True,
+        )
+
+        # 成功项以 filename 为 key 收集，便于后续按文件名升序分配 ID。
+        success_by_name: dict[str, tuple[str, list[float]]] = {}
+        for filename, result in zip(new_files, raw_results):
+            if isinstance(result, BaseException):
+                logger.error("处理图片失败: filename=%s, error=%s", filename, result)
+                failed.append(filename)
+            else:
+                _, text, embedding = result
+                success_by_name[filename] = (text, embedding)
+
+        # 按文件名升序统一分配 ID，写入内存索引
+        added_count = 0
+        for filename in sorted(success_by_name.keys()):
+            text, embedding = success_by_name[filename]
+            entry_id = self._find_next_id()
+            text_hash = compute_text_hash(text)
+            self._entries[entry_id] = {
+                "filename": filename,
+                "text": text,
+                "text_hash": text_hash,
+            }
+            self._embeddings[entry_id] = {
+                "text_hash": text_hash,
+                "embedding": embedding,
+            }
+            added_count += 1
+            logger.info("新增图片已加入索引: id=%s, filename=%s", entry_id, filename)
+        return added_count
+
+    async def _process_new_file(self, filename: str) -> tuple[str, str, list[float]]:
+        """处理单张新增图片：OCR → Embed。
+
+        受 _sync_semaphore 约束，并发上限内执行。
+
+        Args:
+            filename: 表情包文件名。
+
+        Returns:
+            (filename, ocr_text, embedding) 三元组。
+
+        Raises:
+            RuntimeError: OCR 或 embedding 服务未注入。
+            Exception: OCR 或 embedding 调用失败时向上抛出，由调用方捕获。
+        """
+        image_path = self._memes_dir / filename
+        async with self._sync_semaphore:
+            if self._ocr_provider is None:
+                raise RuntimeError("OCR 服务未注入")
+            text = await self._ocr_provider.ocr(str(image_path))
+
+            if self._embedding_provider is None:
+                raise RuntimeError("Embedding 服务未注入")
+            embedding = await self._embedding_provider.embed(text)
+
+        return filename, text, embedding
+
+    def _persist_sync_results(
+        self,
+        added_count: int,
+        deleted_count: int,
+        rebuild_count: int,
+    ) -> None:
+        """同步完成后统一原子写入磁盘。
+
+        rebuild_count>0 时也需 save_index：用户手改 text 的情况下，
+        load 阶段修复的 _entries[id].text_hash 需落盘。
+        三类计数均为 0 时不写盘。
+
+        Args:
+            added_count: 新增图片数。
+            deleted_count: 删除图片数。
+            rebuild_count: 重建 embedding 数。
+        """
+        if added_count > 0 or deleted_count > 0 or rebuild_count > 0:
+            self.save_index()
+            if added_count > 0 or rebuild_count > 0:
+                self.save_embeddings()
 
     # ------------------------------------------------------------------
     # is_locked 属性

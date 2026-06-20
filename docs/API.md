@@ -2,7 +2,7 @@
 
 > 本文档记录各模块的对外接口和所需的外部接口，作为开发参考。
 > 每个函数/方法均说明参数与返回值。
-> 版本：v1.0，最后更新：2026-06-18
+> 版本：v1.0，最后更新：2026-06-20
 
 ---
 
@@ -106,9 +106,9 @@ class SyncResult:
 |------|------|------|------|
 | `added` | `int` | `0` | 本次同步新增的图片数量 |
 | `deleted` | `int` | `0` | 本次同步删除的图片数量 |
-| `failed` | `list[str]` | `[]` | 处理失败的文件名列表 |
+| `failed` | `list[str]` | `[]` | 处理失败的文件名列表（含新增失败与 embedding 重建失败） |
 
-是 `sync_with_filesystem()` 的返回类型。
+是 `sync_with_filesystem()` 的返回类型。重建 embedding 的数量不单独计入字段，仅在日志中输出。
 
 ---
 
@@ -117,6 +117,7 @@ class SyncResult:
 ```python
 class IndexManager:
     SUPPORTED_EXTENSIONS: frozenset[str]
+    DEFAULT_SYNC_CONCURRENCY: int
 ```
 
 #### 类属性
@@ -124,10 +125,11 @@ class IndexManager:
 | 属性 | 类型 | 值 | 说明 |
 |------|------|------|------|
 | `SUPPORTED_EXTENSIONS` | `frozenset[str]` | `{".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}` | 支持的图片扩展名集合 |
+| `DEFAULT_SYNC_CONCURRENCY` | `int` | `5` | 并行同步默认并发上限，`sync_concurrency` 未注入或非正数时使用 |
 
 ---
 
-#### `__init__(data_dir="data", memes_dir="memes", ocr_provider=None, embedding_provider=None) -> None`
+#### `__init__(data_dir="data", memes_dir="memes", ocr_provider=None, embedding_provider=None, sync_concurrency=None) -> None`
 
 | 参数 | 类型 | 默认 | 说明 |
 |------|------|------|------|
@@ -135,8 +137,9 @@ class IndexManager:
 | `memes_dir` | `str` | `"memes"` | 表情包图片目录路径 |
 | `ocr_provider` | `OcrProvider \| None` | `None` | OCR 服务注入，未注入时无法执行 OCR |
 | `embedding_provider` | `EmbeddingProvider \| None` | `None` | Embedding 服务注入，未注入时无法生成 embedding |
+| `sync_concurrency` | `int \| None` | `None` | `sync_with_filesystem()` 并行处理新增图片时的最大并发数；`None` 或非正数时使用 `DEFAULT_SYNC_CONCURRENCY`(5)。建议由插件层从 `SYNC_CONCURRENCY` 环境变量读取后注入，避免一次性发起大量请求触发 SiliconFlow 限流 |
 
-初始化后 `_entries` 和 `_embeddings` 均为空，需调用 `load()` 加载磁盘数据。
+初始化后 `_entries` 和 `_embeddings` 均为空，需调用 `load()` 加载磁盘数据。`_sync_semaphore` 在此时根据 `sync_concurrency` 创建。
 
 ---
 
@@ -153,8 +156,8 @@ class IndexManager:
 1. 自动创建 `data_dir`（如不存在）
 2. `index.json` 不存在 → 初始化为空 `{"version": 1, "entries": {}}`
 3. `index.json` 存在但损坏 → 抛出 `IndexCorruptedError`
-4. 自动校验 `text_hash` 一致性，不一致时修复并标记 `_embeddings_stale`
-5. `embeddings.json` 不存在或损坏 → 标记 `_embeddings_stale = True`
+4. 自动校验 `text_hash` 一致性：若用户手动编辑了 `text` 导致 `text_hash` 与 `text` 不符，按当前 `text` 重新计算并修复 `_entries[id].text_hash`，同时标记 `_embeddings_stale = True`。修复后的 `_entries[id].text_hash` 与 `_embeddings[id].text_hash` 不一致将由 `sync_with_filesystem()` 的重建阶段消费，触发对应 embedding 重建
+5. `embeddings.json` 不存在或损坏 → 标记 `_embeddings_stale = True`（`_embeddings` 置空，由 `sync_with_filesystem()` 重建阶段全量重建）
 
 ---
 
@@ -305,16 +308,26 @@ class IndexManager:
 |--|------|------|
 | **返回** | `SyncResult` | `added` 新增数、`deleted` 删除数、`failed` 失败文件名列表 |
 
-异步方法。按文件名同步内存索引与 `memes/` 目录：
+异步方法。按文件名同步内存索引与 `memes/` 目录，三阶段并行：
 
 1. 确保 `memes_dir` 存在
 2. 扫描 `memes/` 下 `SUPPORTED_EXTENSIONS` 中的文件
-3. 已删除的图片 → 从 `_entries` / `_embeddings` 移除
-4. 新增图片（按文件名升序）→ 调用 `OcrProvider.ocr()` 和 `EmbeddingProvider.embed()`，写入索引
-5. 单个图片失败不影响其他图片
-6. 有变更时原子写入磁盘
+3. **删除阶段**：已删除的图片 → 从 `_entries` / `_embeddings` 移除
+4. **重建阶段**（embedding 过期修复 + 全量重建）：对文件仍存在的已有条目，比较 `_entries[id].text_hash` 与 `_embeddings[id].text_hash`（或 `_embeddings` 缺该 id）；不一致则用当前 `text` 调用 `EmbeddingProvider.embed()` 重建对应 embedding，覆盖 `_embeddings[id]`，**不重新 OCR**。该判定同时覆盖两类场景：
+   - 用户手动编辑 `index.json` 的 `text` 导致 `text_hash` 不一致（`load()` 阶段已按新 `text` 修复 `_entries[id].text_hash`）
+   - `embeddings.json` 缺失/损坏导致 `_embeddings` 为空，全部条目触发全量重建
+5. **新增阶段**：新增图片**并行处理**——对按文件名升序排序后的新增文件，通过 `asyncio.gather` 同时发布多个 task；每个 task 内部串行执行 `OcrProvider.ocr()` → `EmbeddingProvider.embed()`，task 之间受 `_sync_semaphore`（并发上限 = `sync_concurrency`）约束并发执行
+6. 结果收集后，**按文件名升序**为成功项统一分配 ID 并写入 `_entries` / `_embeddings`，保证 ID 顺序与文件名升序一致（复用最小空洞 id）
+7. 单个图片失败（重建或新增）不影响其他图片，记入 `failed`
+8. 全部处理完成后统一原子写入磁盘（新增、删除、重建任一发生时）
 
-**依赖**：需先注入 `ocr_provider` 和 `embedding_provider`，否则新增图片会记录到 `failed` 列表。
+各阶段内部并行，阶段间串行（先完成全部重建再开始新增）。
+
+**依赖**：需先注入 `ocr_provider` 和 `embedding_provider`。新增图片缺失 provider 会记入 `failed`；重建阶段仅需 `embedding_provider`（未注入时所有待重建条目记入 `failed`）。
+
+**并发控制**：并发上限由 `__init__` 的 `sync_concurrency` 决定，建议从 `SYNC_CONCURRENCY` 环境变量读取。默认 `5`，用于避免一次性发起大量请求触发 SiliconFlow 限流。重建与新增共用同一 `_sync_semaphore`。
+
+**返回**：`SyncResult(added, deleted, failed)`。重建数量仅在日志中输出（`新增=X, 删除=Y, 重建=Z, 失败=W`），不计入 `SyncResult`（PRD `/refresh` 回复只要求新增/删除/失败数）。
 
 ---
 
@@ -326,6 +339,7 @@ class IndexManager:
 | Protocol 注入 | `OcrProvider` | `bot/engine/ocr_service.py` | 待实现 |
 | Protocol 注入 | `EmbeddingProvider` | `bot/engine/ai_matcher.py` | 待实现 |
 | 标准库 | `hashlib`, `pathlib`, `os`, `asyncio`, `logging` | CPython | 内置 |
+| 配置（注入） | `SYNC_CONCURRENCY` | `.env` | 可选，由插件层读取后通过 `sync_concurrency` 参数注入，默认 `5` |
 
 ---
 

@@ -82,6 +82,7 @@ cp .env.example .env
 #   DEEPSEEK_API_KEY=sk-你的DeepSeekKey
 #   SILICONFLOW_API_KEY=sk-你的SiliconFlowKey
 #   BOT_PORT=8080  # 可选，Bot 监听端口
+#   SYNC_CONCURRENCY=5  # 可选，索引同步并发上限，避免触发 API 限流
 
 # 3. 放入表情包
 # 把你的 .jpg/.jpeg/.png/.gif/.webp/.bmp 放到 memes/ 目录

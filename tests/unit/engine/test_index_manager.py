@@ -771,8 +771,16 @@ class TestSyncWithFilesystem:
         (data_dir / "index.json").write_text(
             ujson.dumps(index_data), encoding="utf-8"
         )
+        # embeddings.json 与 index 的 text_hash 保持一致，避免触发重建，
+        # 让本测试专注验证删除逻辑
         (data_dir / "embeddings.json").write_text(
-            ujson.dumps({"1": {}, "2": {}}), encoding="utf-8"
+            ujson.dumps(
+                {
+                    "1": {"text_hash": compute_text_hash("hello"), "embedding": [0.1]},
+                    "2": {"text_hash": compute_text_hash("gone"), "embedding": [0.2]},
+                }
+            ),
+            encoding="utf-8",
         )
 
         mgr = IndexManager(data_dir=str(data_dir), memes_dir=str(memes_dir))
@@ -785,6 +793,7 @@ class TestSyncWithFilesystem:
 
         result = asyncio.run(run_sync())
         assert result.deleted == 1
+        assert result.failed == []
         assert "1" in mgr._entries
         assert "2" not in mgr._entries
 
@@ -817,6 +826,17 @@ class TestSyncWithFilesystem:
         (data_dir / "index.json").write_text(
             ujson.dumps(index_data), encoding="utf-8"
         )
+        # embeddings.json 与 index 的 text_hash 一致，避免 old_kept.jpg 触发重建，
+        # 让本测试专注验证「新增 + 删除」混合
+        (data_dir / "embeddings.json").write_text(
+            ujson.dumps(
+                {
+                    "1": {"text_hash": compute_text_hash("old"), "embedding": [0.1]},
+                    "2": {"text_hash": compute_text_hash("gone"), "embedding": [0.2]},
+                }
+            ),
+            encoding="utf-8",
+        )
 
         class MockOcr:
             async def ocr(self, image_path: str) -> str:
@@ -842,6 +862,7 @@ class TestSyncWithFilesystem:
         result = asyncio.run(run_sync())
         assert result.added == 1
         assert result.deleted == 1
+        assert result.failed == []
         assert len(mgr._entries) == 2
         # ID 1 保留（old_kept.jpg），ID 2 被删除，新增的复用 ID 2
         assert mgr._entries["1"]["filename"] == "old_kept.jpg"
@@ -868,6 +889,19 @@ class TestSyncWithFilesystem:
         (data_dir / "index.json").write_text(
             ujson.dumps(index_data), encoding="utf-8"
         )
+        # embeddings.json 与 index 的 text_hash 一致，避免触发重建，
+        # 让本测试专注验证「已存在文件不重复 OCR」
+        (data_dir / "embeddings.json").write_text(
+            ujson.dumps(
+                {
+                    "1": {
+                        "text_hash": compute_text_hash("original text"),
+                        "embedding": [0.0],
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
 
         call_count = 0
 
@@ -889,9 +923,10 @@ class TestSyncWithFilesystem:
         async def run_sync() -> SyncResult:
             return await mgr.sync_with_filesystem()
 
-        asyncio.run(run_sync())
-        # cat.jpg 已存在，不应调用 OCR
+        result = asyncio.run(run_sync())
+        # cat.jpg 已存在且 embedding 一致，不应调用 OCR，也不应进 failed
         assert call_count == 0
+        assert result.failed == []
 
     def test_sync_handles_ocr_failure(self, tmp_path: Path) -> None:
         """OCR 失败时跳过该图片并记录到 failed。"""
@@ -941,7 +976,11 @@ class TestSyncWithFilesystem:
     def test_sync_new_images_sorted_by_filename(
         self, tmp_path: Path
     ) -> None:
-        """新增图片按文件名升序处理。"""
+        """新增图片按文件名升序分配 ID。
+
+        并行处理后 OCR 完成顺序不确定，但 ID 分配仍按文件名升序，
+        保证 a.jpg < m.jpg < z.jpg 对应的 id 数值递增。
+        """
         data_dir = tmp_path / "data"
         memes_dir = tmp_path / "memes"
         data_dir.mkdir()
@@ -956,11 +995,8 @@ class TestSyncWithFilesystem:
             ujson.dumps(index_data), encoding="utf-8"
         )
 
-        processed_order: list[str] = []
-
         class OrderedOcr:
             async def ocr(self, image_path: str) -> str:
-                processed_order.append(Path(image_path).name)
                 return "text"
 
         class MockEmbed:
@@ -981,4 +1017,314 @@ class TestSyncWithFilesystem:
             return await mgr.sync_with_filesystem()
 
         asyncio.run(run_sync())
-        assert processed_order == ["a.jpg", "m.jpg", "z.jpg"]
+
+        # 按 id 数值升序排列，对应文件名应为 a.jpg, m.jpg, z.jpg
+        sorted_ids = sorted(mgr._entries.keys(), key=int)
+        filenames_by_id = [mgr._entries[eid]["filename"] for eid in sorted_ids]
+        assert filenames_by_id == ["a.jpg", "m.jpg", "z.jpg"]
+
+    def test_sync_ocr_runs_concurrently(self, tmp_path: Path) -> None:
+        """多张新增图片的 OCR 应能并行执行。
+
+        通过记录同时在执行 OCR 的任务数最大值，验证并发上限 > 1。
+        每个 OCR 任务内部人为制造短暂 await 让出控制权，使多个任务
+        能在 Semaphore 范围内同时处于执行状态。
+        """
+        import asyncio
+
+        data_dir = tmp_path / "data"
+        memes_dir = tmp_path / "memes"
+        data_dir.mkdir()
+        memes_dir.mkdir()
+
+        # 6 张图，并发上限默认 5，期望同时执行数 >= 2
+        for name in ("a.jpg", "b.jpg", "c.jpg", "d.jpg", "e.jpg", "f.jpg"):
+            (memes_dir / name).write_text(name)
+
+        index_data = {"version": 1, "entries": {}}
+        (data_dir / "index.json").write_text(
+            ujson.dumps(index_data), encoding="utf-8"
+        )
+
+        in_flight = 0
+        max_in_flight = 0
+        counter_lock = asyncio.Lock()
+
+        class ConcurrentOcr:
+            async def ocr(self, image_path: str) -> str:
+                nonlocal in_flight, max_in_flight
+                async with counter_lock:
+                    in_flight += 1
+                    if in_flight > max_in_flight:
+                        max_in_flight = in_flight
+                # 让出控制权，让其他任务有机会并行进入
+                await asyncio.sleep(0.01)
+                async with counter_lock:
+                    in_flight -= 1
+                return "text"
+
+        class MockEmbed:
+            async def embed(self, text: str) -> list[float]:
+                return [0.0]
+
+        mgr = IndexManager(
+            data_dir=str(data_dir),
+            memes_dir=str(memes_dir),
+            ocr_provider=ConcurrentOcr(),
+            embedding_provider=MockEmbed(),
+            # 显式指定并发上限，避免依赖默认值
+            sync_concurrency=5,
+        )
+        mgr.load()
+
+        async def run_sync() -> SyncResult:
+            return await mgr.sync_with_filesystem()
+
+        result = asyncio.run(run_sync())
+
+        assert result.added == 6
+        assert max_in_flight >= 2, (
+            f"OCR 未并行执行，最大同时执行数仅 {max_in_flight}"
+        )
+
+    def test_sync_rebuilds_embedding_when_text_edited(
+        self, tmp_path: Path
+    ) -> None:
+        """用户手改 index.json 的 text 后，text_hash 不一致应重建对应 embedding。
+
+        场景：index.json 中 cat.jpg 的 text 被手动改成新文本，但 embeddings.json
+        里仍是旧 text_hash。load() 会按新 text 修复 _entries[id].text_hash，
+        sync 时检测到 _entries 与 _embeddings 的 text_hash 不一致 → 用新 text
+        重建 embedding。不应重新 OCR（text 已存在）。
+        """
+        data_dir = tmp_path / "data"
+        memes_dir = tmp_path / "memes"
+        data_dir.mkdir()
+        memes_dir.mkdir()
+
+        (memes_dir / "cat.jpg").write_text("cat content")
+
+        # 用户把 text 从 "old text" 手改成 "new text"，但 text_hash 仍是旧的
+        old_hash = compute_text_hash("old text")
+        index_data = {
+            "version": 1,
+            "entries": {
+                "1": {
+                    "filename": "cat.jpg",
+                    "text": "new text",
+                    "text_hash": old_hash,  # 故意写旧 hash，模拟用户只改了 text
+                }
+            },
+        }
+        (data_dir / "index.json").write_text(
+            ujson.dumps(index_data), encoding="utf-8"
+        )
+        # embeddings.json 里的 text_hash 也是旧的，与修复后的 _entries 不一致
+        (data_dir / "embeddings.json").write_text(
+            ujson.dumps(
+                {"1": {"text_hash": old_hash, "embedding": [0.0, 0.0]}}
+            ),
+            encoding="utf-8",
+        )
+
+        ocr_call_count = 0
+        embed_texts: list[str] = []
+
+        class NoCallOcr:
+            async def ocr(self, image_path: str) -> str:
+                nonlocal ocr_call_count
+                ocr_call_count += 1
+                return "should not be called"
+
+        class RecordingEmbed:
+            async def embed(self, text: str) -> list[float]:
+                embed_texts.append(text)
+                return [0.9, 0.8]
+
+        mgr = IndexManager(
+            data_dir=str(data_dir),
+            memes_dir=str(memes_dir),
+            ocr_provider=NoCallOcr(),
+            embedding_provider=RecordingEmbed(),
+        )
+        mgr.load()
+
+        import asyncio
+
+        async def run_sync() -> SyncResult:
+            return await mgr.sync_with_filesystem()
+
+        result = asyncio.run(run_sync())
+
+        # 没有新增/删除，只有重建
+        assert result.added == 0
+        assert result.deleted == 0
+        assert result.failed == []
+        # 重建用的是当前 text，不应重新 OCR
+        assert ocr_call_count == 0
+        # embed 收到的是修复后的新 text
+        assert embed_texts == ["new text"]
+        # _embeddings[id] 已更新为新 hash 和新向量
+        new_hash = compute_text_hash("new text")
+        assert mgr._embeddings["1"]["text_hash"] == new_hash
+        assert mgr._embeddings["1"]["embedding"] == [0.9, 0.8]
+        # _entries[id].text_hash 也已落盘修复
+        assert mgr._entries["1"]["text_hash"] == new_hash
+        # 落盘检查：磁盘 index.json 的 text_hash 已更新
+        disk_index = ujson.loads(
+            (data_dir / "index.json").read_text(encoding="utf-8")
+        )
+        assert disk_index["entries"]["1"]["text_hash"] == new_hash
+        disk_emb = ujson.loads(
+            (data_dir / "embeddings.json").read_text(encoding="utf-8")
+        )
+        assert disk_emb["1"]["text_hash"] == new_hash
+
+    def test_sync_rebuilds_all_when_embeddings_missing(
+        self, tmp_path: Path
+    ) -> None:
+        """embeddings.json 缺失时，对全部已有条目全量重建 embedding。
+
+        场景：index.json 有效（2 条），但 embeddings.json 不存在。
+        load() 标记 _embeddings_stale=True 且 _embeddings 为空。
+        sync 时所有 id 均不在 _embeddings → 全部重建。不应重新 OCR。
+        """
+        data_dir = tmp_path / "data"
+        memes_dir = tmp_path / "memes"
+        data_dir.mkdir()
+        memes_dir.mkdir()
+
+        (memes_dir / "a.jpg").write_text("a")
+        (memes_dir / "b.jpg").write_text("b")
+
+        index_data = {
+            "version": 1,
+            "entries": {
+                "1": {
+                    "filename": "a.jpg",
+                    "text": "text a",
+                    "text_hash": compute_text_hash("text a"),
+                },
+                "2": {
+                    "filename": "b.jpg",
+                    "text": "text b",
+                    "text_hash": compute_text_hash("text b"),
+                },
+            },
+        }
+        (data_dir / "index.json").write_text(
+            ujson.dumps(index_data), encoding="utf-8"
+        )
+        # 故意不创建 embeddings.json
+
+        ocr_call_count = 0
+        embed_texts: list[str] = []
+
+        class NoCallOcr:
+            async def ocr(self, image_path: str) -> str:
+                nonlocal ocr_call_count
+                ocr_call_count += 1
+                return "should not be called"
+
+        class RecordingEmbed:
+            async def embed(self, text: str) -> list[float]:
+                embed_texts.append(text)
+                return [0.1, 0.2]
+
+        mgr = IndexManager(
+            data_dir=str(data_dir),
+            memes_dir=str(memes_dir),
+            ocr_provider=NoCallOcr(),
+            embedding_provider=RecordingEmbed(),
+        )
+        mgr.load()
+        # load 后 embeddings 缺失，标记待重建
+        assert mgr._embeddings_stale is True
+
+        import asyncio
+
+        async def run_sync() -> SyncResult:
+            return await mgr.sync_with_filesystem()
+
+        result = asyncio.run(run_sync())
+
+        # 无新增无删除，全量重建 2 条
+        assert result.added == 0
+        assert result.deleted == 0
+        assert result.failed == []
+        assert ocr_call_count == 0
+        # 两条都重建（顺序因并行不确定，用集合比较）
+        assert sorted(embed_texts) == ["text a", "text b"]
+        # 两条 embedding 都已生成
+        assert set(mgr._embeddings.keys()) == {"1", "2"}
+        assert mgr._embeddings["1"]["embedding"] == [0.1, 0.2]
+        assert mgr._embeddings["2"]["embedding"] == [0.1, 0.2]
+        # 重建并落盘后 stale 标志清除
+        assert mgr._embeddings_stale is False
+        # 落盘检查
+        disk_emb = ujson.loads(
+            (data_dir / "embeddings.json").read_text(encoding="utf-8")
+        )
+        assert set(disk_emb.keys()) == {"1", "2"}
+
+    def test_sync_rebuild_failure_recorded_in_failed(
+        self, tmp_path: Path
+    ) -> None:
+        """重建 embedding 失败时，对应文件名记入 failed，不影响其他条目。
+
+        场景：2 条已有条目都需重建（embeddings.json 缺失），其中一条的
+        embed 抛异常 → 该条记入 failed，另一条仍重建成功。
+        """
+        data_dir = tmp_path / "data"
+        memes_dir = tmp_path / "memes"
+        data_dir.mkdir()
+        memes_dir.mkdir()
+
+        (memes_dir / "good.jpg").write_text("g")
+        (memes_dir / "bad.jpg").write_text("b")
+
+        index_data = {
+            "version": 1,
+            "entries": {
+                "1": {
+                    "filename": "good.jpg",
+                    "text": "good text",
+                    "text_hash": compute_text_hash("good text"),
+                },
+                "2": {
+                    "filename": "bad.jpg",
+                    "text": "bad text",
+                    "text_hash": compute_text_hash("bad text"),
+                },
+            },
+        }
+        (data_dir / "index.json").write_text(
+            ujson.dumps(index_data), encoding="utf-8"
+        )
+        # 不创建 embeddings.json → 两条都需重建
+
+        class FailingEmbed:
+            async def embed(self, text: str) -> list[float]:
+                if "bad" in text:
+                    raise RuntimeError("embed failed")
+                return [0.5]
+
+        mgr = IndexManager(
+            data_dir=str(data_dir),
+            memes_dir=str(memes_dir),
+            embedding_provider=FailingEmbed(),
+        )
+        mgr.load()
+
+        import asyncio
+
+        async def run_sync() -> SyncResult:
+            return await mgr.sync_with_filesystem()
+
+        result = asyncio.run(run_sync())
+
+        # good.jpg 重建成功，bad.jpg 重建失败
+        assert result.failed == ["bad.jpg"]
+        assert mgr._embeddings["1"]["embedding"] == [0.5]
+        assert "2" not in mgr._embeddings or "embedding" not in mgr._embeddings.get("2", {})
+
