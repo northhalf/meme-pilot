@@ -658,6 +658,7 @@ class TestAddEntry:
             }
         }
         mgr._embeddings = {}
+        mgr._rebuild_dedup_index()
 
         result = mgr.add_entry(
             filename="b.jpg",
@@ -695,6 +696,7 @@ class TestAddEntry:
             }
         }
         mgr._embeddings = {}
+        mgr._rebuild_dedup_index()
 
         result = mgr.add_entry("b.jpg", "猫", [0.5])
         assert result.reason == "replaced"
@@ -1881,6 +1883,7 @@ class TestFindEntryByDedupKey:
             "1": {"filename": "a.jpg", "text": "加班 好累", "text_hash": "x"},
             "2": {"filename": "b.jpg", "text": "狗在跑", "text_hash": "y"},
         }
+        mgr._rebuild_dedup_index()
         # "加班 好累" 去空格 == "加班好累"
         assert mgr._find_entry_by_dedup_key("加班好累") == "1"
 
@@ -1890,6 +1893,7 @@ class TestFindEntryByDedupKey:
         mgr._entries = {
             "1": {"filename": "a.jpg", "text": "猫", "text_hash": "x"},
         }
+        mgr._rebuild_dedup_index()
         assert mgr._find_entry_by_dedup_key("狗") is None
 
     def test_empty_entries_returns_none(self) -> None:

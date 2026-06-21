@@ -227,6 +227,7 @@ class IndexManager:
         _memes_dir: 表情包图片目录路径。
         _no_text_dir: 无文字图存放目录路径。
         _entries: 内存中的 index entries。
+        _dedup_index: 去重键到 entry_id 的反向索引，加速 _find_entry_by_dedup_key。
         _embeddings: 内存中的 embedding 数据。
         _embeddings_stale: embedding 是否需要重建。
         _lock: 写操作异步锁。
@@ -281,6 +282,7 @@ class IndexManager:
         self._embedding_provider = embedding_provider
 
         self._entries: dict[str, dict[str, str]] = {}
+        self._dedup_index: dict[str, str] = {}
         self._embeddings: dict[str, dict[str, object]] = {}
         self._embeddings_stale: bool = False
         self._lock = asyncio.Lock()
@@ -326,6 +328,7 @@ class IndexManager:
             logger.info("index.json 不存在，初始化为空索引")
             self._entries = {}
             self.index_version = 1
+            self._rebuild_dedup_index()
             return
 
         try:
@@ -353,6 +356,7 @@ class IndexManager:
                     )
 
         self._entries = entries
+        self._rebuild_dedup_index()
         logger.info("index.json 加载成功，共 %d 条记录", len(self._entries))
 
         inconsistent_ids = self._check_text_hash_consistency()
@@ -606,12 +610,15 @@ class IndexManager:
             old_path = self._memes_dir / old_filename
             old_path.unlink(missing_ok=True)
 
+            # 覆盖前移除旧 key（新 text 的 dedup_key 可能与旧 text 不同）
+            self._dedup_index_remove(old_id)
             text_hash = compute_text_hash(text)
             self._entries[old_id] = {
                 "filename": filename,
                 "text": text,
                 "text_hash": text_hash,
             }
+            self._dedup_index_add(old_id)
             self._embeddings[old_id] = {
                 "text_hash": text_hash,
                 "embedding": embedding,
@@ -638,6 +645,7 @@ class IndexManager:
             "text": text,
             "text_hash": text_hash,
         }
+        self._dedup_index_add(entry_id)
         self._embeddings[entry_id] = {
             "text_hash": text_hash,
             "embedding": embedding,
@@ -664,6 +672,7 @@ class IndexManager:
             return False
 
         filename = self._entries[entry_id].get("filename", "")
+        self._dedup_index_remove(entry_id)
         del self._entries[entry_id]
         self._embeddings.pop(entry_id, None)
 
@@ -673,12 +682,58 @@ class IndexManager:
         logger.info("已删除索引记录: id=%s, filename=%s", entry_id, filename)
         return True
 
+    def _rebuild_dedup_index(self) -> None:
+        """根据当前 _entries 全量重建去重键反向索引。
+
+        在 _load_index 加载完成后调用一次，建立 dedup_key → entry_id 映射。
+        空 key（无文字）条目不会进入 _entries，故不会出现空字符串键。
+
+        Returns:
+            无返回值，就地重建 self._dedup_index。
+        """
+        self._dedup_index = {
+            dedup_key(entry.get("text", "")): entry_id
+            for entry_id, entry in self._entries.items()
+        }
+
+    def _dedup_index_add(self, entry_id: str) -> None:
+        """将单条条目的去重键加入反向索引。
+
+        在 _entries[entry_id] 赋值之后调用（需读取其 text 计算 key）。
+        空 key 跳过（无文字条目不入索引）。信任去重键唯一不变式，
+        直接赋值不做冲突检查。
+
+        Args:
+            entry_id: 新增/覆盖条目的 ID。
+
+        Returns:
+            无返回值，就地更新 self._dedup_index。
+        """
+        key = dedup_key(self._entries[entry_id].get("text", ""))
+        if key:
+            self._dedup_index[key] = entry_id
+
+    def _dedup_index_remove(self, entry_id: str) -> None:
+        """从反向索引移除单条条目的去重键。
+
+        在 del _entries[entry_id] 之前调用（需读取其 text 计算 key）。
+        空 key 跳过。pop 使用默认值，对空 key 与未建索引条目均安全。
+
+        Args:
+            entry_id: 待删除条目的 ID。
+
+        Returns:
+            无返回值，就地更新 self._dedup_index。
+        """
+        key = dedup_key(self._entries[entry_id].get("text", ""))
+        if key:
+            self._dedup_index.pop(key, None)
+
     def _find_entry_by_dedup_key(self, key: str) -> str | None:
         """按去重键查找已有条目 ID。
 
-        线性扫描 _entries，返回第一个 dedup_key(text) == key 的条目 ID。
-        正常情况下去重键唯一（add/sync 已保证不引入重复键），
-        返回第一个匹配即可。
+        通过 _dedup_index 反向索引 O(1) 查找，返回该去重键对应的条目 ID。
+        正常情况下去重键唯一（add/sync 已保证不引入重复键）。
 
         Args:
             key: dedup_key 计算结果。
@@ -686,10 +741,7 @@ class IndexManager:
         Returns:
             匹配的条目 ID，无匹配返回 None。
         """
-        for entry_id, entry in self._entries.items():
-            if dedup_key(entry.get("text", "")) == key:
-                return entry_id
-        return None
+        return self._dedup_index.get(key)
 
     def _move_to_no_text(self, filename: str) -> str:
         """将无文字图片移动到 meme_no_text/ 目录。
@@ -857,6 +909,8 @@ class IndexManager:
         for filename, eid in list(filename_to_id.items()):
             if filename not in existing_files:
                 logger.info("图片已删除，移除索引: id=%s, filename=%s", eid, filename)
+                # del 前移除：_dedup_index_remove 需读取 _entries[eid].text 计算 key
+                self._dedup_index_remove(eid)
                 del self._entries[eid]
                 self._embeddings.pop(eid, None)
                 del filename_to_id[filename]
@@ -1032,6 +1086,7 @@ class IndexManager:
                 "text": text,
                 "text_hash": text_hash,
             }
+            self._dedup_index_add(entry_id)
             self._embeddings[entry_id] = {
                 "text_hash": text_hash,
                 "embedding": embedding,

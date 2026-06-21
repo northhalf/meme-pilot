@@ -198,7 +198,7 @@ class IndexManager:
 | `sync_concurrency` | `int \| None` | `None` | `sync_with_filesystem()` 并行处理新增图片时的最大并发数；`None` 或非正数时使用 `DEFAULT_SYNC_CONCURRENCY`(5)。建议由插件层从 `SYNC_CONCURRENCY` 环境变量读取后注入，避免一次性发起大量请求触发 SiliconFlow 限流 |
 | `no_text_dir` | `str \| None` | `None` | 无文字图存放目录；`None` 时取 `memes_dir` 同级的 `meme_no_text/`（即 `Path(memes_dir).parent / "meme_no_text"`）。插件层无需显式传入 |
 
-初始化后 `_entries` 和 `_embeddings` 均为空，需调用 `load()` 加载磁盘数据。`_sync_semaphore` 在此时根据 `sync_concurrency` 创建。
+初始化后 `_entries`、`_embeddings` 与 `_dedup_index` 均为空，需调用 `load()` 加载磁盘数据。`_sync_semaphore` 在此时根据 `sync_concurrency` 创建。`_dedup_index` 是 `dedup_key → entry_id` 的反向索引，在 `load()` 加载完成后由 `_rebuild_dedup_index()` 一次性构建，加速 `_find_entry_by_dedup_key` 的 O(1) 查找，并在所有写 `_entries` 的入口同步维护。
 
 ---
 
@@ -316,7 +316,7 @@ class IndexManager:
 
 三分支处理：
 1. 无文字（`is_blank_text(text)` 为真）→ 调用 `_move_to_no_text(filename)` 移图到 `meme_no_text/`，不写索引，返回 `AddResult(entry_id=None, reason="no_text", moved_to=...)`。
-2. 去重键命中已有条目（`_find_entry_by_dedup_key(dedup_key(text))` 非 `None`）→ 删除旧图文件（`missing_ok`），复用旧 ID 覆盖 `_entries[old_id]` 与 `_embeddings[old_id]`（用新 `text_hash` 与新 `embedding`），原子写入两文件，返回 `AddResult(entry_id=old_id, reason="replaced", replaced_filename=旧文件名)`。
+2. 去重键命中已有条目（`_find_entry_by_dedup_key(dedup_key(text))` 非 `None`，经 `_dedup_index` 反向索引 O(1) 查找）→ 删除旧图文件（`missing_ok`），复用旧 ID 覆盖 `_entries[old_id]` 与 `_embeddings[old_id]`（用新 `text_hash` 与新 `embedding`）；覆盖前 `_dedup_index_remove(old_id)` 移除旧键、覆盖后 `_dedup_index_add(old_id)` 加入新键，保持反向索引与 `_entries` 一致，原子写入两文件，返回 `AddResult(entry_id=old_id, reason="replaced", replaced_filename=旧文件名)`。
 3. 正常新增 → `_find_next_id()` 分配 ID，写入 `_entries`/`_embeddings`，原子写入两文件，返回 `AddResult(entry_id, reason="added")`。
 
 ---
@@ -333,6 +333,58 @@ class IndexManager:
 | **异常** | `OSError` | 磁盘写入失败时抛出 |
 
 从 `_entries` 和 `_embeddings` 中删除记录，并原子写入磁盘。删除后产生 ID 空洞，可被后续 `add_entry` 复用。
+
+---
+
+#### `_find_entry_by_dedup_key(key: str) -> str | None` *(私有)*
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `key` | `str` | `dedup_key(text)` 计算结果 |
+
+| | 类型 | 说明 |
+|--|------|------|
+| **返回** | `str \| None` | 匹配的条目 ID，无匹配返回 `None` |
+
+通过 `_dedup_index` 反向索引 O(1) 查找该去重键对应的条目 ID。正常情况下去重键唯一（`add_entry`/`_sync_additions` 已保证不引入重复键）。供 `add_entry` 去重覆盖分支调用。
+
+---
+
+#### `_rebuild_dedup_index() -> None` *(私有)*
+
+| | 类型 | 说明 |
+|--|------|------|
+| **返回** | `None` | 就地重建 `self._dedup_index` |
+
+根据当前 `_entries` 全量重建 `dedup_key → entry_id` 反向索引。在 `_load_index` 加载完成后调用一次。空 key（无文字）条目不进入 `_entries`，故不会出现空字符串键。
+
+---
+
+#### `_dedup_index_add(entry_id: str) -> None` *(私有)*
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `entry_id` | `str` | 新增/覆盖条目的 ID |
+
+| | 类型 | 说明 |
+|--|------|------|
+| **返回** | `None` | 就地更新 `self._dedup_index` |
+
+将单条条目的去重键加入反向索引。**必须在 `self._entries[entry_id]` 赋值之后调用**（需读取其 `text` 计算 key）。空 key 跳过。信任去重键唯一不变式，直接赋值不做冲突检查。由 `add_entry`（正常新增与去重覆盖）与 `_sync_additions`（正常新增）调用。
+
+---
+
+#### `_dedup_index_remove(entry_id: str) -> None` *(私有)*
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `entry_id` | `str` | 待删除条目的 ID |
+
+| | 类型 | 说明 |
+|--|------|------|
+| **返回** | `None` | 就地更新 `self._dedup_index` |
+
+从反向索引移除单条条目的去重键。**必须在 `del self._entries[entry_id]` 之前调用**（需读取其 `text` 计算 key）。空 key 跳过；`pop(key, None)` 对空 key 与未建索引条目均安全。由 `add_entry`（去重覆盖分支，覆盖前移除旧键）、`remove_entry`、`_sync_deletions` 调用。
 
 ---
 
