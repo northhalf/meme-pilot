@@ -4,7 +4,7 @@
 """
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Protocol
 
 from rapidfuzz import fuzz
@@ -42,7 +42,7 @@ class SearchResult:
     entry_id: str
     filename: str
     text: str
-    similarity: float = field(compare=True)
+    similarity: float
 
 
 class KeywordSearcher:

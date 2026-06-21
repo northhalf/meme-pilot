@@ -84,10 +84,6 @@ dedup_key("   ")         # → ""
 
 无额外属性，使用 `str(exc)` 获取错误消息。
 
-#### `IndexLockedError(Exception)`
-
-索引更新锁被占用时抛出（预留，当前锁管理使用 `bool` 返回值而非异常）。
-
 ---
 
 ### 1.3 Protocol（依赖注入接口）
@@ -215,8 +211,8 @@ class IndexManager:
 1. 自动创建 `data_dir`（如不存在）
 2. `index.json` 不存在 → 初始化为空 `{"version": 1, "entries": {}}`
 3. `index.json` 存在但损坏 → 抛出 `IndexCorruptedError`
-4. 自动校验 `text_hash` 一致性：若用户手动编辑了 `text` 导致 `text_hash` 与 `text` 不符，按当前 `text` 重新计算并修复 `_entries[id].text_hash`，同时标记 `_embeddings_stale = True`。修复后的 `_entries[id].text_hash` 与 `_embeddings[id].text_hash` 不一致将由 `sync_with_filesystem()` 的重建阶段消费，触发对应 embedding 重建
-5. `embeddings.json` 不存在或损坏 → 标记 `_embeddings_stale = True`（`_embeddings` 置空，由 `sync_with_filesystem()` 重建阶段全量重建）
+4. 自动校验 `text_hash` 一致性：若用户手动编辑了 `text` 导致 `text_hash` 与 `text` 不符，按当前 `text` 重新计算并修复 `_entries[id].text_hash`。修复后的 `_entries[id].text_hash` 与 `_embeddings[id].text_hash` 不一致将由 `sync_with_filesystem()` 的重建阶段消费，触发对应 embedding 重建
+5. `embeddings.json` 不存在或损坏 → 置空 `_embeddings`（由 `sync_with_filesystem()` 重建阶段全量重建）
 
 ---
 
@@ -297,7 +293,7 @@ class IndexManager:
 | **返回** | `None` | |
 | **异常** | `OSError` | 磁盘写入失败时抛出 |
 
-将 `_embeddings` 序列化后通过 `_atomic_write` 原子写入 `data/embeddings.json`。写入成功后将 `_embeddings_stale` 设为 `False`。
+将 `_embeddings` 序列化后通过 `_atomic_write` 原子写入 `data/embeddings.json`。
 
 ---
 
@@ -468,7 +464,7 @@ class SearchResult:
     entry_id: str
     filename: str
     text: str
-    similarity: float = field(compare=True)
+    similarity: float
 ```
 
 | 字段 | 类型 | 说明 |
@@ -478,7 +474,7 @@ class SearchResult:
 | `text` | `str` | OCR 文本 |
 | `similarity` | `float` | 相似度分数，范围 0–100 |
 
-`compare=True` 使 `similarity` 参与排序比较。
+排序由 `KeywordSearcher.search()` 内部以 `key=lambda r: r.similarity` 手动完成，不依赖 dataclass 生成的比较方法。
 
 ---
 

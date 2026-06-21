@@ -4,8 +4,7 @@
 支持加载校验、查询、原子写入、启动同步、增量刷新和单条增删。
 """
 
-from __future__ import annotations
-
+import asyncio
 import hashlib
 import itertools
 import logging
@@ -122,10 +121,6 @@ class IndexCorruptedError(Exception):
     """index.json 结构损坏或缺少必要字段时抛出。"""
 
 
-class IndexLockedError(Exception):
-    """索引更新锁被占用时尝试写入操作抛出。"""
-
-
 # ---------------------------------------------------------------------------
 # Protocol 接口
 # ---------------------------------------------------------------------------
@@ -229,7 +224,6 @@ class IndexManager:
         _entries: 内存中的 index entries。
         _dedup_index: 去重键到 entry_id 的反向索引，加速 _find_entry_by_dedup_key。
         _embeddings: 内存中的 embedding 数据。
-        _embeddings_stale: embedding 是否需要重建。
         _lock: 写操作异步锁。
         _sync_semaphore: 文件系统同步并发上限信号量。
         _sync_concurrency: 当前同步并发上限值。
@@ -270,8 +264,6 @@ class IndexManager:
                 meme_no_text/（即 Path(memes_dir).parent / "meme_no_text"）。
                 插件层无需显式传入。
         """
-        import asyncio
-
         self._data_dir = Path(data_dir)
         self._memes_dir = Path(memes_dir)
         if no_text_dir is not None:
@@ -284,8 +276,6 @@ class IndexManager:
         self._entries: dict[str, dict[str, str]] = {}
         self._dedup_index: dict[str, str] = {}
         self._embeddings: dict[str, dict[str, object]] = {}
-        self._embeddings_stale: bool = False
-        self._lock = asyncio.Lock()
         self._locked: bool = False
         self.index_version: int = 1
 
@@ -311,7 +301,8 @@ class IndexManager:
         3. 解析 JSON，调用 validate_index() 校验结构。
         4. 校验每条 entry 含 filename、text、text_hash。
         5. 校验 text_hash 一致性并自动修复不一致项。
-        6. 加载 embeddings.json，损坏或不存在时标记 _embeddings_stale。
+        6. 加载 embeddings.json，损坏或不存在时置空 _embeddings
+           （由 sync_with_filesystem() 重建阶段全量重建）。
 
         Raises:
             IndexCorruptedError: index.json 结构损坏或缺少必要字段。
@@ -366,16 +357,14 @@ class IndexManager:
                 len(inconsistent_ids),
                 inconsistent_ids,
             )
-            self._embeddings_stale = True
 
     def _load_embeddings(self) -> None:
         """加载 embeddings.json。"""
         emb_path = self._data_dir / "embeddings.json"
 
         if not emb_path.exists():
-            logger.info("embeddings.json 不存在，标记为待重建")
+            logger.info("embeddings.json 不存在，置空 _embeddings 待重建")
             self._embeddings = {}
-            self._embeddings_stale = True
             return
 
         try:
@@ -386,9 +375,8 @@ class IndexManager:
                 len(self._embeddings),
             )
         except (ValueError, UnicodeDecodeError) as exc:
-            logger.warning("embeddings.json 解析失败，标记为待重建: %s", exc)
+            logger.warning("embeddings.json 解析失败，置空 _embeddings 待重建: %s", exc)
             self._embeddings = {}
-            self._embeddings_stale = True
 
     @staticmethod
     def validate_index(data: object) -> None:
@@ -562,7 +550,6 @@ class IndexManager:
         emb_path = self._data_dir / "embeddings.json"
         self._atomic_write(emb_path, self._embeddings)
         logger.info("embeddings.json 已保存，共 %d 条记录", len(self._embeddings))
-        self._embeddings_stale = False
 
     # ------------------------------------------------------------------
     # 单条增删
@@ -930,8 +917,6 @@ class IndexManager:
         Returns:
             成功重建的条目数量。
         """
-        import asyncio
-
         rebuild_targets: list[str] = [
             eid
             for eid in self._entries
@@ -1025,8 +1010,6 @@ class IndexManager:
         Returns:
             (added, deduped, no_text_moved) 三元组。
         """
-        import asyncio
-
         new_files = sorted(f for f in existing_files if f not in filename_to_id)
         if not new_files:
             return (0, 0, 0)

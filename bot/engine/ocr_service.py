@@ -6,8 +6,6 @@ deepseek-ai/DeepSeek-OCR 视觉模型进行图片文字识别。
 实现 index_manager.OcrProvider 协议。
 """
 
-from __future__ import annotations
-
 import base64
 import logging
 import os

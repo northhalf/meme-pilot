@@ -10,7 +10,6 @@ import ujson
 from bot.engine.index_manager import (
     AddResult,
     IndexCorruptedError,
-    IndexLockedError,
     IndexManager,
     SyncResult,
     _resolve_unique_filename,
@@ -66,15 +65,6 @@ class TestIndexCorruptedError:
         """应为 Exception 子类。"""
         with pytest.raises(IndexCorruptedError):
             raise IndexCorruptedError("test")
-
-
-class TestIndexLockedError:
-    """IndexLockedError 异常测试。"""
-
-    def test_is_exception(self) -> None:
-        """应为 Exception 子类。"""
-        with pytest.raises(IndexLockedError):
-            raise IndexLockedError("test")
 
 
 class TestSyncResult:
@@ -278,22 +268,22 @@ class TestIndexManagerLoad:
         with pytest.raises(IndexCorruptedError, match="text_hash"):
             mgr.load()
 
-    def test_load_marks_embeddings_stale_if_missing(
+    def test_load_resets_embeddings_if_missing(
         self, tmp_path: Path
     ) -> None:
-        """embeddings.json 不存在时 _embeddings_stale 为 True。"""
+        """embeddings.json 不存在时 _embeddings 置空，由 sync 重建阶段全量重建。"""
         index_data = {"version": 1, "entries": {}}
         (tmp_path / "index.json").write_text(
             ujson.dumps(index_data), encoding="utf-8"
         )
         mgr = IndexManager(data_dir=str(tmp_path))
         mgr.load()
-        assert mgr._embeddings_stale is True
+        assert mgr._embeddings == {}
 
-    def test_load_marks_embeddings_stale_if_corrupt(
+    def test_load_resets_embeddings_if_corrupt(
         self, tmp_path: Path
     ) -> None:
-        """embeddings.json 损坏时 _embeddings_stale 为 True。"""
+        """embeddings.json 损坏时 load() 不抛异常，置空 _embeddings 待重建。"""
         index_data = {"version": 1, "entries": {}}
         (tmp_path / "index.json").write_text(
             ujson.dumps(index_data), encoding="utf-8"
@@ -303,7 +293,7 @@ class TestIndexManagerLoad:
         )
         mgr = IndexManager(data_dir=str(tmp_path))
         mgr.load()
-        assert mgr._embeddings_stale is True
+        assert mgr._embeddings == {}
 
     def test_load_creates_data_dir_if_missing(self, tmp_path: Path) -> None:
         """data_dir 不存在时自动创建。"""
@@ -428,27 +418,6 @@ class TestTextHashConsistency:
         # hash 应被自动修复为正确值
         expected = compute_text_hash("hello world")
         assert mgr._entries["1"]["text_hash"] == expected
-
-    def test_inconsistent_hash_marks_embeddings_stale(
-        self, tmp_path: Path
-    ) -> None:
-        """text_hash 不一致时应标记 embeddings 为 stale。"""
-        index_data = {
-            "version": 1,
-            "entries": {
-                "1": {
-                    "filename": "x.jpg",
-                    "text": "hello",
-                    "text_hash": "sha256:wrong",
-                }
-            },
-        }
-        (tmp_path / "index.json").write_text(
-            ujson.dumps(index_data), encoding="utf-8"
-        )
-        mgr = IndexManager(data_dir=str(tmp_path))
-        mgr.load()
-        assert mgr._embeddings_stale is True
 
 
 class TestFindNextId:
@@ -1348,8 +1317,8 @@ class TestSyncWithFilesystem:
         """embeddings.json 缺失时，对全部已有条目全量重建 embedding。
 
         场景：index.json 有效（2 条），但 embeddings.json 不存在。
-        load() 标记 _embeddings_stale=True 且 _embeddings 为空。
-        sync 时所有 id 均不在 _embeddings → 全部重建。不应重新 OCR。
+        load() 将 _embeddings 置空，sync 时所有 id 均不在 _embeddings → 全部重建。
+        不应重新 OCR。
         """
         data_dir = tmp_path / "data"
         memes_dir = tmp_path / "memes"
@@ -1400,8 +1369,8 @@ class TestSyncWithFilesystem:
             embedding_provider=RecordingEmbed(),
         )
         mgr.load()
-        # load 后 embeddings 缺失，标记待重建
-        assert mgr._embeddings_stale is True
+        # load 后 embeddings 缺失，_embeddings 为空待重建
+        assert mgr._embeddings == {}
 
         import asyncio
 
@@ -1421,8 +1390,6 @@ class TestSyncWithFilesystem:
         assert set(mgr._embeddings.keys()) == {"1", "2"}
         assert mgr._embeddings["1"]["embedding"] == [0.1, 0.2]
         assert mgr._embeddings["2"]["embedding"] == [0.1, 0.2]
-        # 重建并落盘后 stale 标志清除
-        assert mgr._embeddings_stale is False
         # 落盘检查
         disk_emb = ujson.loads(
             (data_dir / "embeddings.json").read_text(encoding="utf-8")
