@@ -8,11 +8,15 @@ import pytest
 import ujson
 
 from bot.engine.index_manager import (
+    AddResult,
     IndexCorruptedError,
     IndexLockedError,
     IndexManager,
     SyncResult,
+    _resolve_unique_filename,
     compute_text_hash,
+    dedup_key,
+    is_blank_text,
     normalize_text,
 )
 
@@ -81,7 +85,56 @@ class TestSyncResult:
         r = SyncResult(added=3, deleted=1, failed=["bad.jpg"])
         assert r.added == 3
         assert r.deleted == 1
+        assert r.deduped == 0
+        assert r.no_text_moved == 0
         assert r.failed == ["bad.jpg"]
+
+    def test_deduped_and_no_text_defaults_zero(self) -> None:
+        """deduped 与 no_text_moved 默认为 0。"""
+        r = SyncResult()
+        assert r.deduped == 0
+        assert r.no_text_moved == 0
+
+    def test_deduped_and_no_text_movable(self) -> None:
+        """deduped 与 no_text_moved 可单独赋值。"""
+        r = SyncResult(deduped=2, no_text_moved=1)
+        assert r.deduped == 2
+        assert r.no_text_moved == 1
+        assert r.added == 0
+
+
+class TestAddResult:
+    """AddResult 数据类测试。"""
+
+    def test_added(self) -> None:
+        """正常新增结果。"""
+        r = AddResult(entry_id="1", reason="added")
+        assert r.entry_id == "1"
+        assert r.reason == "added"
+        assert r.replaced_filename is None
+        assert r.moved_to is None
+
+    def test_replaced(self) -> None:
+        """去重覆盖结果。"""
+        r = AddResult(
+            entry_id="3",
+            reason="replaced",
+            replaced_filename="old.jpg",
+        )
+        assert r.entry_id == "3"
+        assert r.replaced_filename == "old.jpg"
+        assert r.moved_to is None
+
+    def test_no_text(self) -> None:
+        """无文字移图结果。"""
+        r = AddResult(
+            entry_id=None,
+            reason="no_text",
+            moved_to="/app/meme_no_text/blank.jpg",
+        )
+        assert r.entry_id is None
+        assert r.moved_to == "/app/meme_no_text/blank.jpg"
+        assert r.replaced_filename is None
 
 
 class TestIndexManagerInit:
@@ -92,12 +145,18 @@ class TestIndexManagerInit:
         mgr = IndexManager()
         assert mgr._data_dir == Path("data")
         assert mgr._memes_dir == Path("memes")
+        assert mgr._no_text_dir == Path("meme_no_text")
 
     def test_custom_dirs(self) -> None:
         """可自定义目录。"""
         mgr = IndexManager(data_dir="/tmp/idx", memes_dir="/tmp/memes")
         assert mgr._data_dir == Path("/tmp/idx")
         assert mgr._memes_dir == Path("/tmp/memes")
+
+    def test_custom_no_text_dir(self) -> None:
+        """可自定义无文字图目录。"""
+        mgr = IndexManager(no_text_dir="/tmp/blank")
+        assert mgr._no_text_dir == Path("/tmp/blank")
 
     def test_entries_empty_initially(self) -> None:
         """未加载时 entries 为空。"""
@@ -519,17 +578,20 @@ class TestAddEntry:
     """add_entry() 测试。"""
 
     def test_add_entry_assigns_id(self, tmp_path: Path) -> None:
-        """add_entry 分配 ID 并写入磁盘。"""
+        """add_entry 正常新增，返回 AddResult(entry_id, 'added')。"""
         mgr = IndexManager(data_dir=str(tmp_path))
         mgr._entries = {}
         mgr._embeddings = {}
 
-        new_id = mgr.add_entry(
+        result = mgr.add_entry(
             filename="new.jpg",
             text="新图片",
             embedding=[0.1, 0.2],
         )
-        assert new_id == "1"
+        assert result.entry_id == "1"
+        assert result.reason == "added"
+        assert result.replaced_filename is None
+        assert result.moved_to is None
         assert mgr._entries["1"]["filename"] == "new.jpg"
         assert mgr._entries["1"]["text"] == "新图片"
         assert mgr._entries["1"]["text_hash"] == compute_text_hash("新图片")
@@ -541,21 +603,22 @@ class TestAddEntry:
         mgr._entries = {"1": {"filename": "a.jpg", "text": "a", "text_hash": "x"}}
         mgr._embeddings = {}
 
-        new_id = mgr.add_entry(
+        result = mgr.add_entry(
             filename="b.jpg",
             text="b",
             embedding=[0.5],
         )
-        assert new_id == "2"  # 无空洞，取 max+1
+        assert result.entry_id == "2"  # 无空洞，取 max+1
+        assert result.reason == "added"
 
         # 删除 1 后添加，应复用 1
         mgr.remove_entry("1")
-        new_id2 = mgr.add_entry(
+        result2 = mgr.add_entry(
             filename="c.jpg",
             text="c",
             embedding=[0.8],
         )
-        assert new_id2 == "1"
+        assert result2.entry_id == "1"
 
     def test_add_entry_saves_to_disk(self, tmp_path: Path) -> None:
         """add_entry 后数据持久化到磁盘。"""
@@ -571,6 +634,100 @@ class TestAddEntry:
 
         emb_path = tmp_path / "embeddings.json"
         assert emb_path.exists()
+
+    def test_add_entry_replaces_on_dedup(
+        self, tmp_path: Path
+    ) -> None:
+        """去重键命中已有条目时，复用旧 ID 覆盖并删旧图文件。
+
+        场景：已有 a.jpg(text="加班 好累")，再 add b.jpg(text="加班好累")，
+        两者 dedup_key 相同 → 复用 id=1，filename 改为 b.jpg，
+        磁盘 a.jpg 删除、b.jpg 保留，返回 reason='replaced'。
+        """
+        memes_dir = tmp_path / "memes"
+        memes_dir.mkdir()
+        (memes_dir / "a.jpg").write_text("a", encoding="utf-8")
+        (memes_dir / "b.jpg").write_text("b", encoding="utf-8")
+
+        mgr = IndexManager(data_dir=str(tmp_path), memes_dir=str(memes_dir))
+        mgr._entries = {
+            "1": {
+                "filename": "a.jpg",
+                "text": "加班 好累",
+                "text_hash": compute_text_hash("加班 好累"),
+            }
+        }
+        mgr._embeddings = {}
+
+        result = mgr.add_entry(
+            filename="b.jpg",
+            text="加班好累",
+            embedding=[0.9],
+        )
+        assert result.entry_id == "1"
+        assert result.reason == "replaced"
+        assert result.replaced_filename == "a.jpg"
+        # 旧图文件已删除
+        assert not (memes_dir / "a.jpg").exists()
+        # 新图文件保留
+        assert (memes_dir / "b.jpg").exists()
+        # 索引已覆盖：id=1 的 filename 变为 b.jpg，text 与 hash 更新
+        assert mgr._entries["1"]["filename"] == "b.jpg"
+        assert mgr._entries["1"]["text"] == "加班好累"
+        assert mgr._entries["1"]["text_hash"] == compute_text_hash("加班好累")
+        assert mgr._embeddings["1"]["embedding"] == [0.9]
+
+    def test_add_entry_replaces_when_old_image_missing(
+        self, tmp_path: Path
+    ) -> None:
+        """旧图文件已被外部删除时，去重覆盖仍完成索引替换（missing_ok）。"""
+        memes_dir = tmp_path / "memes"
+        memes_dir.mkdir()
+        (memes_dir / "b.jpg").write_text("b", encoding="utf-8")
+        # a.jpg 在索引里但磁盘上不存在（模拟用户手动删图但索引还在）
+
+        mgr = IndexManager(data_dir=str(tmp_path), memes_dir=str(memes_dir))
+        mgr._entries = {
+            "1": {
+                "filename": "a.jpg",
+                "text": "猫",
+                "text_hash": compute_text_hash("猫"),
+            }
+        }
+        mgr._embeddings = {}
+
+        result = mgr.add_entry("b.jpg", "猫", [0.5])
+        assert result.reason == "replaced"
+        assert result.replaced_filename == "a.jpg"
+        assert mgr._entries["1"]["filename"] == "b.jpg"
+
+    def test_add_entry_no_text_moves_file(
+        self, tmp_path: Path
+    ) -> None:
+        """OCR 无文字时移到 meme_no_text/ 不进索引，返回 reason='no_text'。"""
+        memes_dir = tmp_path / "memes"
+        no_text_dir = tmp_path / "meme_no_text"
+        memes_dir.mkdir()
+        (memes_dir / "blank.jpg").write_text("x", encoding="utf-8")
+
+        mgr = IndexManager(
+            data_dir=str(tmp_path),
+            memes_dir=str(memes_dir),
+            no_text_dir=str(no_text_dir),
+        )
+        mgr._entries = {}
+        mgr._embeddings = {}
+
+        result = mgr.add_entry("blank.jpg", "   ", [0.0])
+        assert result.entry_id is None
+        assert result.reason == "no_text"
+        assert result.moved_to is not None
+        assert Path(result.moved_to) == no_text_dir / "blank.jpg"
+        # 源文件已移走
+        assert not (memes_dir / "blank.jpg").exists()
+        # 未写入索引
+        assert mgr._entries == {}
+        assert mgr._embeddings == {}
 
 
 class TestRemoveEntry:
@@ -997,7 +1154,8 @@ class TestSyncWithFilesystem:
 
         class OrderedOcr:
             async def ocr(self, image_path: str) -> str:
-                return "text"
+                # 每张图返回不同文本，避免触发去重，专注验证文件名升序分配 ID
+                return f"text of {Path(image_path).name}"
 
         class MockEmbed:
             async def embed(self, text: str) -> list[float]:
@@ -1061,7 +1219,8 @@ class TestSyncWithFilesystem:
                 await asyncio.sleep(0.01)
                 async with counter_lock:
                     in_flight -= 1
-                return "text"
+                # 每张图返回不同文本，避免触发去重
+                return f"text of {Path(image_path).name}"
 
         class MockEmbed:
             async def embed(self, text: str) -> list[float]:
@@ -1083,6 +1242,7 @@ class TestSyncWithFilesystem:
         result = asyncio.run(run_sync())
 
         assert result.added == 6
+        assert result.deduped == 0
         assert max_in_flight >= 2, (
             f"OCR 未并行执行，最大同时执行数仅 {max_in_flight}"
         )
@@ -1327,4 +1487,472 @@ class TestSyncWithFilesystem:
         assert result.failed == ["bad.jpg"]
         assert mgr._embeddings["1"]["embedding"] == [0.5]
         assert "2" not in mgr._embeddings or "embedding" not in mgr._embeddings.get("2", {})
+
+    def test_sync_dedup_new_vs_existing(self, tmp_path: Path) -> None:
+        """新图去重键命中已有条目时，现有条目赢，删新图文件，不新增。
+
+        场景：索引已有 old.jpg(text="加班")，memes/ 放入 new.jpg
+        且 OCR 得 "加 班"（去空格同键）→ 现有条目赢，new.jpg 被删，
+        索引不变，deduped=1, added=0。
+        """
+        data_dir = tmp_path / "data"
+        memes_dir = tmp_path / "memes"
+        data_dir.mkdir()
+        memes_dir.mkdir()
+
+        (memes_dir / "old.jpg").write_text("old", encoding="utf-8")
+        (memes_dir / "new.jpg").write_text("new", encoding="utf-8")
+
+        index_data = {
+            "version": 1,
+            "entries": {
+                "1": {
+                    "filename": "old.jpg",
+                    "text": "加班",
+                    "text_hash": compute_text_hash("加班"),
+                }
+            },
+        }
+        (data_dir / "index.json").write_text(
+            ujson.dumps(index_data), encoding="utf-8"
+        )
+        (data_dir / "embeddings.json").write_text(
+            ujson.dumps(
+                {"1": {"text_hash": compute_text_hash("加班"), "embedding": [0.1]}}
+            ),
+            encoding="utf-8",
+        )
+
+        class MockOcr:
+            async def ocr(self, image_path: str) -> str:
+                # new.jpg OCR 得 "加 班"，与已有 "加班" 去空格同键
+                return "加 班"
+
+        class MockEmbed:
+            async def embed(self, text: str) -> list[float]:
+                return [0.5]
+
+        mgr = IndexManager(
+            data_dir=str(data_dir),
+            memes_dir=str(memes_dir),
+            ocr_provider=MockOcr(),
+            embedding_provider=MockEmbed(),
+        )
+        mgr.load()
+
+        import asyncio
+
+        async def run_sync() -> SyncResult:
+            return await mgr.sync_with_filesystem()
+
+        result = asyncio.run(run_sync())
+        assert result.added == 0
+        assert result.deduped == 1
+        assert result.no_text_moved == 0
+        assert result.failed == []
+        # 现有条目保留，新图被删
+        assert not (memes_dir / "new.jpg").exists()
+        assert (memes_dir / "old.jpg").exists()
+        assert mgr._entries["1"]["filename"] == "old.jpg"
+        assert len(mgr._entries) == 1
+
+    def test_sync_dedup_between_new_images(self, tmp_path: Path) -> None:
+        """两张新图互重时，文件名升序靠前的赢，靠后的被删。
+
+        场景：memes/ 放入 b.jpg 和 a.jpg，OCR 都得 "同文"。
+        a.jpg 靠前 → 保留并进索引；b.jpg 靠后 → 删除。added=1, deduped=1。
+        """
+        data_dir = tmp_path / "data"
+        memes_dir = tmp_path / "memes"
+        data_dir.mkdir()
+        memes_dir.mkdir()
+
+        (memes_dir / "b.jpg").write_text("b", encoding="utf-8")
+        (memes_dir / "a.jpg").write_text("a", encoding="utf-8")
+
+        index_data = {"version": 1, "entries": {}}
+        (data_dir / "index.json").write_text(
+            ujson.dumps(index_data), encoding="utf-8"
+        )
+
+        class SameOcr:
+            async def ocr(self, image_path: str) -> str:
+                return "同文"
+
+        class MockEmbed:
+            async def embed(self, text: str) -> list[float]:
+                return [0.5]
+
+        mgr = IndexManager(
+            data_dir=str(data_dir),
+            memes_dir=str(memes_dir),
+            ocr_provider=SameOcr(),
+            embedding_provider=MockEmbed(),
+        )
+        mgr.load()
+
+        import asyncio
+
+        async def run_sync() -> SyncResult:
+            return await mgr.sync_with_filesystem()
+
+        result = asyncio.run(run_sync())
+        assert result.added == 1
+        assert result.deduped == 1
+        # a.jpg 靠前保留，b.jpg 靠后被删
+        assert (memes_dir / "a.jpg").exists()
+        assert not (memes_dir / "b.jpg").exists()
+        assert len(mgr._entries) == 1
+        assert mgr._entries["1"]["filename"] == "a.jpg"
+
+    def test_sync_no_text_image_moved(self, tmp_path: Path) -> None:
+        """OCR 无文字的新图移到 meme_no_text/，不进索引。
+
+        场景：memes/ 放入 blank.jpg（OCR 返回纯空白）和 ok.jpg（有文字）。
+        blank.jpg → 移到 meme_no_text/；ok.jpg → 正常新增。
+        added=1, no_text_moved=1, deduped=0。
+        """
+        data_dir = tmp_path / "data"
+        memes_dir = tmp_path / "memes"
+        no_text_dir = tmp_path / "meme_no_text"
+        data_dir.mkdir()
+        memes_dir.mkdir()
+
+        (memes_dir / "blank.jpg").write_text("x", encoding="utf-8")
+        (memes_dir / "ok.jpg").write_text("y", encoding="utf-8")
+
+        index_data = {"version": 1, "entries": {}}
+        (data_dir / "index.json").write_text(
+            ujson.dumps(index_data), encoding="utf-8"
+        )
+
+        class MockOcr:
+            async def ocr(self, image_path: str) -> str:
+                if "blank" in image_path:
+                    return "   "  # 纯空白
+                return "有文字"
+
+        class MockEmbed:
+            async def embed(self, text: str) -> list[float]:
+                return [0.5]
+
+        mgr = IndexManager(
+            data_dir=str(data_dir),
+            memes_dir=str(memes_dir),
+            no_text_dir=str(no_text_dir),
+            ocr_provider=MockOcr(),
+            embedding_provider=MockEmbed(),
+        )
+        mgr.load()
+
+        import asyncio
+
+        async def run_sync() -> SyncResult:
+            return await mgr.sync_with_filesystem()
+
+        result = asyncio.run(run_sync())
+        assert result.added == 1
+        assert result.no_text_moved == 1
+        assert result.deduped == 0
+        assert result.failed == []
+        # blank.jpg 移到 meme_no_text/
+        assert not (memes_dir / "blank.jpg").exists()
+        assert (no_text_dir / "blank.jpg").exists()
+        # ok.jpg 正常进索引
+        assert (memes_dir / "ok.jpg").exists()
+        assert len(mgr._entries) == 1
+        assert mgr._entries["1"]["filename"] == "ok.jpg"
+
+    def test_sync_counts_do_not_overlap(self, tmp_path: Path) -> None:
+        """混合场景计数不重叠：2 新增 + 1 去重 + 1 无文字。
+
+        memes/ 放 4 张新图：
+        - ok1.jpg, ok2.jpg：文本不同，正常新增
+        - dup.jpg：OCR 文本与 ok1.jpg 相同 → 去重删除
+        - blank.jpg：OCR 纯空白 → 移到 meme_no_text/
+        结果：added=2, deduped=1, no_text_moved=1, deleted=0, failed=[]。
+
+        文件名升序处理：blank, dup, ok1, ok2。
+        blank 无文字移走；dup（"文 本一"→"文本一"）先处理，winner_keys 为空 → 正常新增成赢家；
+        ok1（"文本一"）后处理，键命中 dup → ok1 被去重删除；
+        ok2 正常新增。故保留 dup+ok2，删除 ok1。
+        """
+        data_dir = tmp_path / "data"
+        memes_dir = tmp_path / "memes"
+        no_text_dir = tmp_path / "meme_no_text"
+        data_dir.mkdir()
+        memes_dir.mkdir()
+
+        # 文件名升序：blank.jpg, dup.jpg, ok1.jpg, ok2.jpg
+        (memes_dir / "ok1.jpg").write_text("1", encoding="utf-8")
+        (memes_dir / "ok2.jpg").write_text("2", encoding="utf-8")
+        (memes_dir / "dup.jpg").write_text("3", encoding="utf-8")
+        (memes_dir / "blank.jpg").write_text("4", encoding="utf-8")
+
+        index_data = {"version": 1, "entries": {}}
+        (data_dir / "index.json").write_text(
+            ujson.dumps(index_data), encoding="utf-8"
+        )
+
+        class MockOcr:
+            async def ocr(self, image_path: str) -> str:
+                name = Path(image_path).name
+                if name == "blank.jpg":
+                    return "  "
+                if name == "ok1.jpg":
+                    return "文本一"
+                if name == "dup.jpg":
+                    return "文 本一"  # 去空格 == "文本一"，与 ok1 重复
+                if name == "ok2.jpg":
+                    return "文本二"
+                return "other"
+
+        class MockEmbed:
+            async def embed(self, text: str) -> list[float]:
+                return [0.5]
+
+        mgr = IndexManager(
+            data_dir=str(data_dir),
+            memes_dir=str(memes_dir),
+            no_text_dir=str(no_text_dir),
+            ocr_provider=MockOcr(),
+            embedding_provider=MockEmbed(),
+        )
+        mgr.load()
+
+        import asyncio
+
+        async def run_sync() -> SyncResult:
+            return await mgr.sync_with_filesystem()
+
+        result = asyncio.run(run_sync())
+        assert result.added == 2
+        assert result.deduped == 1
+        assert result.no_text_moved == 1
+        assert result.deleted == 0
+        assert result.failed == []
+        # 文件名升序处理：dup.jpg 先于 ok1.jpg。
+        # dup.jpg 先处理时 winner_keys 为空（无已有条目），dup 正常新增成为赢家。
+        # ok1.jpg 后处理，dedup_key("文本一") == dup 的键 → ok1 被去重删除。
+        # 因此保留的是 dup.jpg，删除的是 ok1.jpg。
+        assert (memes_dir / "dup.jpg").exists()
+        assert not (memes_dir / "ok1.jpg").exists()
+        assert (memes_dir / "ok2.jpg").exists()
+        assert not (memes_dir / "blank.jpg").exists()
+        assert (no_text_dir / "blank.jpg").exists()
+        assert len(mgr._entries) == 2
+
+    def test_sync_preserves_old_no_text_placeholder(
+        self, tmp_path: Path
+    ) -> None:
+        """本功能上线前留下的「未识别到文字」占位条目，sync 后保留不清理。
+
+        场景：index.json 已有 id=1 text="未识别到文字"（旧占位条目），
+        对应文件 cat.jpg 仍在 memes/。sync 重建阶段不重新 OCR，
+        该条目保留。dedup_key("未识别到文字") 非空，不触发无文字排除。
+        """
+        data_dir = tmp_path / "data"
+        memes_dir = tmp_path / "memes"
+        data_dir.mkdir()
+        memes_dir.mkdir()
+
+        (memes_dir / "cat.jpg").write_text("c", encoding="utf-8")
+
+        old_placeholder = "未识别到文字"
+        index_data = {
+            "version": 1,
+            "entries": {
+                "1": {
+                    "filename": "cat.jpg",
+                    "text": old_placeholder,
+                    "text_hash": compute_text_hash(old_placeholder),
+                }
+            },
+        }
+        (data_dir / "index.json").write_text(
+            ujson.dumps(index_data), encoding="utf-8"
+        )
+        (data_dir / "embeddings.json").write_text(
+            ujson.dumps(
+                {
+                    "1": {
+                        "text_hash": compute_text_hash(old_placeholder),
+                        "embedding": [0.0],
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        mgr = IndexManager(data_dir=str(data_dir), memes_dir=str(memes_dir))
+        mgr.load()
+
+        import asyncio
+
+        async def run_sync() -> SyncResult:
+            return await mgr.sync_with_filesystem()
+
+        result = asyncio.run(run_sync())
+        # 旧占位条目保留
+        assert "1" in mgr._entries
+        assert mgr._entries["1"]["text"] == old_placeholder
+        assert result.added == 0
+        assert result.deleted == 0
+        assert result.deduped == 0
+        assert result.no_text_moved == 0
+
+
+class TestDedupKey:
+    """dedup_key 工具函数测试。"""
+
+    def test_removes_all_whitespace(self) -> None:
+        """去除所有空白字符（含半角空格、制表符、换行）。"""
+        assert dedup_key("一只猫 抓蝴蝶") == "一只猫抓蝴蝶"
+        assert dedup_key("a\tb\nc") == "abc"
+
+    def test_space_count_does_not_matter(self) -> None:
+        """空格数量不同但字符相同视为同一键。"""
+        assert dedup_key("加班 好累") == dedup_key("加班好累")
+        assert dedup_key("加班  好累") == dedup_key("加班好累")
+
+    def test_fullwidth_space_removed(self) -> None:
+        """全角空格也被去除。"""
+        assert dedup_key("加班　好累") == "加班好累"
+
+    def test_empty_string(self) -> None:
+        """空字符串返回空字符串。"""
+        assert dedup_key("") == ""
+
+    def test_whitespace_only_returns_empty(self) -> None:
+        """纯空白返回空字符串。"""
+        assert dedup_key("   \t\n  ") == ""
+
+
+class TestIsBlankText:
+    """is_blank_text 工具函数测试。"""
+
+    def test_pure_whitespace_is_blank(self) -> None:
+        """纯空白判定为无文字。"""
+        assert is_blank_text("   \t\n  ") is True
+        assert is_blank_text("") is True
+
+    def test_has_text_not_blank(self) -> None:
+        """有非空白字符则非无文字。"""
+        assert is_blank_text("a") is False
+        assert is_blank_text(" 一只猫 ") is False
+
+
+class TestResolveUniqueFilename:
+    """_resolve_unique_filename 模块级函数测试。"""
+
+    def test_no_conflict(self, tmp_path: Path) -> None:
+        """目标不存在时直接返回原路径。"""
+        result = _resolve_unique_filename(tmp_path, "cat.jpg")
+        assert result == tmp_path / "cat.jpg"
+
+    def test_conflict_appends_sequence(self, tmp_path: Path) -> None:
+        """目标已存在时追加 _2 序号。"""
+        (tmp_path / "cat.jpg").write_text("x", encoding="utf-8")
+        result = _resolve_unique_filename(tmp_path, "cat.jpg")
+        assert result == tmp_path / "cat_2.jpg"
+
+    def test_multiple_conflicts(self, tmp_path: Path) -> None:
+        """_2 也存在时追加 _3。"""
+        (tmp_path / "cat.jpg").write_text("x", encoding="utf-8")
+        (tmp_path / "cat_2.jpg").write_text("x", encoding="utf-8")
+        result = _resolve_unique_filename(tmp_path, "cat.jpg")
+        assert result == tmp_path / "cat_3.jpg"
+
+    def test_preserves_extension(self, tmp_path: Path) -> None:
+        """多段扩展名保留完整后缀。"""
+        (tmp_path / "a.tar.gz").write_text("x", encoding="utf-8")
+        result = _resolve_unique_filename(tmp_path, "a.tar.gz")
+        # Path.stem 只去掉最后一段后缀 .gz，stem="a.tar"
+        assert result == tmp_path / "a.tar_2.gz"
+
+
+class TestFindEntryByDedupKey:
+    """_find_entry_by_dedup_key 私有方法测试。"""
+
+    def test_match_found(self) -> None:
+        """去重键命中已有条目时返回其 ID。"""
+        mgr = IndexManager()
+        mgr._entries = {
+            "1": {"filename": "a.jpg", "text": "加班 好累", "text_hash": "x"},
+            "2": {"filename": "b.jpg", "text": "狗在跑", "text_hash": "y"},
+        }
+        # "加班 好累" 去空格 == "加班好累"
+        assert mgr._find_entry_by_dedup_key("加班好累") == "1"
+
+    def test_no_match_returns_none(self) -> None:
+        """无命中返回 None。"""
+        mgr = IndexManager()
+        mgr._entries = {
+            "1": {"filename": "a.jpg", "text": "猫", "text_hash": "x"},
+        }
+        assert mgr._find_entry_by_dedup_key("狗") is None
+
+    def test_empty_entries_returns_none(self) -> None:
+        """空索引返回 None。"""
+        mgr = IndexManager()
+        assert mgr._find_entry_by_dedup_key("anything") is None
+
+
+class TestMoveToNoText:
+    """_move_to_no_text 私有方法测试。"""
+
+    def test_moves_file_to_no_text_dir(self, tmp_path: Path) -> None:
+        """无文字图从 memes/ 移到 meme_no_text/。"""
+        memes_dir = tmp_path / "memes"
+        no_text_dir = tmp_path / "meme_no_text"
+        memes_dir.mkdir()
+        src = memes_dir / "blank.jpg"
+        src.write_text("fake", encoding="utf-8")
+
+        mgr = IndexManager(
+            memes_dir=str(memes_dir),
+            no_text_dir=str(no_text_dir),
+        )
+        moved_to = mgr._move_to_no_text("blank.jpg")
+
+        assert no_text_dir.exists()
+        assert not src.exists()
+        assert Path(moved_to) == no_text_dir / "blank.jpg"
+        assert (no_text_dir / "blank.jpg").read_text(encoding="utf-8") == "fake"
+
+    def test_creates_no_text_dir_if_missing(self, tmp_path: Path) -> None:
+        """meme_no_text/ 不存在时自动创建。"""
+        memes_dir = tmp_path / "memes"
+        no_text_dir = tmp_path / "meme_no_text"
+        memes_dir.mkdir()
+        (memes_dir / "b.png").write_text("x", encoding="utf-8")
+
+        mgr = IndexManager(
+            memes_dir=str(memes_dir),
+            no_text_dir=str(no_text_dir),
+        )
+        assert not no_text_dir.exists()
+        mgr._move_to_no_text("b.png")
+        assert no_text_dir.exists()
+
+    def test_name_conflict_appends_sequence(self, tmp_path: Path) -> None:
+        """目标已存在同名文件时追加序号。"""
+        memes_dir = tmp_path / "memes"
+        no_text_dir = tmp_path / "meme_no_text"
+        memes_dir.mkdir()
+        no_text_dir.mkdir()
+        (memes_dir / "blank.jpg").write_text("new", encoding="utf-8")
+        (no_text_dir / "blank.jpg").write_text("old", encoding="utf-8")
+
+        mgr = IndexManager(
+            memes_dir=str(memes_dir),
+            no_text_dir=str(no_text_dir),
+        )
+        moved_to = mgr._move_to_no_text("blank.jpg")
+
+        assert Path(moved_to) == no_text_dir / "blank_2.jpg"
+        assert (no_text_dir / "blank_2.jpg").read_text(encoding="utf-8") == "new"
+        # 原有文件不被覆盖
+        assert (no_text_dir / "blank.jpg").read_text(encoding="utf-8") == "old"
+        assert not (memes_dir / "blank.jpg").exists()
 

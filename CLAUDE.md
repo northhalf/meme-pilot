@@ -159,6 +159,8 @@ uv run python -m compileall bot
 
 `text_hash` 规则：先规范化 OCR 文本，去除首尾空白并合并连续空白，再计算 SHA-256，格式为 `sha256:<hex>`。
 
+去重键规则：以「去除所有空白字符（含半角/全角空格、制表符、换行）后的 OCR 文本」作为去重键，实时计算不落盘。`add_entry` 与 `sync_with_filesystem` 新增阶段据此判定完全相同图片：`/add` 新图命中已有条目时用新图替换旧图（复用旧 ID、删旧图文件）；`/refresh` 保留已有或文件名靠前者、删除重复新图。OCR 去所有空白后为空的无文字图片不进入索引，移动到 `memes/` 同级的 `meme_no_text/` 目录（Docker 卷 `./meme_no_text:/app/meme_no_text` 挂载）。
+
 如果用户手动修改 `index.json` 中的 `text` 导致 `text_hash` 不一致，启动或 `/refresh` 时应自动更新该条目的 `text_hash` 并重建对应 embedding。
 
 `index.json` 损坏或缺少必要字段时，拒绝启动或刷新，要求用户修复。`embeddings.json` 是派生文件；如果损坏且 `index.json` 有效，应自动重建。

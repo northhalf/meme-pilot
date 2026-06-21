@@ -30,3 +30,4 @@ log/
 # claude code
 .claude/settings.local.json
 .codegraph/
+CLAUDE.local.md

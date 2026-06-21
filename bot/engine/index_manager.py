@@ -7,8 +7,10 @@
 from __future__ import annotations
 
 import hashlib
+import itertools
 import logging
 import os
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -53,6 +55,62 @@ def compute_text_hash(text: str) -> str:
     normalized = normalize_text(text)
     digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
     return f"sha256:{digest}"
+
+
+def dedup_key(text: str) -> str:
+    """计算 OCR 文本的去重键。
+
+    去除所有空白字符（含半角/全角空格、制表符、换行等）后的纯文本。
+    比 normalize_text 更严格：normalize_text 保留单词间单空格，
+    dedup_key 完全去除空格，用于判定「是否完全相同的图片」。
+
+    Args:
+        text: 原始 OCR 文本。
+
+    Returns:
+        去除所有空白字符后的文本（可能为空字符串）。
+    """
+    return "".join(text.split())
+
+
+def is_blank_text(text: str) -> bool:
+    """判断 OCR 文本是否为「无文字」。
+
+    去除所有空白后为空即判定无文字。
+
+    Args:
+        text: OCR 文本。
+
+    Returns:
+        True 表示无文字（需移到 meme_no_text/ 不进索引）。
+    """
+    return dedup_key(text) == ""
+
+
+def _resolve_unique_filename(target_dir: Path, filename: str) -> Path:
+    """在目标目录下解析不冲突的文件路径，冲突时追加序号。
+
+    与 /add 文件名冲突策略一致：若 filename 已存在，
+    在基名后追加 _2、_3... 直到不冲突。
+
+    Args:
+        target_dir: 目标目录路径。
+        filename: 期望文件名。
+
+    Returns:
+        目标目录下不冲突的完整路径。
+    """
+    candidate = target_dir / filename
+    if not candidate.exists():
+        return candidate
+    stem = Path(filename).stem
+    suffix = Path(filename).suffix
+    for n in itertools.count(2):
+        candidate = target_dir / f"{stem}_{n}{suffix}"
+        if not candidate.exists():
+            return candidate
+    # 理论上不会到达这里（itertools.count 无界），保留防御性代码以满足类型检查
+    raise RuntimeError("无法解析不冲突的文件名")
 
 
 # ---------------------------------------------------------------------------
@@ -122,13 +180,37 @@ class SyncResult:
 
     Attributes:
         added: 新增图片数量。
-        deleted: 删除图片数量。
+        deleted: 删除图片数量（memes/ 已不存在的图片）。
+        deduped: 新图因去重键命中已有条目/其他新图而被删除的数量。
+        no_text_moved: OCR 无文字被移到 meme_no_text/ 的数量。
         failed: 处理失败的文件名列表。
     """
 
     added: int = 0
     deleted: int = 0
+    deduped: int = 0
+    no_text_moved: int = 0
     failed: list[str] = field(default_factory=list)
+
+
+@dataclass
+class AddResult:
+    """add_entry() 的返回结果。
+
+    Attributes:
+        entry_id: 分配/复用的索引 ID；无文字移图场景为 None。
+        reason: 结果类别，取值：
+            "added"   - 正常新增；
+            "replaced"- 去重命中已有条目，已复用旧 ID 覆盖；
+            "no_text" - OCR 无文字，已移至 meme_no_text/ 不进索引。
+        replaced_filename: reason="replaced" 时为被删旧图文件名，否则 None。
+        moved_to: reason="no_text" 时为移入 meme_no_text/ 的完整路径，否则 None。
+    """
+
+    entry_id: str | None
+    reason: str
+    replaced_filename: str | None = None
+    moved_to: str | None = None
 
 
 class IndexManager:
@@ -143,6 +225,7 @@ class IndexManager:
     Attributes:
         _data_dir: 索引文件目录路径。
         _memes_dir: 表情包图片目录路径。
+        _no_text_dir: 无文字图存放目录路径。
         _entries: 内存中的 index entries。
         _embeddings: 内存中的 embedding 数据。
         _embeddings_stale: embedding 是否需要重建。
@@ -170,6 +253,7 @@ class IndexManager:
         ocr_provider: OcrProvider | None = None,
         embedding_provider: EmbeddingProvider | None = None,
         sync_concurrency: int | None = None,
+        no_text_dir: str | None = None,
     ) -> None:
         """初始化 IndexManager。
 
@@ -181,11 +265,18 @@ class IndexManager:
             sync_concurrency: sync_with_filesystem() 并行处理新增图片时的
                 最大并发数。None 或非正数时使用 DEFAULT_SYNC_CONCURRENCY。
                 建议由插件层从 SYNC_CONCURRENCY 环境变量读取后注入。
+            no_text_dir: 无文字图存放目录；None 时取 memes_dir 同级的
+                meme_no_text/（即 Path(memes_dir).parent / "meme_no_text"）。
+                插件层无需显式传入。
         """
         import asyncio
 
         self._data_dir = Path(data_dir)
         self._memes_dir = Path(memes_dir)
+        if no_text_dir is not None:
+            self._no_text_dir = Path(no_text_dir)
+        else:
+            self._no_text_dir = Path(memes_dir).parent / "meme_no_text"
         self._ocr_provider = ocr_provider
         self._embedding_provider = embedding_provider
 
@@ -478,12 +569,16 @@ class IndexManager:
         filename: str,
         text: str,
         embedding: list[float],
-    ) -> str:
-        """添加单条索引记录。
+    ) -> AddResult:
+        """添加单条索引记录，处理无文字与 OCR 文本去重。
 
-        自动分配可用 ID，计算 text_hash，
-        同时写入 _entries 和 _embeddings，
-        并原子写入磁盘。
+        三分支：
+        1. 无文字（去所有空白后为空）→ 移图到 meme_no_text/，不进索引，
+           返回 AddResult(entry_id=None, reason="no_text", moved_to=...)。
+        2. 去重键命中已有条目 → 删旧图文件，复用旧 ID 覆盖记录与 embedding，
+           返回 AddResult(entry_id=旧id, reason="replaced",
+                         replaced_filename=旧文件名)。
+        3. 正常新增 → 分配新 ID 写入，返回 AddResult(entry_id, reason="added")。
 
         Args:
             filename: 表情包文件名。
@@ -491,11 +586,53 @@ class IndexManager:
             embedding: embedding 向量。
 
         Returns:
-            分配的索引 ID。
+            描述本次结果的 AddResult。
         """
+        # 1. 无文字 → 移图，不进索引
+        if is_blank_text(text):
+            moved_to = self._move_to_no_text(filename)
+            logger.info("OCR 无文字，已移至无文字目录，不入索引: filename=%s", filename)
+            return AddResult(
+                entry_id=None,
+                reason="no_text",
+                moved_to=moved_to,
+            )
+
+        # 2. 去重键命中已有条目 → 删旧图，复用旧 ID 覆盖
+        key = dedup_key(text)
+        old_id = self._find_entry_by_dedup_key(key)
+        if old_id is not None:
+            old_filename = self._entries[old_id].get("filename", "")
+            old_path = self._memes_dir / old_filename
+            old_path.unlink(missing_ok=True)
+
+            text_hash = compute_text_hash(text)
+            self._entries[old_id] = {
+                "filename": filename,
+                "text": text,
+                "text_hash": text_hash,
+            }
+            self._embeddings[old_id] = {
+                "text_hash": text_hash,
+                "embedding": embedding,
+            }
+            self.save_index()
+            self.save_embeddings()
+            logger.info(
+                "检测到重复 OCR 文本，已用新图替换: id=%s, 旧=%s, 新=%s",
+                old_id,
+                old_filename,
+                filename,
+            )
+            return AddResult(
+                entry_id=old_id,
+                reason="replaced",
+                replaced_filename=old_filename,
+            )
+
+        # 3. 正常新增
         entry_id = self._find_next_id()
         text_hash = compute_text_hash(text)
-
         self._entries[entry_id] = {
             "filename": filename,
             "text": text,
@@ -505,12 +642,10 @@ class IndexManager:
             "text_hash": text_hash,
             "embedding": embedding,
         }
-
         self.save_index()
         self.save_embeddings()
-
         logger.info("已添加索引记录: id=%s, filename=%s", entry_id, filename)
-        return entry_id
+        return AddResult(entry_id=entry_id, reason="added")
 
     def remove_entry(self, entry_id: str) -> bool:
         """删除单条索引记录。
@@ -537,6 +672,47 @@ class IndexManager:
 
         logger.info("已删除索引记录: id=%s, filename=%s", entry_id, filename)
         return True
+
+    def _find_entry_by_dedup_key(self, key: str) -> str | None:
+        """按去重键查找已有条目 ID。
+
+        线性扫描 _entries，返回第一个 dedup_key(text) == key 的条目 ID。
+        正常情况下去重键唯一（add/sync 已保证不引入重复键），
+        返回第一个匹配即可。
+
+        Args:
+            key: dedup_key 计算结果。
+
+        Returns:
+            匹配的条目 ID，无匹配返回 None。
+        """
+        for entry_id, entry in self._entries.items():
+            if dedup_key(entry.get("text", "")) == key:
+                return entry_id
+        return None
+
+    def _move_to_no_text(self, filename: str) -> str:
+        """将无文字图片移动到 meme_no_text/ 目录。
+
+        自动创建 meme_no_text/ 目录；目标同名时追加序号。
+        shutil.move 在跨设备时会自动回退为复制+删除。
+
+        Args:
+            filename: memes/ 下的源文件名。
+
+        Returns:
+            移入 meme_no_text/ 后的完整路径字符串。
+        """
+        src = self._memes_dir / filename
+        self._no_text_dir.mkdir(parents=True, exist_ok=True)
+        dst = _resolve_unique_filename(self._no_text_dir, filename)
+        shutil.move(str(src), str(dst))
+        logger.warning(
+            "OCR 未识别到文字，已移至无文字目录: %s -> %s",
+            filename,
+            dst,
+        )
+        return str(dst)
 
     # ------------------------------------------------------------------
     # 锁管理
@@ -583,16 +759,17 @@ class IndexManager:
                 （load 阶段已按新 text 修复 _entries[id].text_hash）；
              b) embeddings.json 缺失/损坏导致 _embeddings 为空，全部条目
                触发全量重建。
-        3. 新增阶段：对新增图片按文件名升序创建并行任务，每个任务内部
-           OCR→embed 串行，任务间受 _sync_semaphore 约束并发。
+        3. 新增阶段：对新增图片按文件名升序并行 OCR→embed，再串行三分类
+           （无文字移图 / 去重删新图 / 正常新增）。去重基于 winner_keys 赢家
+           集合增量判定：现有条目与靠前新图赢，靠后/重复新图被删。
            结果收集后按文件名升序统一分配 ID 写入索引（复用最小空洞 id）。
 
         各阶段内部并行，阶段间串行（先完成全部重建再开始新增）。
         单个图片失败不影响其他图片，记入 failed。全部处理完成后统一原子写入。
 
         Returns:
-            SyncResult(added, deleted, failed)。重建数量仅在日志中输出，
-            不计入 SyncResult（PRD /refresh 回复只要求新增/删除/失败数）。
+            SyncResult(added, deleted, deduped, no_text_moved, failed)。
+            重建数量仅在日志中输出，不计入 SyncResult。
         """
         self._memes_dir.mkdir(parents=True, exist_ok=True)
 
@@ -606,20 +783,30 @@ class IndexManager:
         failed: list[str] = []
         rebuild_count = await self._sync_rebuilds(failed)
 
-        # 3. 新增图片并行 OCR + embedding
-        added_count = await self._sync_additions(existing_files, filename_to_id, failed)
+        # 3. 新增图片并行 OCR + embedding，再三分类
+        added_count, deduped_count, no_text_count = await self._sync_additions(
+            existing_files, filename_to_id, failed
+        )
 
         # 4. 全部完成后统一原子写入
         self._persist_sync_results(added_count, deleted_count, rebuild_count)
 
         logger.info(
-            "索引同步完成: 新增=%d, 删除=%d, 重建=%d, 失败=%d",
+            "索引同步完成: 新增=%d, 删除=%d, 去重=%d, 无文字移走=%d, 重建=%d, 失败=%d",
             added_count,
             deleted_count,
+            deduped_count,
+            no_text_count,
             rebuild_count,
             len(failed),
         )
-        return SyncResult(added=added_count, deleted=deleted_count, failed=failed)
+        return SyncResult(
+            added=added_count,
+            deleted=deleted_count,
+            deduped=deduped_count,
+            no_text_moved=no_text_count,
+            failed=failed,
+        )
 
     # ------------------------------------------------------------------
     # 文件系统同步 — 私有阶段方法
@@ -764,11 +951,17 @@ class IndexManager:
         existing_files: set[str],
         filename_to_id: dict[str, str],
         failed: list[str],
-    ) -> int:
-        """新增阶段：对新增图片并行执行 OCR → embedding，按文件名升序分配 ID。
+    ) -> tuple[int, int, int]:
+        """新增阶段：并行 OCR→embed，再按文件名升序串行三分类。
 
-        每个任务内部 OCR→embed 串行，任务间受 _sync_semaphore 约束并发。
-        结果收集后按文件名升序统一分配 ID 写入索引（复用最小空洞 id）。
+        三分类（基于 winner_keys 赢家集合增量判定）：
+        1. 无文字（去所有空白为空）→ _move_to_no_text 移图，no_text_moved++。
+        2. 去重键命中 winner_keys（已有条目或本轮更靠前的保留新图）
+           → 删新图文件，deduped++。现有条目/靠前图赢。
+        3. 正常新增 → 分配 ID 写入，winner_keys 加入该键，added++。
+
+        winner_keys 初始 = 已有条目的去重键（现有条目天然是赢家），
+        每张保留的新图将其键加入，从而让后续同键新图被判重。
 
         Args:
             existing_files: memes/ 当前文件名集合。
@@ -776,13 +969,13 @@ class IndexManager:
             failed: 失败文件名收集列表（就地追加新增失败的 filename）。
 
         Returns:
-            成功新增的图片数量。
+            (added, deduped, no_text_moved) 三元组。
         """
         import asyncio
 
         new_files = sorted(f for f in existing_files if f not in filename_to_id)
         if not new_files:
-            return 0
+            return (0, 0, 0)
 
         logger.info(
             "开始并行处理 %d 张新增图片，并发上限 %d",
@@ -795,7 +988,7 @@ class IndexManager:
             return_exceptions=True,
         )
 
-        # 成功项以 filename 为 key 收集，便于后续按文件名升序分配 ID。
+        # 成功项以 filename 为 key 收集
         success_by_name: dict[str, tuple[str, list[float]]] = {}
         for filename, result in zip(new_files, raw_results):
             if isinstance(result, BaseException):
@@ -805,10 +998,33 @@ class IndexManager:
                 _, text, embedding = result
                 success_by_name[filename] = (text, embedding)
 
-        # 按文件名升序统一分配 ID，写入内存索引
-        added_count = 0
+        # 赢家集合：初始 = 已有条目的去重键（现有条目天然是赢家）
+        winner_keys: set[str] = {
+            dedup_key(entry.get("text", "")) for entry in self._entries.values()
+        }
+
+        added = deduped = no_text_moved = 0
+
+        # 按文件名升序串行分类，决定新图互重时的赢家
         for filename in sorted(success_by_name.keys()):
             text, embedding = success_by_name[filename]
+
+            # 1. 无文字 → 移图，不进索引
+            if is_blank_text(text):
+                self._move_to_no_text(filename)
+                no_text_moved += 1
+                continue
+
+            # 2. 去重键命中赢家 → 删新图，不进索引
+            key = dedup_key(text)
+            if key in winner_keys:
+                new_path = self._memes_dir / filename
+                new_path.unlink(missing_ok=True)
+                logger.info("新图与已有索引去重，删除新图: filename=%s", filename)
+                deduped += 1
+                continue
+
+            # 3. 正常新增
             entry_id = self._find_next_id()
             text_hash = compute_text_hash(text)
             self._entries[entry_id] = {
@@ -820,9 +1036,11 @@ class IndexManager:
                 "text_hash": text_hash,
                 "embedding": embedding,
             }
-            added_count += 1
+            winner_keys.add(key)
+            added += 1
             logger.info("新增图片已加入索引: id=%s, filename=%s", entry_id, filename)
-        return added_count
+
+        return (added, deduped, no_text_moved)
 
     async def _process_new_file(self, filename: str) -> tuple[str, str, list[float]]:
         """处理单张新增图片：OCR → Embed。

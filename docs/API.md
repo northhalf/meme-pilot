@@ -44,6 +44,38 @@ compute_text_hash("hello")  # → "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e
 
 ---
 
+#### `dedup_key(text: str) -> str`
+
+计算 OCR 文本的去重键。
+
+| | 类型 | 说明 |
+|--|------|------|
+| **参数** `text` | `str` | 原始 OCR 文本 |
+| **返回** | `str` | 去除所有空白字符（含半角/全角空格、制表符、换行）后的文本，可能为空字符串 |
+
+比 `normalize_text` 更严格：`normalize_text` 保留单词间单空格，`dedup_key` 完全去除空格，用于判定「是否完全相同的图片」。实时计算，不落盘。
+
+```python
+dedup_key("加班 好累")   # → "加班好累"
+dedup_key("加班好累")    # → "加班好累"  # 与上行同键
+dedup_key("   ")         # → ""
+```
+
+---
+
+#### `is_blank_text(text: str) -> bool`
+
+判断 OCR 文本是否为「无文字」。
+
+| | 类型 | 说明 |
+|--|------|------|
+| **参数** `text` | `str` | OCR 文本 |
+| **返回** | `bool` | `True` 表示去所有空白后为空（无文字，需移到 `meme_no_text/` 不进索引） |
+
+等价于 `dedup_key(text) == ""`。
+
+---
+
 ### 1.2 异常
 
 #### `IndexCorruptedError(Exception)`
@@ -99,16 +131,42 @@ class EmbeddingProvider(Protocol):
 class SyncResult:
     added: int = 0
     deleted: int = 0
+    deduped: int = 0
+    no_text_moved: int = 0
     failed: list[str] = field(default_factory=list)
 ```
 
 | 字段 | 类型 | 默认 | 说明 |
 |------|------|------|------|
 | `added` | `int` | `0` | 本次同步新增的图片数量 |
-| `deleted` | `int` | `0` | 本次同步删除的图片数量 |
+| `deleted` | `int` | `0` | 本次同步删除的图片数量（memes/ 已不存在的旧图） |
+| `deduped` | `int` | `0` | 新图因去重键命中已有条目/其他新图而被删除的数量 |
+| `no_text_moved` | `int` | `0` | OCR 无文字被移到 meme_no_text/ 的数量 |
 | `failed` | `list[str]` | `[]` | 处理失败的文件名列表（含新增失败与 embedding 重建失败） |
 
-是 `sync_with_filesystem()` 的返回类型。重建 embedding 的数量不单独计入字段，仅在日志中输出。
+是 `sync_with_filesystem()` 的返回类型。重建 embedding 的数量不单独计入字段，仅在日志中输出。去重与无文字移动不计入 `added`/`deleted`，各自独立计数。
+
+---
+
+#### `AddResult`
+
+```python
+@dataclass
+class AddResult:
+    entry_id: str | None
+    reason: str
+    replaced_filename: str | None = None
+    moved_to: str | None = None
+```
+
+| 字段 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `entry_id` | `str \| None` | 必填 | 分配/复用的索引 ID；无文字移图场景为 `None` |
+| `reason` | `str` | 必填 | 结果类别：`"added"`（正常新增）、`"replaced"`（去重覆盖）、`"no_text"`（无文字移图） |
+| `replaced_filename` | `str \| None` | `None` | `reason="replaced"` 时为被删旧图文件名，否则 `None` |
+| `moved_to` | `str \| None` | `None` | `reason="no_text"` 时为移入 meme_no_text/ 的完整路径，否则 `None` |
+
+是 `add_entry()` 的返回类型。
 
 ---
 
@@ -129,7 +187,7 @@ class IndexManager:
 
 ---
 
-#### `__init__(data_dir="data", memes_dir="memes", ocr_provider=None, embedding_provider=None, sync_concurrency=None) -> None`
+#### `__init__(data_dir="data", memes_dir="memes", ocr_provider=None, embedding_provider=None, sync_concurrency=None, no_text_dir=None) -> None`
 
 | 参数 | 类型 | 默认 | 说明 |
 |------|------|------|------|
@@ -138,6 +196,7 @@ class IndexManager:
 | `ocr_provider` | `OcrProvider \| None` | `None` | OCR 服务注入，未注入时无法执行 OCR |
 | `embedding_provider` | `EmbeddingProvider \| None` | `None` | Embedding 服务注入，未注入时无法生成 embedding |
 | `sync_concurrency` | `int \| None` | `None` | `sync_with_filesystem()` 并行处理新增图片时的最大并发数；`None` 或非正数时使用 `DEFAULT_SYNC_CONCURRENCY`(5)。建议由插件层从 `SYNC_CONCURRENCY` 环境变量读取后注入，避免一次性发起大量请求触发 SiliconFlow 限流 |
+| `no_text_dir` | `str \| None` | `None` | 无文字图存放目录；`None` 时取 `memes_dir` 同级的 `meme_no_text/`（即 `Path(memes_dir).parent / "meme_no_text"`）。插件层无需显式传入 |
 
 初始化后 `_entries` 和 `_embeddings` 均为空，需调用 `load()` 加载磁盘数据。`_sync_semaphore` 在此时根据 `sync_concurrency` 创建。
 
@@ -242,7 +301,7 @@ class IndexManager:
 
 ---
 
-#### `add_entry(filename: str, text: str, embedding: list[float]) -> str`
+#### `add_entry(filename: str, text: str, embedding: list[float]) -> AddResult`
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
@@ -252,10 +311,13 @@ class IndexManager:
 
 | | 类型 | 说明 |
 |--|------|------|
-| **返回** | `str` | 分配的索引 ID（空洞复用） |
+| **返回** | `AddResult` | 描述本次结果的 `AddResult`：`reason="added"` 正常新增、`reason="replaced"` 去重覆盖（复用旧 ID、删旧图）、`reason="no_text"` 无文字移图（不进索引） |
 | **异常** | `OSError` | 磁盘写入失败时抛出 |
 
-内部自动调用 `_find_next_id()` 分配 ID、`compute_text_hash(text)` 计算 `text_hash`，同时写入 `_entries` 和 `_embeddings`，并原子写入两个磁盘文件。
+三分支处理：
+1. 无文字（`is_blank_text(text)` 为真）→ 调用 `_move_to_no_text(filename)` 移图到 `meme_no_text/`，不写索引，返回 `AddResult(entry_id=None, reason="no_text", moved_to=...)`。
+2. 去重键命中已有条目（`_find_entry_by_dedup_key(dedup_key(text))` 非 `None`）→ 删除旧图文件（`missing_ok`），复用旧 ID 覆盖 `_entries[old_id]` 与 `_embeddings[old_id]`（用新 `text_hash` 与新 `embedding`），原子写入两文件，返回 `AddResult(entry_id=old_id, reason="replaced", replaced_filename=旧文件名)`。
+3. 正常新增 → `_find_next_id()` 分配 ID，写入 `_entries`/`_embeddings`，原子写入两文件，返回 `AddResult(entry_id, reason="added")`。
 
 ---
 
@@ -306,7 +368,7 @@ class IndexManager:
 
 | | 类型 | 说明 |
 |--|------|------|
-| **返回** | `SyncResult` | `added` 新增数、`deleted` 删除数、`failed` 失败文件名列表 |
+| **返回** | `SyncResult` | `added` 新增数、`deleted` 删除数、`deduped` 去重数、`no_text_moved` 无文字移走数、`failed` 失败文件名列表 |
 
 异步方法。按文件名同步内存索引与 `memes/` 目录，三阶段并行：
 
@@ -316,10 +378,9 @@ class IndexManager:
 4. **重建阶段**（embedding 过期修复 + 全量重建）：对文件仍存在的已有条目，比较 `_entries[id].text_hash` 与 `_embeddings[id].text_hash`（或 `_embeddings` 缺该 id）；不一致则用当前 `text` 调用 `EmbeddingProvider.embed()` 重建对应 embedding，覆盖 `_embeddings[id]`，**不重新 OCR**。该判定同时覆盖两类场景：
    - 用户手动编辑 `index.json` 的 `text` 导致 `text_hash` 不一致（`load()` 阶段已按新 `text` 修复 `_entries[id].text_hash`）
    - `embeddings.json` 缺失/损坏导致 `_embeddings` 为空，全部条目触发全量重建
-5. **新增阶段**：新增图片**并行处理**——对按文件名升序排序后的新增文件，通过 `asyncio.gather` 同时发布多个 task；每个 task 内部串行执行 `OcrProvider.ocr()` → `EmbeddingProvider.embed()`，task 之间受 `_sync_semaphore`（并发上限 = `sync_concurrency`）约束并发执行
-6. 结果收集后，**按文件名升序**为成功项统一分配 ID 并写入 `_entries` / `_embeddings`，保证 ID 顺序与文件名升序一致（复用最小空洞 id）
-7. 单个图片失败（重建或新增）不影响其他图片，记入 `failed`
-8. 全部处理完成后统一原子写入磁盘（新增、删除、重建任一发生时）
+5. **新增阶段**：新增图片**并行处理**——对按文件名升序排序后的新增文件，通过 `asyncio.gather` 同时发布多个 task；每个 task 内部串行执行 `OcrProvider.ocr()` → `EmbeddingProvider.embed()`，task 之间受 `_sync_semaphore` 约束并发执行。结果收集后**按文件名升序串行三分类**（基于 `winner_keys` 赢家集合增量判定）：(a) 无文字（`is_blank_text`）→ `_move_to_no_text` 移图、`no_text_moved++`；(b) 去重键 `dedup_key(text)` 命中 `winner_keys`（已有条目或本轮更靠前的保留新图）→ 删新图文件、`deduped++`（现有条目/靠前图赢）；(c) 正常新增 → 分配 ID（复用最小空洞 id，保证 ID 顺序与文件名升序一致）写入 `_entries` / `_embeddings`、该键加入 `winner_keys`、`added++`。`winner_keys` 初始为已有条目的去重键集合。
+6. 单个图片失败（重建或新增）不影响其他图片，记入 `failed`
+7. 全部处理完成后统一原子写入磁盘（新增、删除、重建任一发生时）
 
 各阶段内部并行，阶段间串行（先完成全部重建再开始新增）。
 
@@ -327,7 +388,7 @@ class IndexManager:
 
 **并发控制**：并发上限由 `__init__` 的 `sync_concurrency` 决定，建议从 `SYNC_CONCURRENCY` 环境变量读取。默认 `5`，用于避免一次性发起大量请求触发 SiliconFlow 限流。重建与新增共用同一 `_sync_semaphore`。
 
-**返回**：`SyncResult(added, deleted, failed)`。重建数量仅在日志中输出（`新增=X, 删除=Y, 重建=Z, 失败=W`），不计入 `SyncResult`（PRD `/refresh` 回复只要求新增/删除/失败数）。
+**返回**：`SyncResult(added, deleted, deduped, no_text_moved, failed)`。重建数量仅在日志中输出（`新增=X, 删除=Y, 去重=D, 无文字移走=T, 重建=Z, 失败=W`），不计入 `SyncResult`。去重与无文字移动不计入 `added`/`deleted`，各自独立计数。
 
 ---
 
@@ -549,7 +610,7 @@ _clean_ocr_result("<|ref|>A<|/ref|>\n<|ref|>B<|/ref|>")           # → "A B"
 
 ---
 
-## 5. 跨模块依赖关系图
+## 6. 跨模块依赖关系图
 
 ```
 logging_config.py ──(无依赖)──
