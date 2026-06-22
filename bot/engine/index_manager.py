@@ -417,6 +417,14 @@ class IndexManager:
         """
         return self._entries
 
+    def get_embeddings(self) -> dict[str, dict[str, object]]:
+        """返回全部 embedding 条目。
+
+        Returns:
+            key 为索引 id，value 为包含 text_hash、embedding 的字典。
+        """
+        return self._embeddings.copy()
+
     def get_entry(self, entry_id: str) -> dict[str, str] | None:
         """按 ID 查询单条记录。
 

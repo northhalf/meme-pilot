@@ -431,9 +431,11 @@ meme-pilot/
         ├── __init__.py
         ├── image_optimizer.py # 图片无损压缩
         ├── ocr_service.py     # DeepSeek-OCR 封装（硅基流动 API）
+        ├── embedding_service.py # SiliconFlow Embedding 封装（实现 EmbeddingProvider）
+        ├── rerank_service.py  # DeepSeek 精排封装（实现 RerankProvider）
         ├── index_manager.py   # 索引增删改查
         ├── keyword_searcher.py # 模糊搜索
-        └── ai_matcher.py      # DeepSeek + Embedding
+        └── ai_matcher.py      # AI 语义匹配（协议注入，不含 SDK 调用）
 ```
 
 ---

@@ -222,6 +222,16 @@ class IndexManager:
 
 ---
 
+### `get_embeddings() -> dict[str, dict[str, object]]`
+
+| | 类型 | 说明 |
+|--|------|------|
+| **返回** | `dict[str, dict[str, object]]` | key 为索引 ID，value 为 `{ "text_hash": str, "embedding": list[float] }` |
+
+返回当前内存中的 embedding 索引外层浅拷贝。调用方可读取向量数据，但不应修改返回值后期待写回生效。
+
+---
+
 ### `get_entry(entry_id: str) -> dict[str, str] | None`
 
 | 参数 | 类型 | 说明 |

@@ -375,6 +375,35 @@ class TestIndexManagerQuery:
         assert mgr.entry_count == 0
 
 
+class TestGetEmbeddings:
+    """get_embeddings() 测试。"""
+
+    def test_returns_embeddings(self, tmp_path: Path) -> None:
+        """返回当前内存中的 embedding 索引。"""
+        mgr = IndexManager(data_dir=str(tmp_path))
+        mgr._embeddings = {
+            "1": {"text_hash": "sha256:a", "embedding": [0.1, 0.2]}
+        }
+
+        result = mgr.get_embeddings()
+
+        assert result == {
+            "1": {"text_hash": "sha256:a", "embedding": [0.1, 0.2]}
+        }
+
+    def test_returns_outer_copy(self, tmp_path: Path) -> None:
+        """返回外层浅拷贝，避免调用方替换整个条目。"""
+        mgr = IndexManager(data_dir=str(tmp_path))
+        mgr._embeddings = {
+            "1": {"text_hash": "sha256:a", "embedding": [0.1, 0.2]}
+        }
+
+        result = mgr.get_embeddings()
+        result["2"] = {"text_hash": "sha256:b", "embedding": [0.3, 0.4]}
+
+        assert "2" not in mgr._embeddings
+
+
 class TestTextHashConsistency:
     """text_hash 一致性校验测试。"""
 

@@ -9,6 +9,7 @@ api
 ├── API.md
 └── bot
     ├── engine
+    │   ├── ai_matcher.md
     │   ├── index_manager.md
     │   ├── keyword_searcher.md
     │   └── ocr_service.md
@@ -16,6 +17,51 @@ api
 ```
 
 ## API 文件索引
+
+### `docs/api/bot/engine/ai_matcher.md`
+
+```python
+class AIIndexProvider(Protocol):
+    def get_entries(self) -> dict[str, dict[str, str]]
+    def get_embeddings(self) -> dict[str, dict[str, object]]
+
+class EmbeddingProvider(Protocol):
+    async def embed(self, text: str) -> list[float]
+
+@dataclass(frozen=True)
+class AIMatchCandidate:
+    rank: int
+    entry_id: str
+    filename: str
+    text: str
+    similarity: float
+
+class RerankProvider(Protocol):
+    async def rerank(
+        self,
+        description: str,
+        candidates: list[AIMatchCandidate],
+    ) -> int
+
+@dataclass(frozen=True)
+class AIMatchResult:
+    entry_id: str
+    filename: str
+    text: str
+    similarity: float
+    source: str
+
+class AIMatcher:
+    def __init__(
+        self,
+        index_provider: AIIndexProvider,
+        embedding_provider: EmbeddingProvider,
+        rerank_provider: RerankProvider | None = None,
+        limit: int = 10,
+    ) -> None
+
+    async def match(self, description: str) -> AIMatchResult | None
+```
 
 ### `docs/api/bot/engine/index_manager.md`
 
@@ -71,6 +117,8 @@ class IndexManager:
     def validate_index(data: object) -> None
 
     def get_entries(self) -> dict[str, dict[str, str]]
+
+    def get_embeddings(self) -> dict[str, dict[str, object]]
 
     def get_entry(self, entry_id: str) -> dict[str, str] | None
 
