@@ -16,7 +16,7 @@
 
 - **Modify:** `bot/engine/index_manager.py` — 新增 `_dedup_index` 属性与三个维护方法，改造 `_find_entry_by_dedup_key`，在 5 个写点接入维护调用。
 - **Modify:** `tests/unit/engine/test_index_manager.py` — 适配 `TestFindEntryByDedupKey` 中直接赋值 `_entries` 的用例（使其同步维护 `_dedup_index`）。
-- **Modify:** `docs/API.md` — 补充 `_dedup_index` 属性与维护方法接口说明，更新 `_find_entry_by_dedup_key` 返回说明。
+- **Modify:** `docs/api/API.md` — 补充 `_dedup_index` 属性与维护方法接口说明，更新 `_find_entry_by_dedup_key` 返回说明。
 - **Modify:** `docs/process.md` — 记录「去重键反向索引」模块落地。
 
 单文件核心改动，无新建文件，无新依赖。
@@ -479,17 +479,17 @@ Expected: 全部 passed（含 `test_keyword_searcher.py`、`test_logging_config.
 
 ---
 
-## Task 4: 同步 `docs/API.md` 与 `docs/process.md`
+## Task 4: 同步 `docs/api/API.md` 与 `docs/process.md`
 
 按 `CLAUDE.md` 约定，模块实现后需更新 API 文档与 process 记录。
 
 **Files:**
-- Modify: `docs/API.md`（`IndexManager` 段落、`_find_entry_by_dedup_key` 段落）
+- Modify: `docs/api/API.md`（`IndexManager` 段落、`_find_entry_by_dedup_key` 段落）
 - Modify: `docs/process.md`（追加模块记录）
 
-- [ ] **Step 1: 在 `docs/API.md` 补充 `_dedup_index` 属性与维护方法接口**
+- [ ] **Step 1: 在 `docs/api/API.md` 补充 `_dedup_index` 属性与维护方法接口**
 
-先读 `docs/API.md` 中 `IndexManager` 与 `_find_entry_by_dedup_key` 相关段落（搜索 `_find_entry_by_dedup_key`、`IndexManager` 定位），然后在 `_find_entry_by_dedup_key` 段落附近补充三个维护方法说明，并更新 `_find_entry_by_dedup_key` 的返回说明为「通过 `_dedup_index` 反向索引 O(1) 查找」。
+先读 `docs/api/API.md` 中 `IndexManager` 与 `_find_entry_by_dedup_key` 相关段落（搜索 `_find_entry_by_dedup_key`、`IndexManager` 定位），然后在 `_find_entry_by_dedup_key` 段落附近补充三个维护方法说明，并更新 `_find_entry_by_dedup_key` 的返回说明为「通过 `_dedup_index` 反向索引 O(1) 查找」。
 
 具体追加内容（位置：`_find_entry_by_dedup_key` 段落之后）：
 
@@ -521,7 +521,7 @@ Expected: 全部 passed（含 `test_keyword_searcher.py`、`test_logging_config.
 
 ```bash
 # 不要执行；提示用户审核：
-# git add docs/API.md docs/process.md
+# git add docs/api/API.md docs/process.md
 # git commit -m "docs(engine): 补充去重键反向索引接口与 process 记录"
 ```
 

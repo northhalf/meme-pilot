@@ -139,7 +139,7 @@ uv run python -m compileall bot/engine/index_manager.py
 
 按 `CLAUDE.md` 约定，实现后更新：
 
-- `docs/API.md`：在 `IndexManager` 段落补充 `_dedup_index` 属性与三个维护方法的接口说明，并更新 `_find_entry_by_dedup_key` 的返回说明（O(1) 反向索引查找）。
+- `docs/api/API.md`：在 `IndexManager` 段落补充 `_dedup_index` 属性与三个维护方法的接口说明，并更新 `_find_entry_by_dedup_key` 的返回说明（O(1) 反向索引查找）。
 - `docs/process.md`：简要记录本次「去重键反向索引」模块的落地。
 
 ## 9. 不做的事

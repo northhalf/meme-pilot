@@ -209,7 +209,7 @@ index_manager.sync_with_filesystem()
 | `docs/PRD.md` | 技术栈 OCR 引擎 → DeepSeek-OCR；移除 paddle 依赖和系统依赖；更新边界情况措辞 |
 | `CONTEXT.md` | 术语表：PaddleOCR → DeepSeek-OCR |
 | `README.md` | PaddleOCR 引用 → DeepSeek-OCR |
-| `docs/API.md` | 添加 `ocr_service.py` 接口文档；更新第 4 节未实现模块 |
+| `docs/api/API.md` | 添加 `ocr_service.py` 接口文档；更新第 4 节未实现模块 |
 | `docs/process.md` | 记录 `ocr_service.py` 完成 |
 | `.env.example` | 新增 `SILICONFLOW_OCR_MODEL` |
 | `docker-compose.yml` | 添加 `SILICONFLOW_OCR_MODEL` 环境变量 |

@@ -78,9 +78,9 @@ SILICONFLOW_OCR_MODEL=deepseek-ocr
 
 ---
 
-## Task 7: 更新 docs/API.md
+## Task 7: 更新 docs/api/API.md
 
-**Files:** `docs/API.md`
+**Files:** `docs/api/API.md`
 
 1. 第 4 节未实现模块表：`ocr_service.py` 依赖从 `PaddleOCR` → `SiliconFlow API (OpenAI SDK)`
 2. 新增 `ocr_service.py` 对外接口文档（在 `keyword_searcher.py` 和 `logging_config.py` 文档之后）

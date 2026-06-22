@@ -469,9 +469,9 @@ async def sync_with_filesystem(self) -> SyncResult:
 | `docs/PRD.md` §4.2 部署 / docker-compose | 新增 `./meme_no_text:/app/meme_no_text` 卷映射 |
 | `CONTEXT.md` 术语表 | 新增「去重键」「无文字目录(meme_no_text)」术语；修订「按文件名同步的增量刷新」补充去重与无文字排除 |
 | `docker-compose.yml` | bot 服务 `volumes` 增加 `./meme_no_text:/app/meme_no_text` |
-| `docs/API.md` §1.4 | `SyncResult` 加 `deduped`、`no_text_moved` 字段说明 |
-| `docs/API.md` §1.5 `add_entry` | 返回类型 `str` → `AddResult`；新增 `AddResult` 数据类章节；新增 `dedup_key`/`is_blank_text`/`_resolve_unique_filename`/`_find_entry_by_dedup_key`/`_move_to_no_text` 接口说明；`__init__` 加 `no_text_dir` 参数 |
-| `docs/API.md` §1.5 `sync_with_filesystem` | 更新阶段说明：新增阶段三分类（无文字/去重/正常）；返回 `SyncResult` 新增两字段 |
+| `docs/api/API.md` §1.4 | `SyncResult` 加 `deduped`、`no_text_moved` 字段说明 |
+| `docs/api/API.md` §1.5 `add_entry` | 返回类型 `str` → `AddResult`；新增 `AddResult` 数据类章节；新增 `dedup_key`/`is_blank_text`/`_resolve_unique_filename`/`_find_entry_by_dedup_key`/`_move_to_no_text` 接口说明；`__init__` 加 `no_text_dir` 参数 |
+| `docs/api/API.md` §1.5 `sync_with_filesystem` | 更新阶段说明：新增阶段三分类（无文字/去重/正常）；返回 `SyncResult` 新增两字段 |
 | `docs/process.md` | `index_manager.py` 条目追加：OCR 文本去重（去空格键）、无文字图移至 `meme_no_text/` |
 | `README.md` | 目录结构补 `meme_no_text/`；部署步骤补 `docker-compose.yml` 卷说明 |
 | `CLAUDE.md` 索引格式要点 | 补一句：去重键实时计算不落盘；无文字图不进索引移至 `meme_no_text/` |

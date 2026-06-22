@@ -13,7 +13,7 @@
 **⚠️ 项目约束（来自 CLAUDE.md）:**
 - **禁止自行 `git add` / `git commit`**——每个 Task 末尾的 commit 步骤是「用户审核检查点」，需停下来请用户审阅 diff 并由用户执行提交，**不可自动提交**。
 - Python 函数使用 Google 风格中文 docstring，变量/参数/返回值需类型标注，保持现有中文注释风格。
-- 每实现一个模块后更新 `docs/process.md` 和 `docs/API.md`。
+- 每实现一个模块后更新 `docs/process.md` 和 `docs/api/API.md`。
 
 **测试基线:** 仓库已有 `tests/unit/engine/test_index_manager.py`（1330 行）。本计划会修改其中 5 个因行为变更而失效的测试（Task 2、Task 5），其余测试应保持通过。
 
@@ -972,7 +972,7 @@ Expected: 无输出。
 
 暂停。改动摘要：`add_entry` 返回类型 `str`→`AddResult`，新增无文字移图、去重覆盖（复用旧 ID + 删旧图）两个分支；`TestAddEntry` 改写 3 个断言、新增 3 个测试。
 
-> ⚠️ 这是**对外接口变更**（返回类型从 `str` 改为 `AddResult`）。当前 `add_entry` 无调用方（插件层未实现），不会破坏现有运行代码，但需在 Task 8 同步更新 `docs/API.md`。
+> ⚠️ 这是**对外接口变更**（返回类型从 `str` 改为 `AddResult`）。当前 `add_entry` 无调用方（插件层未实现），不会破坏现有运行代码，但需在 Task 8 同步更新 `docs/api/API.md`。
 
 请用户审阅 diff 后自行执行：
 ```bash
@@ -1610,7 +1610,7 @@ Expected: 无输出（编译成功）。
 **Files:**
 - Modify: `docs/PRD.md`
 - Modify: `CONTEXT.md`
-- Modify: `docs/API.md`
+- Modify: `docs/api/API.md`
 - Modify: `docs/process.md`
 - Modify: `README.md`
 - Modify: `CLAUDE.md`
@@ -1693,9 +1693,9 @@ Expected: 无输出（编译成功）。
 | **无文字目录** | `memes/` 同级的 `meme_no_text/` 目录；OCR 去除所有空白后为空的图片在此场景下不进入索引，被移动到该目录并由日志 warning 提示，本项目不处理该类表情包 |
 ```
 
-- [ ] **Step 8: `docs/API.md` §1.4 — `SyncResult` 新增字段**
+- [ ] **Step 8: `docs/api/API.md` §1.4 — `SyncResult` 新增字段**
 
-把 `docs/API.md` 第 98-103 行 `SyncResult` 代码块替换为：
+把 `docs/api/API.md` 第 98-103 行 `SyncResult` 代码块替换为：
 
 ```python
 @dataclass
@@ -1725,9 +1725,9 @@ class SyncResult:
 是 `sync_with_filesystem()` 的返回类型。重建 embedding 的数量不单独计入字段，仅在日志中输出。去重与无文字移动不计入 `added`/`deleted`，各自独立计数。
 ```
 
-- [ ] **Step 9: `docs/API.md` §1.5 — 新增 `AddResult` 章节 + 工具函数 + 更新 `add_entry`/`__init__`/`sync_with_filesystem`**
+- [ ] **Step 9: `docs/api/API.md` §1.5 — 新增 `AddResult` 章节 + 工具函数 + 更新 `add_entry`/`__init__`/`sync_with_filesystem`**
 
-在 `docs/API.md` §1.4 `SyncResult` 章节之后、§1.5 `IndexManager 类` 之前，插入 `AddResult` 章节：
+在 `docs/api/API.md` §1.4 `SyncResult` 章节之后、§1.5 `IndexManager 类` 之前，插入 `AddResult` 章节：
 
 ```markdown
 #### `AddResult`
@@ -1873,11 +1873,11 @@ Expected: 无输出。
 
 - [ ] **Step 14: 用户审核检查点 — 请审阅所有文档 diff 并提交**
 
-暂停。改动摘要：7 个文件文档同步——`docker-compose.yml`（新增卷）、`docs/PRD.md`（§3.3/§3.5/§5/§6）、`CONTEXT.md`（新增术语 + 修订同步策略）、`docs/API.md`（`AddResult`/`SyncResult`/工具函数/`add_entry`/`__init__`/`sync_with_filesystem`）、`docs/process.md`、`README.md`、`CLAUDE.md`。
+暂停。改动摘要：7 个文件文档同步——`docker-compose.yml`（新增卷）、`docs/PRD.md`（§3.3/§3.5/§5/§6）、`CONTEXT.md`（新增术语 + 修订同步策略）、`docs/api/API.md`（`AddResult`/`SyncResult`/工具函数/`add_entry`/`__init__`/`sync_with_filesystem`）、`docs/process.md`、`README.md`、`CLAUDE.md`。
 
 请用户审阅 diff 后自行执行：
 ```bash
-git add docker-compose.yml docs/PRD.md CONTEXT.md docs/API.md docs/process.md README.md CLAUDE.md
+git add docker-compose.yml docs/PRD.md CONTEXT.md docs/api/API.md docs/process.md README.md CLAUDE.md
 git commit -m "docs: 同步 OCR 去重与无文字排除的设计变更"
 ```
 
@@ -1888,6 +1888,6 @@ git commit -m "docs: 同步 OCR 去重与无文字排除的设计变更"
 全部 Task 1-8 完成且：
 1. `uv run pytest -v` 全绿（含所有新增与改写测试）。
 2. `uv run python -m compileall bot` 无输出。
-3. `docs/API.md` 与 `index_manager.py` 实际接口一致（`AddResult`、`SyncResult`、`add_entry`、`sync_with_filesystem`、`dedup_key`、`is_blank_text`、`__init__` 的 `no_text_dir`）。
+3. `docs/api/API.md` 与 `index_manager.py` 实际接口一致（`AddResult`、`SyncResult`、`add_entry`、`sync_with_filesystem`、`dedup_key`、`is_blank_text`、`__init__` 的 `no_text_dir`）。
 4. `docker-compose.yml` 含 `./meme_no_text:/app/meme_no_text` 卷映射。
 5. PRD/CONTEXT/README/CLAUDE.md 中「OCR 无文字」「去重」表述与新行为一致，不再出现旧的"text 写'未识别到文字'"占位描述。
