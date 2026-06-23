@@ -15,7 +15,10 @@ api
     │   ├── index_manager.md
     │   ├── keyword_searcher.md
     │   └── ocr_service.md
-    └── logging_config.md
+    ├── logging_config.md
+    ├── app_state.md
+    └── plugins
+        └── meme_refresh.md
 ```
 
 ## API 文件索引
@@ -230,3 +233,26 @@ class RerankService:
 ```python
 def setup_logging(log_dir: str = "log") -> None
 ```
+
+### `docs/api/bot/app_state.md`
+
+```python
+def init_app(
+    index_manager: IndexManager,
+    ocr_service: DeepSeekOcrService,
+    embedding_service: EmbeddingService,
+) -> None
+
+def get_index_manager() -> IndexManager
+def get_ocr_service() -> DeepSeekOcrService
+def get_embedding_service() -> EmbeddingService
+```
+
+### `bot/plugins/meme_refresh.py`
+
+NoneBot2 命令插件，注册 `/refresh` 命令。
+
+- 依赖：`app_state.get_index_manager()`
+- 授权：`AUTHORIZED_USER_IDS` 环境变量
+- 锁：`IndexManager.acquire_lock()` / `release_lock()`
+- 同步：`IndexManager.sync_with_filesystem() -> SyncResult`

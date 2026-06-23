@@ -419,6 +419,7 @@ meme-pilot/
     ├── Dockerfile
     ├── bot.py                 # NoneBot2 入口
     ├── config.py              # 配置读取
+    ├── app_state.py           # 共享实例管理（模块级单例）
     ├── logging_config.py      # 日志滚动配置（RotatingFileHandler + StreamHandler）
     ├── plugins/
     │   ├── __init__.py
