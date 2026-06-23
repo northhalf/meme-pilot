@@ -106,7 +106,7 @@ class EmbeddingProvider(Protocol):
 
 | 方法 | 参数 | 返回 | 说明 |
 |------|------|------|------|
-| `embed` | `text: str` — 待向量化的文本 | `list[float]` — embedding 浮点数向量 | 异步，生成文本向量 |
+| `embed` | `text: str` — 待向量化的文本 | `list[float]` (1024 维) | 异步，生成文本向量，维度 1024 |
 
 ---
 

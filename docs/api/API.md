@@ -10,6 +10,7 @@ api
 └── bot
     ├── engine
     │   ├── ai_matcher.md
+    │   ├── embedding_service.md
     │   ├── index_manager.md
     │   ├── keyword_searcher.md
     │   └── ocr_service.md
@@ -26,7 +27,7 @@ class AIIndexProvider(Protocol):
     def get_embeddings(self) -> dict[str, dict[str, object]]
 
 class EmbeddingProvider(Protocol):
-    async def embed(self, text: str) -> list[float]
+    async def embed(self, text: str) -> list[float]  # 1024 维
 
 @dataclass(frozen=True)
 class AIMatchCandidate:
@@ -80,7 +81,7 @@ class OcrProvider(Protocol):
     async def ocr(self, image_path: str) -> str
 
 class EmbeddingProvider(Protocol):
-    async def embed(self, text: str) -> list[float]
+    async def embed(self, text: str) -> list[float]  # 1024 维
 
 @dataclass
 class SyncResult:
@@ -172,6 +173,20 @@ class KeywordSearcher:
     ) -> None
 
     def search(self, keyword: str) -> list[SearchResult]
+```
+
+### `docs/api/bot/engine/embedding_service.md`
+
+```python
+class EmbeddingService:
+    def __init__(
+        self,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        model: str | None = None,
+    ) -> None
+
+    async def embed(self, text: str) -> list[float]  # 1024 维
 ```
 
 ### `docs/api/bot/engine/ocr_service.md`
