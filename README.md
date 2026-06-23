@@ -209,9 +209,9 @@ meme-pilot/
 ```text
 tests/
 ├── unit/
-│   ├── engine/      # 索引、搜索、AI 匹配、图片压缩等单元测试
+│   ├── engine/      # 索引、搜索、AI 匹配、图片压缩等单元测试（使用 mock）
 │   └── plugins/     # 命令解析、权限判断、回复内容等单元测试
-├── integration/     # 跨模块流程测试
+├── integration/     # 集成测试（实际调用 API，需要配置真实 API Key）
 ├── fixtures/
 │   ├── memes/       # 测试表情包图片
 │   ├── data/        # 测试索引样本
@@ -219,7 +219,19 @@ tests/
 └── conftest.py      # pytest 共享 fixture，添加测试框架后再创建
 ```
 
-当前只规划目录结构，尚未引入 pytest 或固定测试命令。
+**单元测试 vs 集成测试：**
+- `unit/`：使用 mock 隔离外部依赖，快速运行，无需 API Key
+- `integration/`：实际调用 API 验证端到端流程，需要配置 `DEEPSEEK_API_KEY` 等环境变量
+
+运行集成测试：
+```bash
+# 确保已设置 API Key
+export DEEPSEEK_API_KEY=sk-your-key
+export SILICONFLOW_API_KEY=sk-your-key
+
+# 运行集成测试（-s 显示输出）
+uv run pytest tests/integration/ -v -s
+```
 
 ## ⚙️ 依赖
 

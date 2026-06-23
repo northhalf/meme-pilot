@@ -6,3 +6,4 @@
 - [x] `bot/engine/ai_matcher.py` — AI 语义匹配模块（协议注入索引、embedding 与可选 reranker；`match()` 先清洗描述、空描述或空索引直接返回 None 不调用 embedding，再对用户描述生成 embedding 并校验，与本地 `embeddings.json` 向量计算余弦相似度，不设最低阈值取 Top 10；未配置 reranker 时返回 embedding Top 1，配置时使用精排结果，reranker 抛异常、返回 `0`、非整数或越界时 fallback 到 embedding Top 1；坏索引向量、维度不一致和零向量按条跳过并记录 warning，相似度相同时按数字 entry_id 升序稳定排序；用户描述 embedding provider 异常向外抛，向量为空/非数字/零向量时抛 `ValueError`）
 - [x] `bot/engine/ocr_service.py` — DeepSeek-OCR 封装（硅基流动 vision API，base64 图片输入，异步 OCR）
 - [x] `bot/engine/embedding_service.py` — Embedding 服务封装（通用 OpenAI 兼容 API，支持任意服务商，1024 维向量，`dimensions=1024` 显性指定）
+- [x] `bot/engine/rerank_service.py` — 精排服务封装（DeepSeek LLM 精排，实现 `RerankProvider` 协议，支持任何 OpenAI 兼容服务，固定 PRD prompt 模板，5 秒超时）

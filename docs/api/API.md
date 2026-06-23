@@ -11,6 +11,7 @@ api
     ├── engine
     │   ├── ai_matcher.md
     │   ├── embedding_service.md
+    │   ├── rerank_service.md
     │   ├── index_manager.md
     │   ├── keyword_searcher.md
     │   └── ocr_service.md
@@ -204,6 +205,24 @@ class DeepSeekOcrService:
     ) -> None
 
     async def ocr(self, image_path: str) -> str
+```
+
+### `docs/api/bot/engine/rerank_service.md`
+
+```python
+class RerankService:
+    def __init__(
+        self,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        model: str | None = None,
+    ) -> None
+
+    async def rerank(
+        self,
+        description: str,
+        candidates: list[AIMatchCandidate],
+    ) -> int  # 1-based 序号，0 表示放弃精排
 ```
 
 ### `docs/api/bot/logging_config.md`
