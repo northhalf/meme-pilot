@@ -8,8 +8,13 @@
 """
 
 import os
+from pathlib import Path
 
 import pytest
+from dotenv import load_dotenv
+
+# 加载项目根目录 .env
+load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
 from bot.engine.ai_matcher import AIMatchCandidate
 from bot.engine.rerank_service import RerankService
