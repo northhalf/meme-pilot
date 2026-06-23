@@ -30,11 +30,13 @@ services:
       - BOT_HOST=0.0.0.0
       - BOT_PORT=${BOT_PORT:-8080}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:?请设置 DEEPSEEK_API_KEY 环境变量}
-      - DEEPSEEK_BASE_URL=https://api.deepseek.com
-      - DEEPSEEK_MODEL=deepseek-chat
+      - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-v4-flash}
       - SILICONFLOW_API_KEY=${SILICONFLOW_API_KEY:?请设置 SILICONFLOW_API_KEY 环境变量}
-      - SILICONFLOW_BASE_URL=https://api.siliconflow.cn/v1
-      - SILICONFLOW_EMBEDDING_MODEL=Qwen/Qwen3-Embedding-8B
+      - SILICONFLOW_BASE_URL=${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}
+      - EMBEDDING_API_KEY=${EMBEDDING_API_KEY:?请设置 EMBEDDING_API_KEY 环境变量}
+      - EMBEDDING_BASE_URL=${EMBEDDING_BASE_URL:-https://api.siliconflow.cn/v1}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-m3}
       - SILICONFLOW_OCR_MODEL=${SILICONFLOW_OCR_MODEL:-deepseek-ai/DeepSeek-OCR}
       - SYNC_CONCURRENCY=${SYNC_CONCURRENCY:-5}
       - TZ=Asia/Shanghai

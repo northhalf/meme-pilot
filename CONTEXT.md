@@ -34,7 +34,7 @@
 | **embeddings.json** | AI 匹配必需的向量索引文件，采用 id 映射对象结构，保存每条索引文本对应的 embedding；首次建索引和 `/refresh` 时维护；`text_hash` 使用规范化 OCR 文本的 SHA-256 |
 | **rapidfuzz** | Python 模糊字符串匹配库，用于关键词的非精确匹配 |
 | **DeepSeek** | 大模型 API 提供商，用于 AI 匹配中的候选精排，不用于生成 embedding |
-| **SiliconFlow** | Embedding API 提供商，用于生成用户描述和索引文本的向量；v1.0 默认模型为 `Qwen/Qwen3-Embedding-8B` |
+| **SiliconFlow** | Embedding API 提供商，用于生成用户描述和索引文本的向量；v1.0 默认模型为 `BAAI/bge-m3` |
 
 ### 交互协议
 

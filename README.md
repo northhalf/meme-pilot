@@ -239,7 +239,7 @@ uv run pytest tests/integration/ -v -s
 - [NoneBot2](https://github.com/nonebot/nonebot2) — 聊天机器人框架 (7.5k ⭐)
 - [DeepSeek-OCR](https://siliconflow.cn) — 视觉 OCR 模型（硅基流动）
 - [DeepSeek](https://platform.deepseek.com) — LLM 精排 API
-- [SiliconFlow](https://siliconflow.cn) — Embedding API，默认模型 `Qwen/Qwen3-Embedding-8B`
+- [SiliconFlow](https://siliconflow.cn) — Embedding API，默认模型 `BAAI/bge-m3`
 - [rapidfuzz](https://github.com/maxbachmann/rapidfuzz) — 模糊字符串匹配
 - 图片无损压缩工具/库 — 实现阶段选择具体方案，需求要求支持 `.jpg/.jpeg/.png/.webp/.gif`，`.bmp` 跳过压缩
 
