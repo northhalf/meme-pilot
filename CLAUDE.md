@@ -76,4 +76,6 @@ uv run python -m compileall bot tests   # 语法检查
 
 ## 当前实现注意事项
 
-现有代码仍是早期框架，可能尚未完全实现 `docs/PRD.md` 的最新设计，例如 `index.json`、`/add`、SiliconFlow embedding、`BOT_HOST`/`BOT_PORT` 和反向 WebSocket 配置。实现或重构前，以 `docs/PRD.md` 和 `CONTEXT.md` 为准，并同步更新 README、`.env.example`、`docker-compose.yml`。
+已完成：engine 全部模块（index_manager、keyword_searcher、ai_matcher、ocr_service、embedding_service、rerank_service、protocols）、app_state 共享实例、auth 授权校验、/help 和 /refresh 插件及其测试。
+
+尚未实现：`bot.py`（NoneBot2 入口）、`config.py`、`/search`、`/ai`、`/add` 插件、`image_optimizer`（图片压缩）、`Dockerfile`。实现或重构前，以 `docs/PRD.md` 和 `CONTEXT.md` 为准，并同步更新 README、`.env.example`、`docker-compose.yml`。

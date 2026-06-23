@@ -420,6 +420,7 @@ meme-pilot/
     ├── bot.py                 # NoneBot2 入口
     ├── config.py              # 配置读取
     ├── app_state.py           # 共享实例管理（模块级单例）
+    ├── auth.py                # 授权校验模块（AUTHORIZED_USER_IDS 白名单）
     ├── logging_config.py      # 日志滚动配置（RotatingFileHandler + StreamHandler）
     ├── plugins/
     │   ├── __init__.py
@@ -430,6 +431,7 @@ meme-pilot/
     │   └── meme_refresh.py    # /refresh 命令
     └── engine/
         ├── __init__.py
+        ├── protocols.py       # 共享协议定义（EmbeddingProvider 等）
         ├── image_optimizer.py # 图片无损压缩
         ├── ocr_service.py     # DeepSeek-OCR 封装（硅基流动 API）
         ├── embedding_service.py # SiliconFlow Embedding 封装（实现 EmbeddingProvider）

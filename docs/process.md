@@ -8,7 +8,9 @@
 - [x] `bot/engine/embedding_service.py` — Embedding 服务封装（通用 OpenAI 兼容 API，支持任意服务商，1024 维向量，`dimensions=1024` 显性指定）
 - [x] `bot/engine/rerank_service.py` — 精排服务封装（DeepSeek LLM 精排，实现 `RerankProvider` 协议，支持任何 OpenAI 兼容服务，固定 PRD prompt 模板，5 秒超时）
 - [x] `bot/app_state.py` — 共享实例管理模块（模块级单例，`init_app()` 初始化 IndexManager / OcrService / EmbeddingService，`get_*()` 供插件获取，未初始化时 raise RuntimeError）
+- [x] `bot/auth.py` — 授权校验模块（从 `AUTHORIZED_USER_IDS` 环境变量读取白名单，提供 `is_authorized()` / `log_unauthorized()` 供各插件统一调用，消除插件间重复授权逻辑）
 - [x] `bot/plugins/meme_refresh.py` — /refresh 命令插件（NoneBot2 on_command 注册，AUTHORIZED_USER_IDS 授权校验，全局索引更新锁 acquire_lock / release_lock，调用 sync_with_filesystem() 增量刷新，SyncResult 摘要回复含新增/删除/去重/无文字移走/失败统计，失败文件最多列出前 10 个）
+- [x] `bot/plugins/meme_help.py` — /help 命令插件（NoneBot2 on_command 注册 /help，priority=5；on_message 兜底 priority=99、block=False 处理纯文本和未知斜杠命令；AUTHORIZED_USER_IDS 授权校验；纯文本回复帮助摘要，未知命令回复"未知命令"+帮助摘要）
 - [x] `tests/unit/test_app_state.py` — app_state 单元测试（8 用例：init_app 设置/覆盖、get_* 返回实例/未初始化 raise RuntimeError）
 - [x] `tests/unit/plugins/test_meme_refresh.py` — /refresh 插件单元测试（12 用例：授权/非授权用户、锁占用/释放/异常释放、进度消息、同步异常、空目录、正常摘要、失败文件显示/截断上限、未初始化错误）
 - [x] `bot/engine/protocols.py` — 共享协议定义（`EmbeddingProvider` Protocol，从 ai_matcher 和 index_manager 中提取消除重复）

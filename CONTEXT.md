@@ -35,6 +35,7 @@
 | **rapidfuzz** | Python 模糊字符串匹配库，用于关键词的非精确匹配 |
 | **DeepSeek** | 大模型 API 提供商，用于 AI 匹配中的候选精排，不用于生成 embedding |
 | **SiliconFlow** | Embedding API 提供商，用于生成用户描述和索引文本的向量；v1.0 默认模型为 `BAAI/bge-m3` |
+| **授权校验模块** | `bot/auth.py`，从 `AUTHORIZED_USER_IDS` 环境变量读取白名单，提供 `is_authorized()` / `log_unauthorized()` 供各插件统一调用 |
 
 ### 交互协议
 

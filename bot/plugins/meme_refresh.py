@@ -5,22 +5,15 @@
 """
 
 import logging
-import os
 
 from nonebot import on_command
 from nonebot.adapters.onebot.v11 import Bot, PrivateMessageEvent
 from nonebot.rule import to_me
 
 from bot.app_state import get_index_manager
+from bot.auth import is_authorized, log_unauthorized
 
 logger = logging.getLogger(__name__)
-
-# 授权用户白名单（逗号分隔的 QQ 号）
-_AUTHORIZED_USER_IDS: frozenset[str] = frozenset(
-    uid.strip()
-    for uid in os.environ.get("AUTHORIZED_USER_IDS", "").split(",")
-    if uid.strip()
-)
 
 refresh_cmd = on_command("refresh", rule=to_me(), priority=5, block=True)
 
@@ -38,8 +31,8 @@ async def handle_refresh(bot: Bot, event: PrivateMessageEvent) -> None:
     user_id = event.get_user_id()
 
     # 授权校验
-    if user_id not in _AUTHORIZED_USER_IDS:
-        logger.debug("非授权用户 %s 的 /refresh 请求，静默忽略", user_id)
+    if not is_authorized(user_id):
+        log_unauthorized(user_id, "refresh")
         return
 
     # 获取 IndexManager

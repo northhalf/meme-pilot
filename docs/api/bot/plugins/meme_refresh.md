@@ -13,7 +13,7 @@
 | 依赖项 | 来源 | 说明 |
 |--------|------|------|
 | `IndexManager` | `app_state.get_index_manager()` | 索引增删改查与文件系统同步 |
-| `AUTHORIZED_USER_IDS` | 环境变量 | 授权用户白名单（逗号分隔 QQ 号） |
+| `is_authorized()` | `bot.auth` | 授权用户校验 |
 
 ## 行为
 

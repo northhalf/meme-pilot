@@ -15,7 +15,10 @@ import pytest
 _mock_cmd = MagicMock()
 _mock_cmd.handle.return_value = lambda fn: fn  # 透传 decorator
 
-with patch("nonebot.on_command", return_value=_mock_cmd):
+with (
+    patch("nonebot.on_command", return_value=_mock_cmd),
+    patch("nonebot.on_message", return_value=MagicMock(handle=lambda fn: fn)),
+):
     from bot.plugins import meme_refresh
     from bot.plugins.meme_refresh import handle_refresh
 
@@ -52,9 +55,9 @@ def _make_index_manager(
     im.acquire_lock.return_value = acquire_result
     im.entry_count = entry_count
     im.sync_with_filesystem = AsyncMock(
-        return_value=sync_result
-        if sync_result is not None
-        else SyncResult(added=2, deleted=0)
+        return_value=(
+            sync_result if sync_result is not None else SyncResult(added=2, deleted=0)
+        )
     )
     return im
 
@@ -74,12 +77,10 @@ class TestHandleRefreshAuth:
     """授权校验测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(
-        meme_refresh, "_AUTHORIZED_USER_IDS", frozenset({"111", "222", "333"})
-    )
+    @patch.object(meme_refresh, "is_authorized", return_value=True)
     @patch.object(meme_refresh, "get_index_manager")
     async def test_authorized_user_proceeds(
-        self, mock_get_im: MagicMock
+        self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
         """授权用户应触发同步。"""
         _reset_cmd()
@@ -92,10 +93,10 @@ class TestHandleRefreshAuth:
         im.sync_with_filesystem.assert_awaited_once()
 
     @pytest.mark.asyncio
-    @patch.object(meme_refresh, "_AUTHORIZED_USER_IDS", frozenset({"111", "222"}))
+    @patch.object(meme_refresh, "is_authorized", return_value=False)
     @patch.object(meme_refresh, "get_index_manager")
     async def test_unauthorized_user_ignored(
-        self, mock_get_im: MagicMock
+        self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
         """非授权用户应被静默忽略。"""
         _reset_cmd()
@@ -117,10 +118,10 @@ class TestHandleRefreshLock:
     """索引锁测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_refresh, "_AUTHORIZED_USER_IDS", frozenset({"12345"}))
+    @patch.object(meme_refresh, "is_authorized", return_value=True)
     @patch.object(meme_refresh, "get_index_manager")
     async def test_lock_contention_replies(
-        self, mock_get_im: MagicMock
+        self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
         """锁占用时应回复提示。"""
         _reset_cmd()
@@ -133,10 +134,10 @@ class TestHandleRefreshLock:
         im.sync_with_filesystem.assert_not_awaited()
 
     @pytest.mark.asyncio
-    @patch.object(meme_refresh, "_AUTHORIZED_USER_IDS", frozenset({"12345"}))
+    @patch.object(meme_refresh, "is_authorized", return_value=True)
     @patch.object(meme_refresh, "get_index_manager")
     async def test_lock_released_after_sync(
-        self, mock_get_im: MagicMock
+        self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
         """同步完成后应释放锁。"""
         _reset_cmd()
@@ -148,10 +149,10 @@ class TestHandleRefreshLock:
         im.release_lock.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch.object(meme_refresh, "_AUTHORIZED_USER_IDS", frozenset({"12345"}))
+    @patch.object(meme_refresh, "is_authorized", return_value=True)
     @patch.object(meme_refresh, "get_index_manager")
     async def test_lock_released_on_sync_exception(
-        self, mock_get_im: MagicMock
+        self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
         """sync_with_filesystem 异常时也应释放锁。"""
         _reset_cmd()
@@ -173,10 +174,10 @@ class TestHandleRefreshSync:
     """同步执行测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_refresh, "_AUTHORIZED_USER_IDS", frozenset({"12345"}))
+    @patch.object(meme_refresh, "is_authorized", return_value=True)
     @patch.object(meme_refresh, "get_index_manager")
     async def test_sends_progress_message(
-        self, mock_get_im: MagicMock
+        self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
         """应先发送进度提示消息。"""
         _reset_cmd()
@@ -191,10 +192,10 @@ class TestHandleRefreshSync:
         assert "正在刷新索引" in call_args[1]
 
     @pytest.mark.asyncio
-    @patch.object(meme_refresh, "_AUTHORIZED_USER_IDS", frozenset({"12345"}))
+    @patch.object(meme_refresh, "is_authorized", return_value=True)
     @patch.object(meme_refresh, "get_index_manager")
     async def test_sync_exception_replies_error(
-        self, mock_get_im: MagicMock
+        self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
         """sync_with_filesystem 异常时应回复错误提示。"""
         _reset_cmd()
@@ -218,10 +219,10 @@ class TestHandleRefreshResult:
     """结果回复测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_refresh, "_AUTHORIZED_USER_IDS", frozenset({"12345"}))
+    @patch.object(meme_refresh, "is_authorized", return_value=True)
     @patch.object(meme_refresh, "get_index_manager")
     async def test_empty_memes_replies_empty(
-        self, mock_get_im: MagicMock
+        self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
         """memes/ 为空时应回复空目录提示。"""
         from bot.engine.index_manager import SyncResult
@@ -237,10 +238,10 @@ class TestHandleRefreshResult:
         assert "表情包目录为空" in call_args
 
     @pytest.mark.asyncio
-    @patch.object(meme_refresh, "_AUTHORIZED_USER_IDS", frozenset({"12345"}))
+    @patch.object(meme_refresh, "is_authorized", return_value=True)
     @patch.object(meme_refresh, "get_index_manager")
     async def test_normal_result_replies_summary(
-        self, mock_get_im: MagicMock
+        self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
         """正常同步后应回复摘要。"""
         from bot.engine.index_manager import SyncResult
@@ -259,10 +260,10 @@ class TestHandleRefreshResult:
         assert "删除: 1" in call_args
 
     @pytest.mark.asyncio
-    @patch.object(meme_refresh, "_AUTHORIZED_USER_IDS", frozenset({"12345"}))
+    @patch.object(meme_refresh, "is_authorized", return_value=True)
     @patch.object(meme_refresh, "get_index_manager")
     async def test_failed_files_shown(
-        self, mock_get_im: MagicMock
+        self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
         """有失败文件时应列出。"""
         from bot.engine.index_manager import SyncResult
@@ -280,10 +281,10 @@ class TestHandleRefreshResult:
         assert "corrupt.png" in call_args
 
     @pytest.mark.asyncio
-    @patch.object(meme_refresh, "_AUTHORIZED_USER_IDS", frozenset({"12345"}))
+    @patch.object(meme_refresh, "is_authorized", return_value=True)
     @patch.object(meme_refresh, "get_index_manager")
     async def test_failed_files_max_10(
-        self, mock_get_im: MagicMock
+        self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
         """失败文件最多显示前 10 个。"""
         from bot.engine.index_manager import SyncResult
@@ -311,10 +312,10 @@ class TestHandleRefreshInitError:
     """初始化错误测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_refresh, "_AUTHORIZED_USER_IDS", frozenset({"12345"}))
+    @patch.object(meme_refresh, "is_authorized", return_value=True)
     @patch.object(meme_refresh, "get_index_manager")
     async def test_not_initialized_replies_error(
-        self, mock_get_im: MagicMock
+        self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
         """IndexManager 未初始化时应回复错误提示。"""
         _reset_cmd()

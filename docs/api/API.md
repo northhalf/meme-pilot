@@ -17,8 +17,10 @@ api
     │   ├── ocr_service.md
     │   └── protocols.md
     ├── logging_config.md
+    ├── auth.md
     ├── app_state.md
     └── plugins
+        ├── meme_help.md
         └── meme_refresh.md
 ```
 
@@ -250,11 +252,27 @@ def get_ocr_service() -> DeepSeekOcrService
 def get_embedding_service() -> EmbeddingService
 ```
 
+### `bot/auth.py`
+
+共享授权校验模块，从 `AUTHORIZED_USER_IDS` 环境变量读取白名单。
+
+- `AUTHORIZED_USER_IDS: frozenset[str]` — 授权用户白名单
+- `is_authorized(user_id: str) -> bool` — 校验用户是否在白名单中
+- `log_unauthorized(user_id: str, command: str) -> None` — 记录非授权访问日志
+
 ### `bot/plugins/meme_refresh.py`
 
 NoneBot2 命令插件，注册 `/refresh` 命令。
 
-- 依赖：`app_state.get_index_manager()`
-- 授权：`AUTHORIZED_USER_IDS` 环境变量
+- 依赖：`app_state.get_index_manager()`、`auth.is_authorized()`
 - 锁：`IndexManager.acquire_lock()` / `release_lock()`
 - 同步：`IndexManager.sync_with_filesystem() -> SyncResult`
+
+### `bot/plugins/meme_help.py`
+
+NoneBot2 命令插件，注册 `/help` 命令及兜底消息处理。
+
+- 注册：`on_command("help", rule=to_me(), priority=5, block=True)`
+- 兜底：`on_message(rule=to_me(), priority=99, block=False)` 处理纯文本和未知斜杠命令
+- 依赖：`auth.is_authorized()`
+- 无外部依赖，不获取 IndexManager 实例
