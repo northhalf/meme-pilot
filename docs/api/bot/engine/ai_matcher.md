@@ -19,19 +19,6 @@ class AIIndexProvider(Protocol):
 
 ---
 
-### `EmbeddingProvider`
-
-```python
-class EmbeddingProvider(Protocol):
-    async def embed(self, text: str) -> list[float]: ...
-```
-
-| 方法 | 参数 | 返回 | 说明 |
-|------|------|------|------|
-| `embed` | `text: str` — 待向量化文本 | `list[float]` (1024 维) | 异步生成文本 embedding 向量，维度 1024 |
-
----
-
 ### `RerankProvider`
 
 ```python

@@ -4,9 +4,7 @@
 bot.py 启动时调用 init_app() 初始化，插件通过 get_*() 函数获取实例。
 """
 
-from bot.engine.embedding_service import EmbeddingService
-from bot.engine.index_manager import IndexManager
-from bot.engine.ocr_service import DeepSeekOcrService
+from .engine import DeepSeekOcrService, EmbeddingService, IndexManager
 
 _index_manager: IndexManager | None = None
 _ocr_service: DeepSeekOcrService | None = None

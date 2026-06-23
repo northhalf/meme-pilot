@@ -11,3 +11,5 @@
 - [x] `bot/plugins/meme_refresh.py` — /refresh 命令插件（NoneBot2 on_command 注册，AUTHORIZED_USER_IDS 授权校验，全局索引更新锁 acquire_lock / release_lock，调用 sync_with_filesystem() 增量刷新，SyncResult 摘要回复含新增/删除/去重/无文字移走/失败统计，失败文件最多列出前 10 个）
 - [x] `tests/unit/test_app_state.py` — app_state 单元测试（8 用例：init_app 设置/覆盖、get_* 返回实例/未初始化 raise RuntimeError）
 - [x] `tests/unit/plugins/test_meme_refresh.py` — /refresh 插件单元测试（12 用例：授权/非授权用户、锁占用/释放/异常释放、进度消息、同步异常、空目录、正常摘要、失败文件显示/截断上限、未初始化错误）
+- [x] `bot/engine/protocols.py` — 共享协议定义（`EmbeddingProvider` Protocol，从 ai_matcher 和 index_manager 中提取消除重复）
+- [x] `bot/engine/__init__.py` — engine 包公共接口导出（相对导入，`__all__` 声明全部 Protocol、数据类和服务类；`EmbeddingProvider` 从 protocols.py 统一导入）

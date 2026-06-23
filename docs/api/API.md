@@ -14,7 +14,8 @@ api
     │   ├── rerank_service.md
     │   ├── index_manager.md
     │   ├── keyword_searcher.md
-    │   └── ocr_service.md
+    │   ├── ocr_service.md
+    │   └── protocols.md
     ├── logging_config.md
     ├── app_state.md
     └── plugins
@@ -23,15 +24,19 @@ api
 
 ## API 文件索引
 
+### `docs/api/bot/engine/protocols.md`
+
+```python
+class EmbeddingProvider(Protocol):
+    async def embed(self, text: str) -> list[float]  # 1024 维
+```
+
 ### `docs/api/bot/engine/ai_matcher.md`
 
 ```python
 class AIIndexProvider(Protocol):
     def get_entries(self) -> dict[str, dict[str, str]]
     def get_embeddings(self) -> dict[str, dict[str, object]]
-
-class EmbeddingProvider(Protocol):
-    async def embed(self, text: str) -> list[float]  # 1024 维
 
 @dataclass(frozen=True)
 class AIMatchCandidate:
@@ -83,9 +88,6 @@ class IndexCorruptedError(Exception)
 
 class OcrProvider(Protocol):
     async def ocr(self, image_path: str) -> str
-
-class EmbeddingProvider(Protocol):
-    async def embed(self, text: str) -> list[float]  # 1024 维
 
 @dataclass
 class SyncResult:

@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
+from bot.engine.protocols import EmbeddingProvider
+
 import ujson
 
 logger = logging.getLogger(__name__)
@@ -145,23 +147,6 @@ class OcrProvider(Protocol):
         ...
 
 
-class EmbeddingProvider(Protocol):
-    """Embedding 服务提供者协议。
-
-    IndexManager 通过此协议调用 Embedding API，
-    由插件层注入具体实现。
-    """
-
-    async def embed(self, text: str) -> list[float]:
-        """对文本生成 embedding 向量。
-
-        Args:
-            text: 待向量化的文本。
-
-        Returns:
-            embedding 向量（浮点数列表）。
-        """
-        ...
 
 
 # ---------------------------------------------------------------------------

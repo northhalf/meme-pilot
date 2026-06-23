@@ -97,19 +97,6 @@ class OcrProvider(Protocol):
 
 ---
 
-### `EmbeddingProvider`
-
-```python
-class EmbeddingProvider(Protocol):
-    async def embed(self, text: str) -> list[float]: ...
-```
-
-| 方法 | 参数 | 返回 | 说明 |
-|------|------|------|------|
-| `embed` | `text: str` — 待向量化的文本 | `list[float]` (1024 维) | 异步，生成文本向量，维度 1024 |
-
----
-
 ## 数据类
 
 ### `SyncResult`

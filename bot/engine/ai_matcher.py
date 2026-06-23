@@ -8,6 +8,8 @@ import math
 from dataclasses import dataclass, replace
 from typing import Protocol
 
+from bot.engine.protocols import EmbeddingProvider
+
 logger = logging.getLogger(__name__)
 
 
@@ -27,21 +29,6 @@ class AIIndexProvider(Protocol):
 
         Returns:
             key 为索引 id，value 为包含 text_hash、embedding 的字典。
-        """
-        ...
-
-
-class EmbeddingProvider(Protocol):
-    """Embedding 服务提供者协议。"""
-
-    async def embed(self, text: str) -> list[float]:
-        """生成文本 embedding。
-
-        Args:
-            text: 待向量化的文本。
-
-        Returns:
-            embedding 向量。
         """
         ...
 
