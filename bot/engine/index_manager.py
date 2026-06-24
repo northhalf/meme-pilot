@@ -16,6 +16,8 @@ from typing import Protocol
 
 from bot.engine.protocols import EmbeddingProvider
 
+from bot.engine.image_optimizer import ImageOptimizer
+
 import ujson
 
 logger = logging.getLogger(__name__)
@@ -234,6 +236,7 @@ class IndexManager:
         embedding_provider: EmbeddingProvider | None = None,
         sync_concurrency: int | None = None,
         no_text_dir: str | None = None,
+        optimizer: ImageOptimizer | None = None,
     ) -> None:
         """初始化 IndexManager。
 
@@ -248,6 +251,7 @@ class IndexManager:
             no_text_dir: 无文字图存放目录；None 时取 memes_dir 同级的
                 meme_no_text/（即 Path(memes_dir).parent / "meme_no_text"）。
                 插件层无需显式传入。
+            optimizer: 图片压缩器实例，注入后在 OCR 前自动压缩图片。
         """
         self._data_dir = Path(data_dir)
         self._memes_dir = Path(memes_dir)
@@ -257,6 +261,7 @@ class IndexManager:
             self._no_text_dir = Path(memes_dir).parent / "meme_no_text"
         self._ocr_provider = ocr_provider
         self._embedding_provider = embedding_provider
+        self._optimizer = optimizer
 
         self._entries: dict[str, dict[str, str]] = {}
         self._dedup_index: dict[str, str] = {}
@@ -1074,9 +1079,10 @@ class IndexManager:
         return (added, deduped, no_text_moved)
 
     async def _process_new_file(self, filename: str) -> tuple[str, str, list[float]]:
-        """处理单张新增图片：OCR → Embed。
+        """处理单张新增图片：压缩 → OCR → Embed。
 
         受 _sync_semaphore 约束，并发上限内执行。
+        若注入了 optimizer，会在 OCR 前自动压缩图片。
 
         Args:
             filename: 表情包文件名。
@@ -1090,6 +1096,9 @@ class IndexManager:
         """
         image_path = self._memes_dir / filename
         async with self._sync_semaphore:
+            if self._optimizer is not None:
+                await self._optimizer.optimize(str(image_path))
+
             if self._ocr_provider is None:
                 raise RuntimeError("OCR 服务未注入")
             text = await self._ocr_provider.ocr(str(image_path))

@@ -4,17 +4,19 @@
 bot.py 启动时调用 init_app() 初始化，插件通过 get_*() 函数获取实例。
 """
 
-from .engine import DeepSeekOcrService, EmbeddingService, IndexManager
+from .engine import DeepSeekOcrService, EmbeddingService, ImageOptimizer, IndexManager
 
 _index_manager: IndexManager | None = None
 _ocr_service: DeepSeekOcrService | None = None
 _embedding_service: EmbeddingService | None = None
+_image_optimizer: ImageOptimizer | None = None
 
 
 def init_app(
     index_manager: IndexManager,
     ocr_service: DeepSeekOcrService,
     embedding_service: EmbeddingService,
+    image_optimizer: ImageOptimizer | None = None,
 ) -> None:
     """初始化全局共享实例。
 
@@ -25,11 +27,13 @@ def init_app(
         index_manager: 索引管理器实例。
         ocr_service: OCR 服务实例。
         embedding_service: Embedding 服务实例。
+        image_optimizer: 图片压缩器实例，可选。
     """
-    global _index_manager, _ocr_service, _embedding_service
+    global _index_manager, _ocr_service, _embedding_service, _image_optimizer
     _index_manager = index_manager
     _ocr_service = ocr_service
     _embedding_service = embedding_service
+    _image_optimizer = image_optimizer
 
 
 def get_index_manager() -> IndexManager:
@@ -72,3 +76,12 @@ def get_embedding_service() -> EmbeddingService:
     if _embedding_service is None:
         raise RuntimeError("EmbeddingService 尚未初始化，请先调用 init_app()")
     return _embedding_service
+
+
+def get_image_optimizer() -> ImageOptimizer | None:
+    """获取 ImageOptimizer 单例。
+
+    Returns:
+        已初始化的 ImageOptimizer 实例，或 None（未注入时）。
+    """
+    return _image_optimizer

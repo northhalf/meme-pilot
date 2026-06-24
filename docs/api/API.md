@@ -15,6 +15,7 @@ api
     │   ├── index_manager.md
     │   ├── keyword_searcher.md
     │   ├── ocr_service.md
+    │   ├── image_optimizer.md
     │   └── protocols.md
     ├── logging_config.md
     ├── auth.md
@@ -118,6 +119,7 @@ class IndexManager:
         embedding_provider: EmbeddingProvider | None = None,
         sync_concurrency: int | None = None,
         no_text_dir: str | None = None,
+        optimizer: ImageOptimizer | None = None,
     ) -> None
 
     def load(self) -> None
@@ -232,6 +234,30 @@ class RerankService:
     ) -> int  # 1-based 序号，0 表示放弃精排
 ```
 
+### `docs/api/bot/engine/image_optimizer.md`
+
+```python
+COMPRESSIBLE: frozenset[str]   # {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+PASS_THROUGH: frozenset[str]   # {".bmp"}
+
+@dataclass(frozen=True, slots=True)
+class OptimizeResult:
+    original_size: int
+    optimized_size: int
+    saved: int
+    skipped: bool = False
+
+class ImageOptimizer:
+    def __init__(
+        self,
+        jpeg_quality: int = 95,
+        webp_quality: int = 80,
+    ) -> None
+
+    async def optimize(self, image_path: str | Path) -> OptimizeResult
+    # Raises: FileNotFoundError, ValueError, RuntimeError
+```
+
 ### `docs/api/bot/logging_config.md`
 
 ```python
@@ -245,11 +271,13 @@ def init_app(
     index_manager: IndexManager,
     ocr_service: DeepSeekOcrService,
     embedding_service: EmbeddingService,
+    image_optimizer: ImageOptimizer | None = None,
 ) -> None
 
 def get_index_manager() -> IndexManager
 def get_ocr_service() -> DeepSeekOcrService
 def get_embedding_service() -> EmbeddingService
+def get_image_optimizer() -> ImageOptimizer | None
 ```
 
 ### `bot/auth.py`

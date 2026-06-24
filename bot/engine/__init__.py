@@ -11,6 +11,7 @@ from .ai_matcher import (
     RerankProvider,
 )
 from .embedding_service import EmbeddingService
+from .image_optimizer import ImageOptimizer, OptimizeResult
 from .index_manager import (
     AddResult,
     IndexManager,
@@ -37,6 +38,9 @@ __all__ = [
     "RerankProvider",
     # embedding_service
     "EmbeddingService",
+    # image_optimizer
+    "ImageOptimizer",
+    "OptimizeResult",
     # index_manager
     "AddResult",
     "IndexManager",
