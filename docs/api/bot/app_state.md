@@ -4,13 +4,15 @@
 
 ## 模块级函数
 
-### `init_app(index_manager, ocr_service, embedding_service) -> None`
+### `init_app(index_manager, ocr_service, embedding_service, image_optimizer=None, ai_matcher=None) -> None`
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
 | `index_manager` | `IndexManager` | 索引管理器实例 |
 | `ocr_service` | `DeepSeekOcrService` | OCR 服务实例 |
 | `embedding_service` | `EmbeddingService` | Embedding 服务实例 |
+| `image_optimizer` | `ImageOptimizer \| None` | 图片压缩器实例，可选 |
+| `ai_matcher` | `AIMatcher \| None` | AI 匹配器实例，可选 |
 
 | | 类型 | 说明 |
 |--|------|------|
@@ -44,4 +46,21 @@
 | | 类型 | 说明 |
 |--|------|------|
 | **返回** | `EmbeddingService` | 已初始化的 Embedding 服务实例 |
+| **异常** | `RuntimeError` | 尚未调用 `init_app()` 初始化 |
+
+---
+
+### `get_image_optimizer() -> ImageOptimizer | None`
+
+| | 类型 | 说明 |
+|--|------|------|
+| **返回** | `ImageOptimizer \| None` | 已初始化的图片压缩器实例，或 None（未注入时） |
+
+---
+
+### `get_ai_matcher() -> AIMatcher`
+
+| | 类型 | 说明 |
+|--|------|------|
+| **返回** | `AIMatcher` | 已初始化的 AI 匹配器实例 |
 | **异常** | `RuntimeError` | 尚未调用 `init_app()` 初始化 |

@@ -17,6 +17,7 @@ api
     │   ├── ocr_service.md
     │   ├── image_optimizer.md
     │   └── protocols.md
+    ├── config.md
     ├── logging_config.md
     ├── auth.md
     ├── app_state.md
@@ -24,7 +25,8 @@ api
     └── plugins
         ├── meme_help.md
         ├── meme_refresh.md
-        └── meme_add.md
+        ├── meme_add.md
+        └── meme_ai.md
 ```
 
 ## API 文件索引
@@ -295,12 +297,14 @@ def init_app(
     ocr_service: DeepSeekOcrService,
     embedding_service: EmbeddingService,
     image_optimizer: ImageOptimizer | None = None,
+    ai_matcher: AIMatcher | None = None,
 ) -> None
 
 def get_index_manager() -> IndexManager
 def get_ocr_service() -> DeepSeekOcrService
 def get_embedding_service() -> EmbeddingService
 def get_image_optimizer() -> ImageOptimizer | None
+def get_ai_matcher() -> AIMatcher
 ```
 
 ### `bot/auth.py`
@@ -349,3 +353,18 @@ NoneBot2 命令插件，注册 `/add` 命令。
 - 图片下载：`httpx.AsyncClient`，30s 超时
 - 文件名：`_sanitize_filename()` 安全化 / `_auto_filename()` 自动生成
 - 文件冲突：`resolve_unique_filename()`
+
+### `bot/plugins/meme_ai.py`
+
+NoneBot2 命令插件，注册 `/ai` 命令。
+
+- 依赖：`app_state.get_ai_matcher()`、`app_state.get_index_manager()`、`auth.is_authorized()`
+- 锁：只读检查 `IndexManager.is_locked`
+- 匹配：`_do_match()` 封装异常处理，`asyncio.gather()` 并发执行 send 与 match
+- 图片：`MessageSegment.image(f"file:///{path.resolve()}")`
+
+### `bot/config.py`
+
+全局路径常量模块，详见 `docs/api/bot/config.md`。
+
+- `MEMES_DIR: Path` — 表情包图片目录，绝对路径 `<项目根>/memes`

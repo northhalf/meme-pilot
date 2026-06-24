@@ -46,15 +46,6 @@ uv run python -m compileall bot tests   # 语法检查
 
 仅文档变更可不运行测试，但需在提交说明中注明“仅文档变更，未运行测试”。
 
-## Git 提交规范
-
-标题格式：`<type>(<scope>): <中文摘要>`
-
-常用 type：`feat`、`fix`、`perf`、`refactor`、`docs`、`test`
-常用 scope：`engine`、`plugins`、`docs`、`config`
-
-正文需包含功能/修复说明、工程变更、测试结果、文档更新。禁止自行提交，由用户审核。
-
 ## 环境变量
 
 `.env.example` 为模板。必填：
@@ -76,6 +67,6 @@ uv run python -m compileall bot tests   # 语法检查
 
 ## 当前实现注意事项
 
-已完成：engine 全部模块（index_manager、keyword_searcher、ai_matcher、ocr_service、embedding_service、rerank_service、image_optimizer、protocols）、app_state 共享实例、auth 授权校验、bot.session 会话管理、/help、/refresh 和 /add 插件及其测试。
+已完成：engine 全部模块（index_manager、keyword_searcher、ai_matcher、ocr_service、embedding_service、rerank_service、image_optimizer、protocols）、app_state 共享实例（含 get_ai_matcher）、config 全局路径常量、auth 授权校验、bot.session 会话管理、/help、/refresh、/add 和 /ai 插件及其测试。
 
-尚未实现：`bot.py`（NoneBot2 入口）、`config.py`、`/search`、`/ai` 插件、`Dockerfile`。实现或重构前，以 `docs/PRD.md` 和 `CONTEXT.md` 为准，并同步更新 README、`.env.example`、`docker-compose.yml`。
+尚未实现：`bot.py`（NoneBot2 入口）、`/search` 插件、`Dockerfile`。实现或重构前，以 `docs/PRD.md` 和 `CONTEXT.md` 为准，并同步更新 README、`.env.example`、`docker-compose.yml`。

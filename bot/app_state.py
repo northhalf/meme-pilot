@@ -1,15 +1,22 @@
 """共享实例管理模块。
 
-模块级单例模式，供各插件获取 IndexManager、OcrService、EmbeddingService。
+模块级单例模式，供插件获取 IndexManager、OcrService、EmbeddingService、AIMatcher。
 bot.py 启动时调用 init_app() 初始化，插件通过 get_*() 函数获取实例。
 """
 
-from .engine import DeepSeekOcrService, EmbeddingService, ImageOptimizer, IndexManager
+from .engine import (
+    AIMatcher,
+    DeepSeekOcrService,
+    EmbeddingService,
+    ImageOptimizer,
+    IndexManager,
+)
 
 _index_manager: IndexManager | None = None
 _ocr_service: DeepSeekOcrService | None = None
 _embedding_service: EmbeddingService | None = None
 _image_optimizer: ImageOptimizer | None = None
+_ai_matcher: AIMatcher | None = None
 
 
 def init_app(
@@ -17,6 +24,7 @@ def init_app(
     ocr_service: DeepSeekOcrService,
     embedding_service: EmbeddingService,
     image_optimizer: ImageOptimizer | None = None,
+    ai_matcher: AIMatcher | None = None,
 ) -> None:
     """初始化全局共享实例。
 
@@ -28,12 +36,14 @@ def init_app(
         ocr_service: OCR 服务实例。
         embedding_service: Embedding 服务实例。
         image_optimizer: 图片压缩器实例，可选。
+        ai_matcher: AI 匹配器实例，可选。
     """
-    global _index_manager, _ocr_service, _embedding_service, _image_optimizer
+    global _index_manager, _ocr_service, _embedding_service, _image_optimizer, _ai_matcher
     _index_manager = index_manager
     _ocr_service = ocr_service
     _embedding_service = embedding_service
     _image_optimizer = image_optimizer
+    _ai_matcher = ai_matcher
 
 
 def get_index_manager() -> IndexManager:
@@ -85,3 +95,17 @@ def get_image_optimizer() -> ImageOptimizer | None:
         已初始化的 ImageOptimizer 实例，或 None（未注入时）。
     """
     return _image_optimizer
+
+
+def get_ai_matcher() -> AIMatcher:
+    """获取 AIMatcher 单例。
+
+    Returns:
+        已初始化的 AIMatcher 实例。
+
+    Raises:
+        RuntimeError: 尚未调用 init_app() 初始化。
+    """
+    if _ai_matcher is None:
+        raise RuntimeError("AIMatcher 尚未初始化，请先调用 init_app()")
+    return _ai_matcher

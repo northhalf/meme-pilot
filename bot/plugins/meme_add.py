@@ -20,6 +20,7 @@ from nonebot.rule import to_me
 
 from bot.app_state import get_index_manager
 from bot.auth import is_authorized, log_unauthorized
+from bot.config import MEMES_DIR
 from bot.engine.index_manager import (
     CompressionError,
     EmbeddingError,
@@ -32,7 +33,6 @@ from bot.session import cancel, check_and_cancel, is_cancelled, register
 logger = logging.getLogger(__name__)
 
 DOWNLOAD_TIMEOUT = 30  # 图片下载超时（秒）
-MEMES_DIR = Path("memes")
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
 
 # 文件名安全化：替换非法字符
