@@ -17,6 +17,7 @@ from .index_manager import (
     IndexManager,
     OcrProvider,
     SyncResult,
+    resolve_unique_filename,
 )
 from .keyword_searcher import (
     IndexProvider,
@@ -46,6 +47,7 @@ __all__ = [
     "IndexManager",
     "OcrProvider",
     "SyncResult",
+    "resolve_unique_filename",
     # keyword_searcher
     "IndexProvider",
     "KeywordSearcher",

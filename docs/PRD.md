@@ -339,7 +339,7 @@ v1.0 不检测同名覆盖：如果用户用新图片覆盖了旧图片但文件
 - .env 文件管理敏感配置（QQ 账号 / 授权用户列表 / DeepSeek API Key / SiliconFlow API Key）
 - 授权用户列表通过 `AUTHORIZED_USER_IDS` 配置，多个 QQ 号用英文逗号分隔
 - 必填环境变量：`QQ_ACCOUNT`、`AUTHORIZED_USER_IDS`、`DEEPSEEK_API_KEY`、`SILICONFLOW_API_KEY`、`EMBEDDING_API_KEY`
-- 可选环境变量：`BOT_HOST`、`BOT_PORT`、`DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL`、`SILICONFLOW_BASE_URL`、`SILICONFLOW_OCR_MODEL`、`EMBEDDING_BASE_URL`、`EMBEDDING_MODEL`
+- 可选环境变量：`BOT_HOST`、`BOT_PORT`、`DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL`、`SILICONFLOW_BASE_URL`、`SILICONFLOW_OCR_MODEL`、`EMBEDDING_BASE_URL`、`EMBEDDING_MODEL`、`SYNC_CONCURRENCY`（索引同步并发上限，默认 5）、`SESSION_EXPIRE_TIMEOUT`（会话超时，默认 60 秒）
 - .env 不纳入版本控制
 
 ### 4.4 维护
@@ -421,6 +421,7 @@ meme-pilot/
     ├── config.py              # 配置读取
     ├── app_state.py           # 共享实例管理（模块级单例）
     ├── auth.py                # 授权校验模块（AUTHORIZED_USER_IDS 白名单）
+    ├── session.py             # 共享会话管理（/add、/search 防重复提交）
     ├── logging_config.py      # 日志滚动配置（RotatingFileHandler + StreamHandler）
     ├── plugins/
     │   ├── __init__.py
@@ -457,6 +458,7 @@ dependencies = [
     "rapidfuzz>=3.0.0",
     "httpx>=0.27.0",
     "openai>=1.0.0",             # DeepSeek 兼容 OpenAI SDK
+    "pillow>=12.2.0",            # 图片无损压缩
     "pydantic>=2.0.0",
     "python-dotenv>=1.0.0",
     "ujson>=5.10.0",

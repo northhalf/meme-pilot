@@ -13,7 +13,7 @@
 - 修改术语、领域概念或用户可见命名时，必须对照 `CONTEXT.md` 保持术语一致。
 - 修改部署、环境变量或操作说明时，检查 `README.md`、`.env.example` 和 `docker-compose.yml`。
 - 调用已有模块或新增模块交互前，优先查阅 `docs/api/API.md` 中的参数签名与返回值说明；仅在文档不准确或信息不足时再阅读源码。
-- 每实现一个模块后，更新 `docs/process.md`（简要说明）和 `docs/api/API.md`（对外接口）。
+- 每实现一个模块后，更新 `docs/api/API.md`（对外接口）。
 
 ## 代码风格
 
@@ -76,6 +76,6 @@ uv run python -m compileall bot tests   # 语法检查
 
 ## 当前实现注意事项
 
-已完成：engine 全部模块（index_manager、keyword_searcher、ai_matcher、ocr_service、embedding_service、rerank_service、protocols）、app_state 共享实例、auth 授权校验、/help 和 /refresh 插件及其测试。
+已完成：engine 全部模块（index_manager、keyword_searcher、ai_matcher、ocr_service、embedding_service、rerank_service、image_optimizer、protocols）、app_state 共享实例、auth 授权校验、bot.session 会话管理、/help、/refresh 和 /add 插件及其测试。
 
-尚未实现：`bot.py`（NoneBot2 入口）、`config.py`、`/search`、`/ai`、`/add` 插件、`image_optimizer`（图片压缩）、`Dockerfile`。实现或重构前，以 `docs/PRD.md` 和 `CONTEXT.md` 为准，并同步更新 README、`.env.example`、`docker-compose.yml`。
+尚未实现：`bot.py`（NoneBot2 入口）、`config.py`、`/search`、`/ai` 插件、`Dockerfile`。实现或重构前，以 `docs/PRD.md` 和 `CONTEXT.md` 为准，并同步更新 README、`.env.example`、`docker-compose.yml`。

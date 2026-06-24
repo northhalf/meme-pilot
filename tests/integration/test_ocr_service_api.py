@@ -9,8 +9,10 @@
 
 import os
 from pathlib import Path
+from typing import AsyncGenerator
 
 import pytest
+import pytest_asyncio
 from dotenv import load_dotenv
 
 # 加载项目根目录 .env
@@ -28,10 +30,12 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-@pytest.fixture
-def ocr_service() -> DeepSeekOcrService:
+@pytest_asyncio.fixture
+async def ocr_service() -> AsyncGenerator[DeepSeekOcrService, None]:
     """创建真实的 DeepSeekOcrService 实例。"""
-    return DeepSeekOcrService()
+    service = DeepSeekOcrService()
+    yield service
+    await service._client.close()
 
 
 @pytest.mark.asyncio

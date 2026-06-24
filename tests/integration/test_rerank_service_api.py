@@ -9,8 +9,10 @@
 
 import os
 from pathlib import Path
+from typing import AsyncGenerator
 
 import pytest
+import pytest_asyncio
 from dotenv import load_dotenv
 
 # 加载项目根目录 .env
@@ -19,7 +21,6 @@ load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 from bot.engine.ai_matcher import AIMatchCandidate
 from bot.engine.rerank_service import RerankService
 
-
 # 跳过条件：未设置 API Key 时跳过
 pytestmark = pytest.mark.skipif(
     not os.environ.get("DEEPSEEK_API_KEY"),
@@ -27,10 +28,12 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-@pytest.fixture
-def rerank_service() -> RerankService:
+@pytest_asyncio.fixture
+async def rerank_service() -> AsyncGenerator[RerankService, None]:
     """创建真实的 RerankService 实例。"""
-    return RerankService()
+    service = RerankService()
+    yield service
+    await service._client.close()
 
 
 @pytest.fixture

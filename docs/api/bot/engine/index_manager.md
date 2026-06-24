@@ -72,6 +72,22 @@ dedup_key("   ")         # → ""
 
 ---
 
+### `resolve_unique_filename(target_dir: Path, filename: str) -> Path`
+
+在目标目录中生成不冲突的文件名。若文件已存在则追加数字后缀（如 `cat(1).jpg`）。
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `target_dir` | `Path` | 目标目录路径 |
+| `filename` | `str` | 原始文件名 |
+
+| | 类型 | 说明 |
+|--|------|------|
+| **返回** | `Path` | 不冲突的完整文件路径 |
+| **异常** | 无 | |
+
+---
+
 ## 异常
 
 ### `IndexCorruptedError(Exception)`
@@ -79,6 +95,18 @@ dedup_key("   ")         # → ""
 `index.json` 结构损坏或缺少必要字段时抛出。
 
 无额外属性，使用 `str(exc)` 获取错误消息。
+
+### `CompressionError(RuntimeError)`
+
+图片压缩失败时抛出。
+
+### `OcrError(RuntimeError)`
+
+OCR 识别失败时抛出。
+
+### `EmbeddingError(RuntimeError)`
+
+Embedding 生成失败时抛出。
 
 ---
 
@@ -158,7 +186,7 @@ class IndexManager:
 
 ---
 
-### `__init__(data_dir="data", memes_dir="memes", ocr_provider=None, embedding_provider=None, sync_concurrency=None, no_text_dir=None) -> None`
+### `__init__(data_dir="data", memes_dir="memes", ocr_provider=None, embedding_provider=None, sync_concurrency=None, no_text_dir=None, optimizer=None) -> None`
 
 | 参数 | 类型 | 默认 | 说明 |
 |------|------|------|------|
@@ -168,6 +196,7 @@ class IndexManager:
 | `embedding_provider` | `EmbeddingProvider \| None` | `None` | Embedding 服务注入 |
 | `sync_concurrency` | `int \| None` | `None` | `sync_with_filesystem()` 并行处理新增图片时的最大并发数；`None` 或非正数时使用 `DEFAULT_SYNC_CONCURRENCY` |
 | `no_text_dir` | `str \| None` | `None` | 无文字图存放目录；`None` 时取 `memes_dir` 同级的 `meme_no_text/` |
+| `optimizer` | `ImageOptimizer \| None` | `None` | 图片压缩优化器注入；`None` 时不压缩 |
 
 初始化后需调用 `load()` 加载磁盘数据。
 
@@ -338,3 +367,37 @@ class IndexManager:
 | **返回** | `SyncResult` | 新增、删除、去重、无文字移走和失败统计 |
 
 按文件名同步内存索引与 `memes/` 目录；新增图片依赖注入的 OCR 与 Embedding provider。
+
+---
+
+### `async add_single_file(filename: str) -> AddResult`
+
+单张图片添加：执行压缩→OCR→Embedding 管道，然后调用 `add_entry`。
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `filename` | `str` | `memes/` 下的图片文件名 |
+
+| | 类型 | 说明 |
+|--|------|------|
+| **返回** | `AddResult` | 添加/替换/无文字移图结果 |
+| **异常** | `CompressionError` | 图片压缩失败 |
+| **异常** | `OcrError` | OCR 识别失败 |
+| **异常** | `EmbeddingError` | Embedding 生成失败 |
+
+---
+
+### `async _process_image_pipeline(filename: str) -> tuple[str, list[float]]`
+
+压缩→OCR→Embedding 管道。先压缩图片（若配置 optimizer），再 OCR 提取文本，最后生成 embedding 向量。
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `filename` | `str` | `memes/` 下的图片文件名 |
+
+| | 类型 | 说明 |
+|--|------|------|
+| **返回** | `tuple[str, list[float]]` | `(ocr_text, embedding)` |
+| **异常** | `CompressionError` | 图片压缩失败 |
+| **异常** | `OcrError` | OCR 识别失败 |
+| **异常** | `EmbeddingError` | Embedding 生成失败 |

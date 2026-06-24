@@ -1,5 +1,6 @@
 """app_state 共享实例管理模块单元测试。"""
 
+from typing import Any, Generator
 from unittest.mock import MagicMock
 
 import pytest
@@ -8,7 +9,7 @@ from bot import app_state
 
 
 @pytest.fixture(autouse=True)
-def _reset_globals() -> None:
+def _reset_globals() -> Generator[None, Any, None]:
     """每个测试前后重置模块级全局变量。"""
     app_state._index_manager = None
     app_state._ocr_service = None

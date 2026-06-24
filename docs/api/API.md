@@ -20,9 +20,11 @@ api
     ├── logging_config.md
     ├── auth.md
     ├── app_state.md
+    ├── session.md
     └── plugins
         ├── meme_help.md
-        └── meme_refresh.md
+        ├── meme_refresh.md
+        └── meme_add.md
 ```
 
 ## API 文件索引
@@ -159,6 +161,27 @@ class IndexManager:
     def is_locked(self) -> bool
 
     async def sync_with_filesystem(self) -> SyncResult
+
+    async def add_single_file(self, filename: str) -> AddResult
+    # Raises: CompressionError, OcrError, EmbeddingError
+
+    async def _process_image_pipeline(self, filename: str) -> tuple[str, list[float]]
+    # Raises: CompressionError, OcrError, EmbeddingError
+```
+
+**新增异常：**
+
+```python
+class CompressionError(RuntimeError)   # 图片压缩失败
+class OcrError(RuntimeError)           # OCR 识别失败
+class EmbeddingError(RuntimeError)     # Embedding 生成失败
+```
+
+**新增模块级函数：**
+
+```python
+def resolve_unique_filename(target_dir: Path, filename: str) -> Path
+    # 原 _resolve_unique_filename，已公共化
 ```
 
 ### `docs/api/bot/engine/keyword_searcher.md`
@@ -304,3 +327,25 @@ NoneBot2 命令插件，注册 `/help` 命令及兜底消息处理。
 - 兜底：`on_message(rule=to_me(), priority=99, block=False)` 处理纯文本和未知斜杠命令
 - 依赖：`auth.is_authorized()`
 - 无外部依赖，不获取 IndexManager 实例
+
+### `bot/session.py`
+
+共享会话管理模块，管理 /add、/search 等命令的待处理会话。
+
+- `PendingSession` — 待处理会话数据类（matcher, cancelled, type）
+- `pending_sessions: dict[str, PendingSession]` — 模块级会话字典
+- `check_and_cancel(user_id, new_type) -> str | None` — 检查旧会话并标记取消
+- `register(user_id, matcher, type) -> None` — 注册新会话
+- `cancel(user_id) -> None` — 移除会话
+- `is_cancelled(user_id) -> bool` — 检查会话是否已取消
+
+### `bot/plugins/meme_add.py`
+
+NoneBot2 命令插件，注册 `/add` 命令。
+
+- 依赖：`app_state.get_index_manager()`、`auth.is_authorized()`、`bot.session`
+- 锁：`await IndexManager.acquire_lock()` / `IndexManager.release_lock()`
+- 管道：`IndexManager.add_single_file() -> AddResult`
+- 图片下载：`httpx.AsyncClient`，30s 超时
+- 文件名：`_sanitize_filename()` 安全化 / `_auto_filename()` 自动生成
+- 文件冲突：`resolve_unique_filename()`

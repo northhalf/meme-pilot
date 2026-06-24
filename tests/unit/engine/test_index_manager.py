@@ -9,10 +9,13 @@ import ujson
 
 from bot.engine.index_manager import (
     AddResult,
+    CompressionError,
+    EmbeddingError,
     IndexCorruptedError,
     IndexManager,
+    OcrError,
     SyncResult,
-    _resolve_unique_filename,
+    resolve_unique_filename,
     compute_text_hash,
     dedup_key,
     is_blank_text,
@@ -65,6 +68,25 @@ class TestIndexCorruptedError:
         """应为 Exception 子类。"""
         with pytest.raises(IndexCorruptedError):
             raise IndexCorruptedError("test")
+
+
+class TestPipelineErrors:
+    """管道异常类测试。"""
+
+    def test_compression_error_is_runtime_error(self) -> None:
+        """CompressionError 应为 RuntimeError 子类。"""
+        with pytest.raises(CompressionError):
+            raise CompressionError("test")
+
+    def test_ocr_error_is_runtime_error(self) -> None:
+        """OcrError 应为 RuntimeError 子类。"""
+        with pytest.raises(OcrError):
+            raise OcrError("test")
+
+    def test_embedding_error_is_runtime_error(self) -> None:
+        """EmbeddingError 应为 RuntimeError 子类。"""
+        with pytest.raises(EmbeddingError):
+            raise EmbeddingError("test")
 
 
 class TestSyncResult:
@@ -1844,30 +1866,30 @@ class TestIsBlankText:
 
 
 class TestResolveUniqueFilename:
-    """_resolve_unique_filename 模块级函数测试。"""
+    """resolve_unique_filename 模块级函数测试。"""
 
     def test_no_conflict(self, tmp_path: Path) -> None:
         """目标不存在时直接返回原路径。"""
-        result = _resolve_unique_filename(tmp_path, "cat.jpg")
+        result = resolve_unique_filename(tmp_path, "cat.jpg")
         assert result == tmp_path / "cat.jpg"
 
     def test_conflict_appends_sequence(self, tmp_path: Path) -> None:
         """目标已存在时追加 _2 序号。"""
         (tmp_path / "cat.jpg").write_text("x", encoding="utf-8")
-        result = _resolve_unique_filename(tmp_path, "cat.jpg")
+        result = resolve_unique_filename(tmp_path, "cat.jpg")
         assert result == tmp_path / "cat_2.jpg"
 
     def test_multiple_conflicts(self, tmp_path: Path) -> None:
         """_2 也存在时追加 _3。"""
         (tmp_path / "cat.jpg").write_text("x", encoding="utf-8")
         (tmp_path / "cat_2.jpg").write_text("x", encoding="utf-8")
-        result = _resolve_unique_filename(tmp_path, "cat.jpg")
+        result = resolve_unique_filename(tmp_path, "cat.jpg")
         assert result == tmp_path / "cat_3.jpg"
 
     def test_preserves_extension(self, tmp_path: Path) -> None:
         """多段扩展名保留完整后缀。"""
         (tmp_path / "a.tar.gz").write_text("x", encoding="utf-8")
-        result = _resolve_unique_filename(tmp_path, "a.tar.gz")
+        result = resolve_unique_filename(tmp_path, "a.tar.gz")
         # Path.stem 只去掉最后一段后缀 .gz，stem="a.tar"
         assert result == tmp_path / "a.tar_2.gz"
 

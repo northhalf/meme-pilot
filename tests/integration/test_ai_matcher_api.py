@@ -15,8 +15,10 @@ IndexManager(OCR+Embedding) → AIMatcher → EmbeddingService → RerankService
 import os
 import shutil
 from pathlib import Path
+from typing import AsyncGenerator
 
 import pytest
+import pytest_asyncio
 from dotenv import load_dotenv
 
 # 加载项目根目录 .env
@@ -51,22 +53,28 @@ def work_dirs(tmp_path: Path) -> dict[str, Path]:
     return {"data_dir": data_dir, "memes_dir": memes_dir, "no_text_dir": no_text_dir}
 
 
-@pytest.fixture
-def ocr_service() -> DeepSeekOcrService:
+@pytest_asyncio.fixture
+async def ocr_service() -> AsyncGenerator[DeepSeekOcrService, None]:
     """创建真实的 DeepSeekOcrService 实例。"""
-    return DeepSeekOcrService()
+    service = DeepSeekOcrService()
+    yield service
+    await service._client.close()
 
 
-@pytest.fixture
-def embedding_service() -> EmbeddingService:
+@pytest_asyncio.fixture
+async def embedding_service() -> AsyncGenerator[EmbeddingService, None]:
     """创建真实的 EmbeddingService 实例。"""
-    return EmbeddingService()
+    service = EmbeddingService()
+    yield service
+    await service._client.close()
 
 
-@pytest.fixture
-def rerank_service() -> RerankService:
+@pytest_asyncio.fixture
+async def rerank_service() -> AsyncGenerator[RerankService, None]:
     """创建真实的 RerankService 实例。"""
-    return RerankService()
+    service = RerankService()
+    yield service
+    await service._client.close()
 
 
 def _copy_fixture_images(target_dir: Path, names: list[str]) -> None:

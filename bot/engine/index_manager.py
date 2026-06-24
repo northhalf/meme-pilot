@@ -90,7 +90,7 @@ def is_blank_text(text: str) -> bool:
     return dedup_key(text) == ""
 
 
-def _resolve_unique_filename(target_dir: Path, filename: str) -> Path:
+def resolve_unique_filename(target_dir: Path, filename: str) -> Path:
     """在目标目录下解析不冲突的文件路径，冲突时追加序号。
 
     与 /add 文件名冲突策略一致：若 filename 已存在，
@@ -123,6 +123,18 @@ def _resolve_unique_filename(target_dir: Path, filename: str) -> Path:
 
 class IndexCorruptedError(Exception):
     """index.json 结构损坏或缺少必要字段时抛出。"""
+
+
+class CompressionError(RuntimeError):
+    """图片压缩失败。"""
+
+
+class OcrError(RuntimeError):
+    """OCR 识别失败。"""
+
+
+class EmbeddingError(RuntimeError):
+    """Embedding 生成失败。"""
 
 
 # ---------------------------------------------------------------------------
@@ -638,6 +650,26 @@ class IndexManager:
         logger.info("已添加索引记录: id=%s, filename=%s", entry_id, filename)
         return AddResult(entry_id=entry_id, reason="added")
 
+    async def add_single_file(self, filename: str) -> AddResult:
+        """处理单张已保存的图片：管道处理 → add_entry。
+
+        供 /add 插件调用。图片已保存在 memes/ 目录下，
+        本方法执行压缩 → OCR → Embedding → 写入索引。
+
+        Args:
+            filename: memes/ 下的文件名。
+
+        Returns:
+            AddResult 描述添加结果。
+
+        Raises:
+            CompressionError: 图片压缩失败。
+            OcrError: OCR 服务未注入或调用失败。
+            EmbeddingError: Embedding 服务未注入或调用失败。
+        """
+        text, embedding = await self._process_image_pipeline(filename)
+        return self.add_entry(filename, text, embedding)
+
     def remove_entry(self, entry_id: str) -> bool:
         """删除单条索引记录。
 
@@ -740,7 +772,7 @@ class IndexManager:
         """
         src = self._memes_dir / filename
         self._no_text_dir.mkdir(parents=True, exist_ok=True)
-        dst = _resolve_unique_filename(self._no_text_dir, filename)
+        dst = resolve_unique_filename(self._no_text_dir, filename)
         shutil.move(str(src), str(dst))
         logger.warning(
             "OCR 未识别到文字，已移至无文字目录: %s -> %s",
@@ -1076,11 +1108,51 @@ class IndexManager:
 
         return (added, deduped, no_text_moved)
 
+    async def _process_image_pipeline(self, filename: str) -> tuple[str, list[float]]:
+        """图片处理管道：压缩 → OCR → Embedding。
+
+        Args:
+            filename: memes/ 下的文件名。
+
+        Returns:
+            (ocr_text, embedding) 元组。
+
+        Raises:
+            CompressionError: 图片压缩失败。
+            OcrError: OCR 服务未注入或调用失败。
+            EmbeddingError: Embedding 服务未注入或调用失败。
+        """
+        image_path = self._memes_dir / filename
+
+        # 压缩（可压缩格式）/ 跳过（.bmp）
+        if self._optimizer is not None:
+            try:
+                await self._optimizer.optimize(str(image_path))
+            except Exception as exc:
+                raise CompressionError(f"图片压缩失败: {filename}") from exc
+
+        # OCR
+        if self._ocr_provider is None:
+            raise OcrError("OCR 服务未注入")
+        try:
+            text = await self._ocr_provider.ocr(str(image_path))
+        except Exception as exc:
+            raise OcrError(f"OCR 调用失败: {filename}") from exc
+
+        # Embedding
+        if self._embedding_provider is None:
+            raise EmbeddingError("Embedding 服务未注入")
+        try:
+            embedding = await self._embedding_provider.embed(text)
+        except Exception as exc:
+            raise EmbeddingError(f"Embedding 调用失败: {filename}") from exc
+
+        return text, embedding
+
     async def _process_new_file(self, filename: str) -> tuple[str, str, list[float]]:
         """处理单张新增图片：压缩 → OCR → Embed。
 
         受 _sync_semaphore 约束，并发上限内执行。
-        若注入了 optimizer，会在 OCR 前自动压缩图片。
 
         Args:
             filename: 表情包文件名。
@@ -1089,22 +1161,12 @@ class IndexManager:
             (filename, ocr_text, embedding) 三元组。
 
         Raises:
-            RuntimeError: OCR 或 embedding 服务未注入。
-            Exception: OCR 或 embedding 调用失败时向上抛出，由调用方捕获。
+            CompressionError: 图片压缩失败。
+            OcrError: OCR 服务未注入或调用失败。
+            EmbeddingError: Embedding 服务未注入或调用失败。
         """
-        image_path = self._memes_dir / filename
         async with self._sync_semaphore:
-            if self._optimizer is not None:
-                await self._optimizer.optimize(str(image_path))
-
-            if self._ocr_provider is None:
-                raise RuntimeError("OCR 服务未注入")
-            text = await self._ocr_provider.ocr(str(image_path))
-
-            if self._embedding_provider is None:
-                raise RuntimeError("Embedding 服务未注入")
-            embedding = await self._embedding_provider.embed(text)
-
+            text, embedding = await self._process_image_pipeline(filename)
         return filename, text, embedding
 
     def _persist_sync_results(

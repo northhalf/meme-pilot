@@ -10,8 +10,10 @@
 import math
 import os
 from pathlib import Path
+from typing import AsyncGenerator
 
 import pytest
+import pytest_asyncio
 from dotenv import load_dotenv
 
 # 加载项目根目录 .env
@@ -26,10 +28,12 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-@pytest.fixture
-def embedding_service() -> EmbeddingService:
+@pytest_asyncio.fixture
+async def embedding_service() -> AsyncGenerator[EmbeddingService, None]:
     """创建真实的 EmbeddingService 实例。"""
-    return EmbeddingService()
+    service = EmbeddingService()
+    yield service
+    await service._client.close()
 
 
 def _cosine_similarity(left: list[float], right: list[float]) -> float:

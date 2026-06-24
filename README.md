@@ -87,6 +87,7 @@ cp .env.example .env
 #   SILICONFLOW_API_KEY=sk-你的SiliconFlowKey
 #   BOT_PORT=8080  # 可选，Bot 监听端口
 #   SYNC_CONCURRENCY=5  # 可选，索引同步并发上限，避免触发 API 限流
+#   SESSION_EXPIRE_TIMEOUT=00:01:00  # 可选，/add 等待图片的超时时间
 
 # 3. 放入表情包
 # 把你的 .jpg/.jpeg/.png/.gif/.webp/.bmp 放到 memes/ 目录
@@ -187,6 +188,7 @@ meme-pilot/
     ├── config.py            # 配置读取
     ├── app_state.py         # 共享实例管理（模块级单例）
     ├── auth.py              # 授权校验模块
+    ├── session.py           # 共享会话管理（/add、/search 防重复提交）
     ├── logging_config.py    # 日志滚动配置
     ├── plugins/
     │   ├── meme_search.py   # /search 命令
