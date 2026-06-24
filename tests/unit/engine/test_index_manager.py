@@ -771,25 +771,28 @@ class TestRemoveEntry:
 class TestLockManagement:
     """锁管理测试。"""
 
-    def test_acquire_lock_succeeds(self) -> None:
+    @pytest.mark.asyncio
+    async def test_acquire_lock_succeeds(self) -> None:
         """未锁定时 acquire_lock 返回 True。"""
         mgr = IndexManager()
-        assert mgr.acquire_lock() is True
+        assert await mgr.acquire_lock() is True
         assert mgr.is_locked is True
 
-    def test_acquire_lock_fails_when_locked(self) -> None:
+    @pytest.mark.asyncio
+    async def test_acquire_lock_fails_when_locked(self) -> None:
         """已锁定时 acquire_lock 返回 False。"""
         mgr = IndexManager()
-        mgr.acquire_lock()
-        assert mgr.acquire_lock() is False
+        await mgr.acquire_lock()
+        assert await mgr.acquire_lock() is False
 
-    def test_release_lock(self) -> None:
+    @pytest.mark.asyncio
+    async def test_release_lock(self) -> None:
         """释放锁后可再次获取。"""
         mgr = IndexManager()
-        mgr.acquire_lock()
+        await mgr.acquire_lock()
         mgr.release_lock()
         assert mgr.is_locked is False
-        assert mgr.acquire_lock() is True
+        assert await mgr.acquire_lock() is True
 
     def test_release_when_not_locked_is_safe(self) -> None:
         """未锁定时释放不抛异常。"""
@@ -1955,4 +1958,45 @@ class TestMoveToNoText:
         # 原有文件不被覆盖
         assert (no_text_dir / "blank.jpg").read_text(encoding="utf-8") == "old"
         assert not (memes_dir / "blank.jpg").exists()
+
+
+class TestIndexManagerLock:
+    """索引更新锁行为测试。"""
+
+    @pytest.mark.asyncio
+    async def test_acquire_lock_returns_true_when_free(self, tmp_path: Path) -> None:
+        """空闲时 acquire_lock 返回 True。"""
+        mgr = IndexManager(str(tmp_path), str(tmp_path / "memes"))
+        assert await mgr.acquire_lock() is True
+
+    @pytest.mark.asyncio
+    async def test_acquire_lock_returns_false_when_held(self, tmp_path: Path) -> None:
+        """已持有时 acquire_lock 返回 False。"""
+        mgr = IndexManager(str(tmp_path), str(tmp_path / "memes"))
+        await mgr.acquire_lock()
+        assert await mgr.acquire_lock() is False
+
+    @pytest.mark.asyncio
+    async def test_release_lock_allows_reacquire(self, tmp_path: Path) -> None:
+        """释放后可重新获取。"""
+        mgr = IndexManager(str(tmp_path), str(tmp_path / "memes"))
+        await mgr.acquire_lock()
+        mgr.release_lock()
+        assert await mgr.acquire_lock() is True
+
+    @pytest.mark.asyncio
+    async def test_is_locked_reflects_state(self, tmp_path: Path) -> None:
+        """is_locked 属性反映当前锁状态。"""
+        mgr = IndexManager(str(tmp_path), str(tmp_path / "memes"))
+        assert mgr.is_locked is False
+        await mgr.acquire_lock()
+        assert mgr.is_locked is True
+        mgr.release_lock()
+        assert mgr.is_locked is False
+
+    def test_release_lock_when_not_held_is_noop(self, tmp_path: Path) -> None:
+        """未持有时 release_lock 不抛异常。"""
+        mgr = IndexManager(str(tmp_path), str(tmp_path / "memes"))
+        mgr.release_lock()  # 不应抛出
+        assert mgr.is_locked is False
 

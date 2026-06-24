@@ -245,7 +245,7 @@ uv run pytest tests/integration/ -v -s
 - [DeepSeek](https://platform.deepseek.com) — LLM 精排 API
 - [SiliconFlow](https://siliconflow.cn) — Embedding API，默认模型 `BAAI/bge-m3`
 - [rapidfuzz](https://github.com/maxbachmann/rapidfuzz) — 模糊字符串匹配
-- 图片无损压缩工具/库 — 实现阶段选择具体方案，需求要求支持 `.jpg/.jpeg/.png/.webp/.gif`，`.bmp` 跳过压缩
+- [Pillow](https://python-pillow.org/) — 图片无损压缩（支持 `.jpg/.jpeg/.png/.webp/.gif`，`.bmp` 跳过）
 
 ## 📄 许可
 

@@ -3,10 +3,9 @@
 各模块共用的 Protocol 集中在此，避免重复定义。
 """
 
-from typing import Protocol, runtime_checkable
+from typing import Protocol
 
 
-@runtime_checkable
 class EmbeddingProvider(Protocol):
     """Embedding 服务提供者协议。
 

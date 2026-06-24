@@ -4,8 +4,7 @@
 成功后覆盖原文件。.bmp 文件跳过压缩。
 """
 
-from __future__ import annotations
-
+import asyncio
 import logging
 import os
 from dataclasses import dataclass
@@ -106,13 +105,21 @@ class ImageOptimizer:
         original_size = path.stat().st_size
         try:
             if suffix in (".jpg", ".jpeg"):
-                optimized_size = await self._compress_jpeg(path, original_size)
+                optimized_size = await asyncio.to_thread(
+                    self._compress_jpeg, path, original_size
+                )
             elif suffix == ".png":
-                optimized_size = await self._compress_png(path, original_size)
+                optimized_size = await asyncio.to_thread(
+                    self._compress_png, path, original_size
+                )
             elif suffix == ".webp":
-                optimized_size = await self._compress_webp(path, original_size)
+                optimized_size = await asyncio.to_thread(
+                    self._compress_webp, path, original_size
+                )
             else:
-                optimized_size = await self._compress_gif(path, original_size)
+                optimized_size = await asyncio.to_thread(
+                    self._compress_gif, path, original_size
+                )
         except (ValueError, RuntimeError):
             raise
         except Exception as exc:
@@ -143,7 +150,7 @@ class ImageOptimizer:
             saved=saved,
         )
 
-    async def _compress_jpeg(self, path: Path, original_size: int) -> int:
+    def _compress_jpeg(self, path: Path, original_size: int) -> int:
         """压缩 JPEG 文件。
 
         去除 EXIF/元数据，以高质量重新编码。
@@ -172,7 +179,7 @@ class ImageOptimizer:
         finally:
             img.close()
 
-    async def _compress_png(self, path: Path, original_size: int) -> int:
+    def _compress_png(self, path: Path, original_size: int) -> int:
         """压缩 PNG 文件。
 
         以 optimize=True 重新保存，像素数据不变（真正无损）。
@@ -192,7 +199,7 @@ class ImageOptimizer:
         finally:
             img.close()
 
-    async def _compress_webp(self, path: Path, original_size: int) -> int:
+    def _compress_webp(self, path: Path, original_size: int) -> int:
         """压缩 WebP 文件。
 
         以无损模式重新编码（lossless=True, method=6）。
@@ -218,7 +225,7 @@ class ImageOptimizer:
         finally:
             img.close()
 
-    async def _compress_gif(self, path: Path, original_size: int) -> int:
+    def _compress_gif(self, path: Path, original_size: int) -> int:
         """压缩 GIF 文件。
 
         保留动画属性（duration、loop、transparency），

@@ -30,7 +30,7 @@ api
 ### `docs/api/bot/engine/protocols.md`
 
 ```python
-class EmbeddingProvider(Protocol):
+class EmbeddingProvider(Protocol):  # 无 @runtime_checkable
     async def embed(self, text: str) -> list[float]  # 1024 维
 ```
 
@@ -151,7 +151,7 @@ class IndexManager:
 
     def remove_entry(self, entry_id: str) -> bool
 
-    def acquire_lock(self) -> bool
+    async def acquire_lock(self) -> bool
 
     def release_lock(self) -> None
 
@@ -293,7 +293,7 @@ def get_image_optimizer() -> ImageOptimizer | None
 NoneBot2 命令插件，注册 `/refresh` 命令。
 
 - 依赖：`app_state.get_index_manager()`、`auth.is_authorized()`
-- 锁：`IndexManager.acquire_lock()` / `release_lock()`
+- 锁：`await IndexManager.acquire_lock()` / `IndexManager.release_lock()`
 - 同步：`IndexManager.sync_with_filesystem() -> SyncResult`
 
 ### `bot/plugins/meme_help.py`

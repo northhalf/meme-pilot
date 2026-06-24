@@ -44,7 +44,7 @@ async def handle_refresh(bot: Bot, event: PrivateMessageEvent) -> None:
         return
 
     # 尝试获取全局索引更新锁
-    if not index_manager.acquire_lock():
+    if not await index_manager.acquire_lock():
         logger.info("用户 %s 的 /refresh 被拒绝：索引正在更新", user_id)
         await refresh_cmd.finish("索引正在更新，请稍后再试")
         return

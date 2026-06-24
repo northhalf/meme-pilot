@@ -149,8 +149,6 @@ class OcrProvider(Protocol):
         ...
 
 
-
-
 # ---------------------------------------------------------------------------
 # 数据类
 # ---------------------------------------------------------------------------
@@ -211,7 +209,7 @@ class IndexManager:
         _entries: 内存中的 index entries。
         _dedup_index: 去重键到 entry_id 的反向索引，加速 _find_entry_by_dedup_key。
         _embeddings: 内存中的 embedding 数据。
-        _lock: 写操作异步锁。
+        _lock: 索引更新 asyncio.Lock。
         _sync_semaphore: 文件系统同步并发上限信号量。
         _sync_concurrency: 当前同步并发上限值。
         index_version: 索引版本号。
@@ -266,7 +264,7 @@ class IndexManager:
         self._entries: dict[str, dict[str, str]] = {}
         self._dedup_index: dict[str, str] = {}
         self._embeddings: dict[str, dict[str, object]] = {}
-        self._locked: bool = False
+        self._lock = asyncio.Lock()
         self.index_version: int = 1
 
         # 并发上限：约束 sync_with_filesystem 同时发起的 OCR/embedding 任务数
@@ -755,7 +753,7 @@ class IndexManager:
     # 锁管理
     # ------------------------------------------------------------------
 
-    def acquire_lock(self) -> bool:
+    async def acquire_lock(self) -> bool:
         """非阻塞尝试获取索引更新锁。
 
         同一时间只允许一个索引写入任务运行。
@@ -765,16 +763,16 @@ class IndexManager:
         Returns:
             True 表示成功获取锁，False 表示锁已被占用。
         """
-        if self._locked:
+        if self._lock.locked():
             return False
-        self._locked = True
+        await self._lock.acquire()
         logger.debug("索引更新锁已获取")
         return True
 
     def release_lock(self) -> None:
         """释放索引更新锁。"""
-        if self._locked:
-            self._locked = False
+        if self._lock.locked():
+            self._lock.release()
             logger.debug("索引更新锁已释放")
 
     # ------------------------------------------------------------------
@@ -1138,4 +1136,4 @@ class IndexManager:
     @property
     def is_locked(self) -> bool:
         """索引是否处于锁定状态。"""
-        return self._locked
+        return self._lock.locked()

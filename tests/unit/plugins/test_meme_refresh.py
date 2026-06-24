@@ -52,7 +52,7 @@ def _make_index_manager(
     from bot.engine.index_manager import SyncResult
 
     im = MagicMock()
-    im.acquire_lock.return_value = acquire_result
+    im.acquire_lock = AsyncMock(return_value=acquire_result)
     im.entry_count = entry_count
     im.sync_with_filesystem = AsyncMock(
         return_value=(
