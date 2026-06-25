@@ -16,12 +16,14 @@ def _reset_globals() -> Generator[None, Any, None]:
     app_state._embedding_service = None
     app_state._image_optimizer = None
     app_state._ai_matcher = None
+    app_state._keyword_searcher = None
     yield
     app_state._index_manager = None
     app_state._ocr_service = None
     app_state._embedding_service = None
     app_state._image_optimizer = None
     app_state._ai_matcher = None
+    app_state._keyword_searcher = None
 
 
 class TestInitApp:
@@ -33,11 +35,13 @@ class TestInitApp:
         ocr = MagicMock()
         emb = MagicMock()
         ai = MagicMock()
-        app_state.init_app(im, ocr, emb, ai_matcher=ai)
+        ks = MagicMock()
+        app_state.init_app(im, ocr, emb, ai_matcher=ai, keyword_searcher=ks)
         assert app_state._index_manager is im
         assert app_state._ocr_service is ocr
         assert app_state._embedding_service is emb
         assert app_state._ai_matcher is ai
+        assert app_state._keyword_searcher is ks
 
     def test_overwrites_existing(self) -> None:
         """重复调用 init_app 应覆盖旧实例。"""
@@ -113,3 +117,20 @@ class TestGetAiMatcher:
         """未初始化时应抛出 RuntimeError。"""
         with pytest.raises(RuntimeError, match="AIMatcher 尚未初始化"):
             app_state.get_ai_matcher()
+
+
+class TestGetKeywordSearcher:
+    """get_keyword_searcher() 测试。"""
+
+    def test_returns_instance(self) -> None:
+        """初始化后应返回 KeywordSearcher 实例。"""
+        from bot.engine import KeywordSearcher
+
+        ks = MagicMock(spec=KeywordSearcher)
+        app_state.init_app(MagicMock(), MagicMock(), MagicMock(), keyword_searcher=ks)
+        assert app_state.get_keyword_searcher() is ks
+
+    def test_raises_when_not_initialized(self) -> None:
+        """未初始化时应抛出 RuntimeError。"""
+        with pytest.raises(RuntimeError, match="KeywordSearcher 尚未初始化"):
+            app_state.get_keyword_searcher()

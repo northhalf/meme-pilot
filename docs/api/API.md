@@ -26,7 +26,8 @@ api
         ├── meme_help.md
         ├── meme_refresh.md
         ├── meme_add.md
-        └── meme_ai.md
+        ├── meme_ai.md
+        └── meme_search.md
 ```
 
 ## API 文件索引
@@ -361,6 +362,16 @@ NoneBot2 命令插件，注册 `/ai` 命令。
 - 依赖：`app_state.get_ai_matcher()`、`app_state.get_index_manager()`、`auth.is_authorized()`
 - 锁：只读检查 `IndexManager.is_locked`
 - 匹配：`_do_match()` 封装异常处理，`asyncio.gather()` 并发执行 send 与 match
+- 图片：`MessageSegment.image(f"file:///{path.resolve()}")`
+
+### `bot/plugins/meme_search.py`
+
+NoneBot2 命令插件，注册 `/search` 命令。
+
+- 依赖：`app_state.get_keyword_searcher()`、`app_state.get_index_manager()`、`auth.is_authorized()`、`bot.session`
+- 锁：只读检查 `IndexManager.is_locked`
+- 搜索：`KeywordSearcher.search(keyword) -> list[SearchResult]`，异常保护
+- 多结果：`got("selection")` 等待用户选择，候选存入 `matcher.state["candidates"]`
 - 图片：`MessageSegment.image(f"file:///{path.resolve()}")`
 
 ### `bot/config.py`

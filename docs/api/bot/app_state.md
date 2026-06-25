@@ -4,7 +4,7 @@
 
 ## 模块级函数
 
-### `init_app(index_manager, ocr_service, embedding_service, image_optimizer=None, ai_matcher=None) -> None`
+### `init_app(index_manager, ocr_service, embedding_service, image_optimizer=None, ai_matcher=None, keyword_searcher=None) -> None`
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
@@ -13,6 +13,7 @@
 | `embedding_service` | `EmbeddingService` | Embedding 服务实例 |
 | `image_optimizer` | `ImageOptimizer \| None` | 图片压缩器实例，可选 |
 | `ai_matcher` | `AIMatcher \| None` | AI 匹配器实例，可选 |
+| `keyword_searcher` | `KeywordSearcher \| None` | 关键词搜索引擎实例，可选 |
 
 | | 类型 | 说明 |
 |--|------|------|
@@ -63,4 +64,13 @@
 | | 类型 | 说明 |
 |--|------|------|
 | **返回** | `AIMatcher` | 已初始化的 AI 匹配器实例 |
+| **异常** | `RuntimeError` | 尚未调用 `init_app()` 初始化 |
+
+---
+
+### `get_keyword_searcher() -> KeywordSearcher`
+
+| | 类型 | 说明 |
+|--|------|------|
+| **返回** | `KeywordSearcher` | 已初始化的关键词搜索引擎实例 |
 | **异常** | `RuntimeError` | 尚未调用 `init_app()` 初始化 |
