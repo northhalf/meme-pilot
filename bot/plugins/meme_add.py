@@ -98,6 +98,7 @@ async def got_image(
     """接收图片并处理。
 
     非图片消息时 reject 重新等待；图片消息执行完整添加流程。
+    会话超时时清理 session 状态并提示用户。
 
     Args:
         bot: OneBot V11 Bot 实例。
@@ -107,102 +108,120 @@ async def got_image(
     """
     user_id = event.get_user_id()
 
-    # 会话有效性检查
-    if is_cancelled(user_id):
-        return
-
-    # 获取 IndexManager
     try:
-        index_manager = get_index_manager()
-    except RuntimeError:
-        return
+        # 会话有效性检查
+        if is_cancelled(user_id):
+            return
 
-    # 从 got() 获取的消息中提取图片 URL
-    urls = extract_image_urls(image_msg)
-    if not urls:
-        await matcher.reject("请发送一张图片")
-        return
+        # 获取 IndexManager
+        try:
+            index_manager = get_index_manager()
+        except RuntimeError:
+            return
 
-    image_url = urls[0]
-    target_name = str(matcher.state.get("target_name", ""))
+        # 从 got() 获取的消息中提取图片 URL
+        urls = extract_image_urls(image_msg)
+        if not urls:
+            await matcher.reject("请发送一张图片")
+            return
 
-    # 下载图片
-    try:
-        image_data, response = await _download_image(image_url)
-    except Exception as exc:
-        logger.error("图片下载失败: %s", exc)
+        image_url = urls[0]
+        target_name = str(matcher.state.get("target_name", ""))
+
+        # 下载图片
+        try:
+            image_data, response = await _download_image(image_url)
+        except Exception as exc:
+            logger.error("图片下载失败: %s", exc)
+            _release_lock_safe(index_manager)
+            cancel(user_id)
+            await matcher.finish("图片下载失败")
+            return
+
+        # 确定扩展名
+        ext = _get_extension(image_url, response)
+        if ext is None or ext.lower() not in SUPPORTED_EXTENSIONS:
+            _release_lock_safe(index_manager)
+            cancel(user_id)
+            await matcher.finish(f"不支持的图片格式: {ext or '未知'}")
+            return
+
+        # 文件名处理
+        filename = _build_filename(target_name, image_data, ext)
+
+        # 检查文件名冲突
+        filepath = resolve_unique_filename(MEMES_DIR, filename)
+        filename = filepath.name
+
+        # 保存图片
+        MEMES_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            filepath.write_bytes(image_data)
+        except OSError as exc:
+            logger.error("保存图片失败: %s", exc)
+            _release_lock_safe(index_manager)
+            cancel(user_id)
+            await matcher.finish("图片保存失败")
+            return
+
+        # 调用 IndexManager 处理
+        try:
+            result = await index_manager.add_single_file(filename)
+        except CompressionError as exc:
+            logger.error("图片压缩失败: %s", exc)
+            filepath.unlink(missing_ok=True)
+            _release_lock_safe(index_manager)
+            cancel(user_id)
+            await matcher.finish("图片压缩失败")
+            return
+        except OcrError as exc:
+            logger.error("OCR 失败: %s", exc)
+            filepath.unlink(missing_ok=True)
+            _release_lock_safe(index_manager)
+            cancel(user_id)
+            await matcher.finish("OCR 服务不可用")
+            return
+        except EmbeddingError as exc:
+            logger.error("Embedding 失败: %s", exc)
+            filepath.unlink(missing_ok=True)
+            _release_lock_safe(index_manager)
+            cancel(user_id)
+            await matcher.finish("Embedding 服务不可用")
+            return
+        except Exception as exc:
+            logger.exception("添加表情包异常")
+            filepath.unlink(missing_ok=True)
+            _release_lock_safe(index_manager)
+            cancel(user_id)
+            await matcher.finish("添加失败，请查看日志")
+            return
+
+        # 成功：释放锁、清理会话、回复结果
         _release_lock_safe(index_manager)
         cancel(user_id)
-        await matcher.finish("图片下载失败")
-        return
+        if result.reason == "no_text":
+            await matcher.finish("未识别到文字，已移至 meme_no_text/")
+        elif result.reason == "replaced":
+            await matcher.finish("已成功添加（替换旧图）✅")
+        else:
+            await matcher.finish("已成功添加表情包 ✅")
 
-    # 确定扩展名
-    ext = _get_extension(image_url, response)
-    if ext is None or ext.lower() not in SUPPORTED_EXTENSIONS:
-        _release_lock_safe(index_manager)
+    except BaseException:
+        # 会话超时（CancelledError）或其他异常：清理 session 状态
+        logger.info("用户 %s 的 /add 会话超时或异常", user_id)
         cancel(user_id)
-        await matcher.finish(f"不支持的图片格式: {ext or '未知'}")
-        return
-
-    # 文件名处理
-    filename = _build_filename(target_name, image_data, ext)
-
-    # 检查文件名冲突
-    filepath = resolve_unique_filename(MEMES_DIR, filename)
-    filename = filepath.name
-
-    # 保存图片
-    MEMES_DIR.mkdir(parents=True, exist_ok=True)
-    try:
-        filepath.write_bytes(image_data)
-    except OSError as exc:
-        logger.error("保存图片失败: %s", exc)
-        _release_lock_safe(index_manager)
-        cancel(user_id)
-        await matcher.finish("图片保存失败")
-        return
-
-    # 调用 IndexManager 处理
-    try:
-        result = await index_manager.add_single_file(filename)
-    except CompressionError as exc:
-        logger.error("图片压缩失败: %s", exc)
-        filepath.unlink(missing_ok=True)
-        _release_lock_safe(index_manager)
-        cancel(user_id)
-        await matcher.finish("图片压缩失败")
-        return
-    except OcrError as exc:
-        logger.error("OCR 失败: %s", exc)
-        filepath.unlink(missing_ok=True)
-        _release_lock_safe(index_manager)
-        cancel(user_id)
-        await matcher.finish("OCR 服务不可用")
-        return
-    except EmbeddingError as exc:
-        logger.error("Embedding 失败: %s", exc)
-        filepath.unlink(missing_ok=True)
-        _release_lock_safe(index_manager)
-        cancel(user_id)
-        await matcher.finish("Embedding 服务不可用")
-        return
-    except Exception as exc:
-        logger.exception("添加表情包异常")
-        filepath.unlink(missing_ok=True)
-        _release_lock_safe(index_manager)
-        cancel(user_id)
-        await matcher.finish("添加失败，请查看日志")
-        return
-
-    # 成功：释放锁、清理会话、回复结果
-    _release_lock_safe(index_manager)
-    cancel(user_id)
-    if result.reason == "no_text":
-        await matcher.finish("未识别到文字，已移至 meme_no_text/")
-    elif result.reason == "replaced":
-        await matcher.finish("已成功添加（替换旧图）✅")
-    else:
-        await matcher.finish("已成功添加表情包 ✅")
+        # 释放索引锁（如果已获取）
+        try:
+            index_manager = get_index_manager()
+            _release_lock_safe(index_manager)
+        except RuntimeError:
+            pass
+        # 通过 bot.send 直接发消息（matcher 已被 NoneBot2 销毁）
+        try:
+            await bot.send(event, "添加已取消，请重新 /add")
+        except Exception:
+            pass
+        raise
 
 
 # ---------------------------------------------------------------------------

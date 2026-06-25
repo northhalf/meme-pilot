@@ -35,7 +35,7 @@ docker compose build bot && docker compose up -d bot
 ```bash
 uv add <包名>              # 生产依赖
 uv add --dev pytest       # 测试依赖
-uv run --directory bot python bot.py
+uv run python bot/bot.py  # 从项目根目录运行
 ```
 
 ### 测试与检查
@@ -55,7 +55,7 @@ uv run python -m compileall bot tests   # 语法检查
 - `SILICONFLOW_API_KEY`：用于 OCR
 - `EMBEDDING_API_KEY`：用于 Embedding
 
-可选：`BOT_HOST`、`BOT_PORT`、`DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL`、`SILICONFLOW_BASE_URL`、`SILICONFLOW_OCR_MODEL`、`EMBEDDING_BASE_URL`、`EMBEDDING_MODEL`、`SYNC_CONCURRENCY`（默认5）。
+可选：`BOT_HOST`、`BOT_PORT`、`DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL`、`SILICONFLOW_BASE_URL`、`SILICONFLOW_OCR_MODEL`、`EMBEDDING_BASE_URL`、`EMBEDDING_MODEL`、`SYNC_CONCURRENCY`（默认5）、`SESSION_EXPIRE_TIMEOUT`（会话超时，默认60秒）。
 
 ## 系统架构
 
@@ -67,6 +67,6 @@ uv run python -m compileall bot tests   # 语法检查
 
 ## 当前实现注意事项
 
-已完成：engine 全部模块（index_manager、keyword_searcher、ai_matcher、ocr_service、embedding_service、rerank_service、image_optimizer、protocols）、app_state 共享实例（含 get_ai_matcher）、config 全局路径常量、auth 授权校验、bot.session 会话管理、/help、/refresh、/add 和 /ai 插件及其测试。
+已完成：engine 全部模块（index_manager、keyword_searcher、ai_matcher、ocr_service、embedding_service、rerank_service、image_optimizer、protocols）、app_state 共享实例（含 get_ai_matcher 和 get_keyword_searcher）、config 全局路径常量（含 PROJECT_ROOT）、auth 授权校验、bot.session 会话管理、bot.py（NoneBot2 入口，fastapi 驱动器）、/help、/refresh、/add 和 /ai 插件及其测试。
 
-尚未实现：`bot.py`（NoneBot2 入口）、`/search` 插件、`Dockerfile`。实现或重构前，以 `docs/PRD.md` 和 `CONTEXT.md` 为准，并同步更新 README、`.env.example`、`docker-compose.yml`。
+尚未实现：`/search` 插件、`Dockerfile`。实现或重构前，以 `docs/PRD.md` 和 `CONTEXT.md` 为准，并同步更新 README、`.env.example`、`docker-compose.yml`。

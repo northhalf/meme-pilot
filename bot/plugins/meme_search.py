@@ -124,6 +124,8 @@ async def got_selection(
 ) -> None:
     """接收用户选择编号并发送对应表情包。
 
+    会话超时时清理 session 状态。
+
     Args:
         bot: OneBot V11 Bot 实例。
         event: 私聊消息事件。
@@ -132,30 +134,42 @@ async def got_selection(
     """
     user_id = event.get_user_id()
 
-    # 会话有效性检查
-    if is_cancelled(user_id):
-        return
-
-    candidates = matcher.state.get("candidates", [])
-    if not candidates:
-        cancel(user_id)
-        await matcher.finish("搜索状态异常，请重新搜索")
-        return
-    text = selection_msg.extract_plain_text().strip()
-
-    # 解析编号
     try:
-        choice = int(text)
-    except ValueError:
-        await matcher.reject(f"无效编号，请回复 1-{len(candidates)} 之间的数字")
-        return
+        # 会话有效性检查
+        if is_cancelled(user_id):
+            return
 
-    if choice < 1 or choice > len(candidates):
-        await matcher.reject(f"无效编号，请回复 1-{len(candidates)} 之间的数字")
-        return
+        candidates = matcher.state.get("candidates", [])
+        if not candidates:
+            cancel(user_id)
+            await matcher.finish("搜索状态异常，请重新搜索")
+            return
+        text = selection_msg.extract_plain_text().strip()
 
-    # 发送图片
-    selected = candidates[choice - 1]
-    cancel(user_id)
-    image_path = MEMES_DIR / selected.filename
-    await matcher.finish(MessageSegment.image(f"file:///{image_path.resolve()}"))
+        # 解析编号
+        try:
+            choice = int(text)
+        except ValueError:
+            await matcher.reject(f"无效编号，请回复 1-{len(candidates)} 之间的数字")
+            return
+
+        if choice < 1 or choice > len(candidates):
+            await matcher.reject(f"无效编号，请回复 1-{len(candidates)} 之间的数字")
+            return
+
+        # 发送图片
+        selected = candidates[choice - 1]
+        cancel(user_id)
+        image_path = MEMES_DIR / selected.filename
+        await matcher.finish(MessageSegment.image(f"file:///{image_path.resolve()}"))
+
+    except BaseException:
+        # 会话超时（CancelledError）或其他异常：清理 session 状态
+        logger.info("用户 %s 的 /search 会话超时或异常", user_id)
+        cancel(user_id)
+        # 通过 bot.send 直接发消息（matcher 已被 NoneBot2 销毁）
+        try:
+            await bot.send(event, "选择已过期，请重新 /search")
+        except Exception:
+            pass
+        raise

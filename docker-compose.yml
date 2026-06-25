@@ -26,6 +26,8 @@ services:
     restart: always
     depends_on:
       - napcat
+    env_file:
+      - .env
     environment:
       - BOT_HOST=0.0.0.0
       - BOT_PORT=${BOT_PORT:-8080}

@@ -17,6 +17,7 @@ api
     │   ├── ocr_service.md
     │   ├── image_optimizer.md
     │   └── protocols.md
+    ├── bot.md
     ├── config.md
     ├── logging_config.md
     ├── auth.md
@@ -284,6 +285,15 @@ class ImageOptimizer:
     # Raises: FileNotFoundError, ValueError, RuntimeError
 ```
 
+### `docs/api/bot/bot.md`
+
+NoneBot2 应用入口，详见 `docs/api/bot/bot.md`。
+
+- 启动：`main()` — 初始化 NoneBot2（`driver="~fastapi"`），注册 OneBot V11 适配器，加载插件，启动驱动器
+- Startup hook：`_on_startup()` — 创建 engine 服务、执行首次索引同步、注册到 `app_state`
+- 同步失败时抛 `RuntimeError` 阻止 Bot 启动
+- 环境变量：`BOT_HOST`（默认 `0.0.0.0`）、`BOT_PORT`（默认 `8080`，无效值回退 8080）、`SYNC_CONCURRENCY`（默认 5）
+
 ### `docs/api/bot/logging_config.md`
 
 ```python
@@ -299,6 +309,7 @@ def init_app(
     embedding_service: EmbeddingService,
     image_optimizer: ImageOptimizer | None = None,
     ai_matcher: AIMatcher | None = None,
+    keyword_searcher: KeywordSearcher | None = None,
 ) -> None
 
 def get_index_manager() -> IndexManager
@@ -306,6 +317,7 @@ def get_ocr_service() -> DeepSeekOcrService
 def get_embedding_service() -> EmbeddingService
 def get_image_optimizer() -> ImageOptimizer | None
 def get_ai_matcher() -> AIMatcher
+def get_keyword_searcher() -> KeywordSearcher
 ```
 
 ### `bot/auth.py`
@@ -378,4 +390,5 @@ NoneBot2 命令插件，注册 `/search` 命令。
 
 全局路径常量模块，详见 `docs/api/bot/config.md`。
 
+- `PROJECT_ROOT: Path` — 项目根目录，绝对路径
 - `MEMES_DIR: Path` — 表情包图片目录，绝对路径 `<项目根>/memes`
