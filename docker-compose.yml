@@ -1,12 +1,12 @@
-version: "3.8"
-
 services:
   napcat:
     image: mlikiowa/napcat-docker:latest
     container_name: qq-meme-napcat
     restart: always
+    entrypoint: ["/custom-entrypoint.sh"]
     environment:
       - ACCOUNT=${QQ_ACCOUNT:?请设置 QQ_ACCOUNT 环境变量}
+      - NAPCAT_WEBUI_TOKEN=${NAPCAT_WEBUI_TOKEN:-memepilot}
       - WS_ENABLE=true
       - WS_PORT=3001
       - TZ=Asia/Shanghai
@@ -15,13 +15,15 @@ services:
     volumes:
       - ./napcat/config:/app/napcat/config
       - ./napcat/qq:/app/.config/QQ
+      - ./napcat/entrypoint.sh:/custom-entrypoint.sh:ro
+      - ./memes:/app/memes
     networks:
       - meme-bot-net
 
   bot:
     build:
-      context: ./bot
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: bot/Dockerfile
     container_name: qq-meme-bot
     restart: always
     depends_on:

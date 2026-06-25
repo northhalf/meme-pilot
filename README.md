@@ -85,9 +85,11 @@ cp .env.example .env
 #   AUTHORIZED_USER_IDS=允许使用机器人的QQ号，多个用英文逗号分隔
 #   DEEPSEEK_API_KEY=sk-你的DeepSeekKey
 #   SILICONFLOW_API_KEY=sk-你的SiliconFlowKey
+#   EMBEDDING_API_KEY=sk-你的EmbeddingKey
 #   BOT_PORT=8080  # 可选，Bot 监听端口
-#   SYNC_CONCURRENCY=5  # 可选，索引同步并发上限，避免触发 API 限流
-#   SESSION_EXPIRE_TIMEOUT=00:01:00  # 可选，/add 等待图片的超时时间
+#   NAPCAT_WEBUI_TOKEN=你的密码  # 可选，WebUI 登录密钥
+#   SYNC_CONCURRENCY=5  # 可选，索引同步并发上限
+#   SESSION_EXPIRE_TIMEOUT=00:01:00  # 可选，会话超时时间
 
 # 3. 放入表情包
 # 把你的 .jpg/.jpeg/.png/.gif/.webp/.bmp 放到 memes/ 目录
@@ -106,19 +108,15 @@ docker compose logs -f bot
 
 ### 扫码登录与反向 WebSocket
 
-启动后访问 `http://服务器IP:6099`，用 NapCat WebUI 扫码登录 QQ。
-
-v1.0 使用反向 WebSocket：NapCat 主动连接 Bot。NapCat 侧反向 WebSocket 地址配置为：
+启动后访问 NapCat WebUI 扫码登录 QQ（Token 在首次启动日志中查看，或在 `.env` 中通过 `NAPCAT_WEBUI_TOKEN` 自定义）：
 
 ```text
-ws://bot:${BOT_PORT}/onebot/v11/ws
+http://服务器IP:6099/webui?token=<你的Token>
 ```
 
-如果在 NapCat WebUI 中手动填写，请将 `${BOT_PORT}` 替换为实际端口，例如默认端口为 `8080` 时填写：
+v1.0 使用反向 WebSocket：NapCat 通过 `napcat/entrypoint.sh` 自动生成反向 WebSocket 配置，主动连接 Bot 容器（`ws://bot:8080/onebot/v11/ws`），无需手动配置。
 
-```text
-ws://bot:8080/onebot/v11/ws
-```
+如果修改了 `BOT_PORT`，首次启动后需在 NapCat WebUI 中手动更新 WebSocket 地址中的端口号。
 
 ### 验证
 
@@ -168,6 +166,10 @@ ws://bot:8080/onebot/v11/ws
 meme-pilot/
 ├── docker-compose.yml       # 容器编排
 ├── .env                     # 配置（QQ号、API Key）
+├── napcat/                  # NapCat 配置（运行时自动生成）
+│   ├── config/              # OneBot v11 + WebUI 配置
+│   ├── qq/                  # QQ 登录数据
+│   └── entrypoint.sh        # 自动生成反向 WebSocket 配置
 ├── memes/                   # 放你的表情包图片
 ├── meme_no_text/            # OCR 无文字图片（不进索引，Docker 卷挂载）
 ├── data/                    # 索引数据

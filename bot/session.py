@@ -6,10 +6,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Any
 
+from nonebot.adapters.onebot.v11 import Bot, Event
 from nonebot.matcher import Matcher
+
+from bot.config import read_session_timeout
 
 logger = logging.getLogger(__name__)
 
@@ -93,3 +99,41 @@ def is_cancelled(user_id: str) -> bool:
     if session is None:
         return False
     return session.cancelled
+
+
+async def timeout_session(
+    bot: Bot,
+    event: Event,
+    user_id: str,
+    message: str,
+    *,
+    on_cleanup: Callable[[], Any | Awaitable[Any]] | None = None,
+    timeout: int | None = None,
+) -> None:
+    """会话超时检查任务。
+
+    等待指定秒数后，如果用户会话仍然活跃（未被用户完成或新命令取消），
+    则发送超时提示消息并清理会话状态。
+
+    Args:
+        bot: OneBot V11 Bot 实例。
+        event: 原始消息事件（用于确定回复目标）。
+        user_id: 用户 ID。
+        message: 超时提示消息。
+        on_cleanup: 可选的清理回调（如释放索引锁），支持同步和异步。
+        timeout: 超时秒数，为 None 时从 SESSION_EXPIRE_TIMEOUT 环境变量读取。
+    """
+    if timeout is None:
+        timeout = read_session_timeout()
+    await asyncio.sleep(timeout)
+    if not is_cancelled(user_id) and user_id in pending_sessions:
+        logger.info("用户 %s 的会话超时（%d 秒）", user_id, timeout)
+        cancel(user_id)
+        if on_cleanup is not None:
+            result = on_cleanup()
+            if asyncio.iscoroutine(result) or asyncio.isfuture(result):
+                await result
+        try:
+            await bot.send(event, message)
+        except Exception:
+            logger.debug("发送超时消息失败", exc_info=True)

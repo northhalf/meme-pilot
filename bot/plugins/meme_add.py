@@ -4,6 +4,7 @@
 下载、压缩、OCR、Embedding 并写入索引。
 """
 
+import asyncio
 import hashlib
 import logging
 import re
@@ -28,7 +29,13 @@ from bot.engine.index_manager import (
     OcrError,
     resolve_unique_filename,
 )
-from bot.session import cancel, check_and_cancel, is_cancelled, register
+from bot.session import (
+    cancel,
+    check_and_cancel,
+    is_cancelled,
+    register,
+    timeout_session,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +94,17 @@ async def handle_add(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
     # 注册会话
     register(user_id, matcher, "add")
 
+    # 启动超时任务
+    asyncio.create_task(
+        timeout_session(
+            bot,
+            event,
+            user_id,
+            "添加已取消，请重新 /add",
+            on_cleanup=lambda: _release_lock_safe(index_manager),
+        )
+    )
+
 
 @add_cmd.got("image", prompt="请发送图片，60 秒内有效")
 async def got_image(
@@ -107,6 +125,7 @@ async def got_image(
         image_msg: got("image") 接收到的消息。
     """
     user_id = event.get_user_id()
+    index_manager: IndexManager | None = None
 
     try:
         # 会话有效性检查
@@ -205,22 +224,14 @@ async def got_image(
             await matcher.finish("已成功添加（替换旧图）✅")
         else:
             await matcher.finish("已成功添加表情包 ✅")
+        return
 
-    except BaseException:
-        # 会话超时（CancelledError）或其他异常：清理 session 状态
-        logger.info("用户 %s 的 /add 会话超时或异常", user_id)
+    except Exception:
+        # 未预期异常：清理 session 状态并释放锁
+        logger.exception("用户 %s 的 /add 处理异常", user_id)
         cancel(user_id)
-        # 释放索引锁（如果已获取）
-        try:
-            index_manager = get_index_manager()
+        if index_manager is not None:
             _release_lock_safe(index_manager)
-        except RuntimeError:
-            pass
-        # 通过 bot.send 直接发消息（matcher 已被 NoneBot2 销毁）
-        try:
-            await bot.send(event, "添加已取消，请重新 /add")
-        except Exception:
-            pass
         raise
 
 

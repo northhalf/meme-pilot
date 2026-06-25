@@ -355,6 +355,7 @@ NoneBot2 命令插件，注册 `/help` 命令及兜底消息处理。
 - `register(user_id, matcher, type) -> None` — 注册新会话
 - `cancel(user_id) -> None` — 移除会话
 - `is_cancelled(user_id) -> bool` — 检查会话是否已取消
+- `timeout_session(bot, event, user_id, message, *, on_cleanup=None, timeout=None) -> None` — 会话超时检查任务，等待指定秒数后若会话仍活跃则发送超时提示并清理；`timeout` 默认从 `SESSION_EXPIRE_TIMEOUT` 环境变量读取
 
 ### `bot/plugins/meme_add.py`
 
@@ -366,6 +367,7 @@ NoneBot2 命令插件，注册 `/add` 命令。
 - 图片下载：`httpx.AsyncClient`，30s 超时
 - 文件名：`_sanitize_filename()` 安全化 / `_auto_filename()` 自动生成
 - 文件冲突：`resolve_unique_filename()`
+- 超时：`asyncio.create_task(timeout_session(..., on_cleanup=...))` 启动超时检查，超时后释放索引锁
 
 ### `bot/plugins/meme_ai.py`
 
@@ -374,7 +376,7 @@ NoneBot2 命令插件，注册 `/ai` 命令。
 - 依赖：`app_state.get_ai_matcher()`、`app_state.get_index_manager()`、`auth.is_authorized()`
 - 锁：只读检查 `IndexManager.is_locked`
 - 匹配：`_do_match()` 封装异常处理，`asyncio.gather()` 并发执行 send 与 match
-- 图片：`MessageSegment.image(f"file:///{path.resolve()}")`
+- 图片：`MessageSegment.image("file://" + str(image_path.resolve()))`
 
 ### `bot/plugins/meme_search.py`
 
@@ -384,11 +386,13 @@ NoneBot2 命令插件，注册 `/search` 命令。
 - 锁：只读检查 `IndexManager.is_locked`
 - 搜索：`KeywordSearcher.search(keyword) -> list[SearchResult]`，异常保护
 - 多结果：`got("selection")` 等待用户选择，候选存入 `matcher.state["candidates"]`
-- 图片：`MessageSegment.image(f"file:///{path.resolve()}")`
+- 超时：`asyncio.create_task(timeout_session(...))` 启动超时检查
+- 图片：`MessageSegment.image("file://" + str(image_path.resolve()))`
 
 ### `bot/config.py`
 
-全局路径常量模块，详见 `docs/api/bot/config.md`。
+全局路径常量与配置读取模块，详见 `docs/api/bot/config.md`。
 
 - `PROJECT_ROOT: Path` — 项目根目录，绝对路径
 - `MEMES_DIR: Path` — 表情包图片目录，绝对路径 `<项目根>/memes`
+- `read_session_timeout() -> int` — 从 `SESSION_EXPIRE_TIMEOUT` 环境变量读取会话超时秒数，支持纯数字和 `HH:MM:SS` 格式（pydantic 解析），默认 60

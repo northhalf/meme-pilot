@@ -7,8 +7,10 @@ memes/
 .tmp/
 
 # NapCat 配置
-napcat/config/
-napcat/qq/
+napcat/config/*
+napcat/qq/*
+!napcat/config/.gitkeep
+!napcat/qq/.gitkeep
 
 # Python
 __pycache__/

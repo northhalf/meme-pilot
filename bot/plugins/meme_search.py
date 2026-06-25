@@ -4,6 +4,7 @@
 对索引 OCR 文本做模糊匹配，返回搜索结果。
 """
 
+import asyncio
 import logging
 
 from nonebot import on_command
@@ -20,7 +21,13 @@ from nonebot.rule import to_me
 from bot.app_state import get_index_manager, get_keyword_searcher
 from bot.auth import is_authorized, log_unauthorized
 from bot.config import MEMES_DIR
-from bot.session import cancel, check_and_cancel, is_cancelled, register
+from bot.session import (
+    cancel,
+    check_and_cancel,
+    is_cancelled,
+    register,
+    timeout_session,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +106,7 @@ async def handle_search(bot: Bot, event: PrivateMessageEvent, matcher: Matcher) 
     if len(results) == 1:
         # 唯一结果直接发送图片
         image_path = MEMES_DIR / results[0].filename
-        await search_cmd.finish(MessageSegment.image(f"file:///{image_path.resolve()}"))
+        await search_cmd.finish(MessageSegment.image("file://" + str(image_path.resolve())))
         return
 
     # 多个结果：格式化选择列表
@@ -113,6 +120,11 @@ async def handle_search(bot: Bot, event: PrivateMessageEvent, matcher: Matcher) 
     register(user_id, matcher, "search")
 
     await matcher.send("\n".join(lines))
+
+    # 启动超时任务
+    asyncio.create_task(
+        timeout_session(bot, event, user_id, "选择已过期，请重新 /search")
+    )
 
 
 @search_cmd.got("selection")
@@ -161,15 +173,11 @@ async def got_selection(
         selected = candidates[choice - 1]
         cancel(user_id)
         image_path = MEMES_DIR / selected.filename
-        await matcher.finish(MessageSegment.image(f"file:///{image_path.resolve()}"))
+        await matcher.send(MessageSegment.image("file://" + str(image_path.resolve())))
+        return
 
-    except BaseException:
-        # 会话超时（CancelledError）或其他异常：清理 session 状态
-        logger.info("用户 %s 的 /search 会话超时或异常", user_id)
+    except Exception:
+        # 未预期异常：清理 session 状态
+        logger.exception("用户 %s 的 /search 处理异常", user_id)
         cancel(user_id)
-        # 通过 bot.send 直接发消息（matcher 已被 NoneBot2 销毁）
-        try:
-            await bot.send(event, "选择已过期，请重新 /search")
-        except Exception:
-            pass
         raise

@@ -112,4 +112,4 @@ async def handle_ai(bot: Bot, event: PrivateMessageEvent) -> None:
 
     # 发送匹配图片（本地文件使用 file:/// URI）
     image_path = MEMES_DIR / match_result.filename
-    await ai_cmd.finish(MessageSegment.image(f"file:///{image_path.resolve()}"))
+    await ai_cmd.finish(MessageSegment.image("file://" + str(image_path.resolve())))
