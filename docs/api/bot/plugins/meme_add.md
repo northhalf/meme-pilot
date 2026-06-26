@@ -31,16 +31,20 @@
 
 ### got_image（等待图片）
 
-1. 检查会话是否已被取消，已取消则静默退出
-2. 从 `got("image")` 接收的消息提取图片 URL
-3. 无图片时 `reject` 提示重发
-4. 下载图片（httpx，30s 超时）
-5. 确定扩展名（URL 路径 → Content-Type），不支持则拒绝
-6. 构建文件名：有目标命名用 `_sanitize_filename()`，否则 `_auto_filename()`（`meme_<时间戳>_<hash8>`）
-7. `resolve_unique_filename()` 处理文件名冲突
-8. 保存图片到 `memes/`
-9. 调用 `IndexManager.add_single_file()` 执行压缩→OCR→Embedding 管道
-10. 释放锁、清理会话、回复结果
+采用阶段分离 + `try/finally` 结构，`cancel()` 和 `_release_lock_safe()` 统一在 `finally` 块中执行。
+
+1. 从 `got("image")` 接收的消息提取图片 URL（`extract_image_urls`，异常时释放锁并清理会话）
+2. 无图片时 `reject` 提示重发（reject 在 `try/finally` 之外，锁保持持有）
+3. 检查会话是否已被取消，已取消则静默退出
+4. 获取 `IndexManager`
+5. 下载图片（httpx，30s 超时）
+6. 确定扩展名（URL 路径 → Content-Type），不支持则回复错误
+7. 构建文件名：有目标命名用 `_sanitize_filename()`，否则 `_auto_filename()`（`meme_<时间戳>_<hash8>`）
+8. `resolve_unique_filename()` 处理文件名冲突
+9. 保存图片到 `memes/`
+10. 调用 `IndexManager.add_single_file()` 执行压缩→OCR→Embedding 管道
+11. 回复结果
+12. `finally`：若会话未取消则 `cancel(user_id)`，若 `index_manager` 非 None 则 `_release_lock_safe(index_manager)`
 
 ## 回复格式
 

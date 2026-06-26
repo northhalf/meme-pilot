@@ -362,7 +362,7 @@ NoneBot2 命令插件，注册 `/help` 命令及兜底消息处理。
 NoneBot2 命令插件，注册 `/add` 命令。
 
 - 依赖：`app_state.get_index_manager()`、`auth.is_authorized()`、`bot.session`
-- 锁：`await IndexManager.acquire_lock()` / `IndexManager.release_lock()`
+- 锁：`await IndexManager.acquire_lock()` 获取；释放集中在 `got_image` 的 `finally` 块（`_release_lock_safe`）和 `handle_add` 超时回调中
 - 管道：`IndexManager.add_single_file() -> AddResult`
 - 图片下载：`httpx.AsyncClient`，30s 超时
 - 文件名：`_sanitize_filename()` 安全化 / `_auto_filename()` 自动生成

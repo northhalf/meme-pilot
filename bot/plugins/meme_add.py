@@ -125,25 +125,36 @@ async def got_image(
         image_msg: got("image") 接收到的消息。
     """
     user_id = event.get_user_id()
+
+    # ── 阶段 1：图片验证（不涉及锁释放）──
+    try:
+        urls = extract_image_urls(image_msg)
+    except Exception:
+        logger.exception("extract_image_urls 异常")
+        try:
+            _release_lock_safe(get_index_manager())
+        except Exception:
+            pass
+        cancel(user_id)
+        raise
+    if not urls:
+        await matcher.reject("请发送一张图片")
+        return  # reject 后锁保持持有，会话继续等待
+
+    # 会话有效性检查
+    if is_cancelled(user_id):
+        return
+
     index_manager: IndexManager | None = None
 
     try:
-        # 会话有效性检查
-        if is_cancelled(user_id):
-            return
-
         # 获取 IndexManager
         try:
             index_manager = get_index_manager()
         except RuntimeError:
             return
 
-        # 从 got() 获取的消息中提取图片 URL
-        urls = extract_image_urls(image_msg)
-        if not urls:
-            await matcher.reject("请发送一张图片")
-            return
-
+        # ── 阶段 2：处理流程（finally 统一释放锁）──
         image_url = urls[0]
         target_name = str(matcher.state.get("target_name", ""))
 
@@ -152,16 +163,12 @@ async def got_image(
             image_data, response = await _download_image(image_url)
         except Exception as exc:
             logger.error("图片下载失败: %s", exc)
-            _release_lock_safe(index_manager)
-            cancel(user_id)
             await matcher.finish("图片下载失败")
             return
 
         # 确定扩展名
         ext = _get_extension(image_url, response)
         if ext is None or ext.lower() not in SUPPORTED_EXTENSIONS:
-            _release_lock_safe(index_manager)
-            cancel(user_id)
             await matcher.finish(f"不支持的图片格式: {ext or '未知'}")
             return
 
@@ -178,8 +185,6 @@ async def got_image(
             filepath.write_bytes(image_data)
         except OSError as exc:
             logger.error("保存图片失败: %s", exc)
-            _release_lock_safe(index_manager)
-            cancel(user_id)
             await matcher.finish("图片保存失败")
             return
 
@@ -189,50 +194,41 @@ async def got_image(
         except CompressionError as exc:
             logger.error("图片压缩失败: %s", exc)
             filepath.unlink(missing_ok=True)
-            _release_lock_safe(index_manager)
-            cancel(user_id)
             await matcher.finish("图片压缩失败")
             return
         except OcrError as exc:
             logger.error("OCR 失败: %s", exc)
             filepath.unlink(missing_ok=True)
-            _release_lock_safe(index_manager)
-            cancel(user_id)
             await matcher.finish("OCR 服务不可用")
             return
         except EmbeddingError as exc:
             logger.error("Embedding 失败: %s", exc)
             filepath.unlink(missing_ok=True)
-            _release_lock_safe(index_manager)
-            cancel(user_id)
             await matcher.finish("Embedding 服务不可用")
             return
         except Exception as exc:
             logger.exception("添加表情包异常")
             filepath.unlink(missing_ok=True)
-            _release_lock_safe(index_manager)
-            cancel(user_id)
             await matcher.finish("添加失败，请查看日志")
             return
 
-        # 成功：释放锁、清理会话、回复结果
-        _release_lock_safe(index_manager)
-        cancel(user_id)
+        # 成功：回复结果
         if result.reason == "no_text":
             await matcher.finish("未识别到文字，已移至 meme_no_text/")
         elif result.reason == "replaced":
             await matcher.finish("已成功添加（替换旧图）✅")
         else:
             await matcher.finish("已成功添加表情包 ✅")
-        return
 
     except Exception:
-        # 未预期异常：清理 session 状态并释放锁
+        # 未预期异常
         logger.exception("用户 %s 的 /add 处理异常", user_id)
-        cancel(user_id)
+        raise
+    finally:
+        if not is_cancelled(user_id):
+            cancel(user_id)
         if index_manager is not None:
             _release_lock_safe(index_manager)
-        raise
 
 
 # ---------------------------------------------------------------------------
