@@ -5,6 +5,9 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app
 
+# 安装 C++ 编译器（pylcs 等包需要 C++11 编译）
+RUN apt-get update && apt-get install -y --no-install-recommends g++ && rm -rf /var/lib/apt/lists/*
+
 # 先复制依赖声明，利用 Docker 层缓存
 COPY pyproject.toml uv.lock ./
 RUN uv sync --no-dev --frozen

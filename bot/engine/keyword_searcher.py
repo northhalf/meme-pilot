@@ -1,13 +1,13 @@
 """关键词模糊搜索模块。
 
-对 index.json 中的 OCR 文本使用 partial_ratio 进行子串模糊匹配。
+对 index.json 中的 OCR 文本使用 LCS（最长公共子序列）进行匹配。
 """
 
 import logging
 from dataclasses import dataclass
 from typing import Protocol
 
-from rapidfuzz import fuzz
+import pylcs
 
 logger = logging.getLogger(__name__)
 
@@ -48,9 +48,9 @@ class SearchResult:
 class KeywordSearcher:
     """关键词模糊搜索引擎。
 
-    使用 partial_ratio 对 OCR 文本进行子串模糊匹配：
-    - 关键词是 OCR 文本的连续子串时，相似度为 100（精确命中）。
-    - 关键词与 OCR 文本部分匹配时，按最长公共子串比例计算相似度。
+    使用 LCS（最长公共子序列）对 OCR 文本进行匹配：
+    - 关键词是 OCR 文本的子串时，相似度为 100（精确命中）。
+    - 否则按 LCS 长度与关键词长度的比值计算相似度。
 
     Attributes:
         threshold: 最低相似度阈值，默认 60。
@@ -74,11 +74,30 @@ class KeywordSearcher:
         self._threshold = threshold
         self._limit = limit
 
+    @staticmethod
+    def _compute_similarity(keyword: str, text: str) -> float:
+        """计算关键词与文本的相似度。
+
+        优先精确子串匹配（返回 100），否则使用 LCS 算法。
+
+        Args:
+            keyword: 搜索关键词。
+            text: OCR 文本。
+
+        Returns:
+            相似度分数，0-100。
+        """
+        if keyword in text:
+            return 100.0
+        lcs_len = pylcs.lcs_sequence_length(keyword, text)
+        return (lcs_len / len(keyword)) * 100
+
     def search(self, keyword: str) -> list[SearchResult]:
         """根据关键词搜索表情包。
 
-        对每条 OCR 文本计算 partial_ratio 相似度，
+        对每条 OCR 文本使用 LCS 计算相似度，
         过滤低于阈值的结果后按分数降序排列。
+        如果存在分数为 100 的结果，只返回分数为 100 的结果。
 
         Args:
             keyword: 用户输入的搜索关键词。
@@ -104,7 +123,7 @@ class KeywordSearcher:
             if not text:
                 continue
 
-            score = fuzz.partial_ratio(keyword, text)
+            score = self._compute_similarity(keyword, text)
             if score >= self._threshold:
                 results.append(
                     SearchResult(
@@ -116,6 +135,11 @@ class KeywordSearcher:
                 )
 
         results.sort(key=lambda r: r.similarity, reverse=True)
+
+        # 如果存在分数为 100 的结果，只返回分数为 100 的结果
+        perfect_results = [r for r in results if r.similarity == 100.0]
+        if perfect_results:
+            results = perfect_results
 
         logger.info(
             "关键词搜索完成：keyword=%r, 匹配=%d, 返回=%d",

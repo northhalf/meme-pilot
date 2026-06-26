@@ -248,7 +248,7 @@ uv run pytest tests/integration/ -v -s
 - [DeepSeek-OCR](https://siliconflow.cn) — 视觉 OCR 模型（硅基流动）
 - [DeepSeek](https://platform.deepseek.com) — LLM 精排 API
 - [SiliconFlow](https://siliconflow.cn) — Embedding API，默认模型 `BAAI/bge-m3`
-- [rapidfuzz](https://github.com/maxbachmann/rapidfuzz) — 模糊字符串匹配
+- [pylcs](https://github.com/InoriLyude/pylcs) — 最长公共子序列算法库（关键词模糊匹配）
 - [Pillow](https://python-pillow.org/) — 图片无损压缩（支持 `.jpg/.jpeg/.png/.webp/.gif`，`.bmp` 跳过）
 
 ## 📄 许可

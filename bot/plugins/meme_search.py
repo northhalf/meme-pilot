@@ -106,7 +106,9 @@ async def handle_search(bot: Bot, event: PrivateMessageEvent, matcher: Matcher) 
     if len(results) == 1:
         # 唯一结果直接发送图片
         image_path = MEMES_DIR / results[0].filename
-        await search_cmd.finish(MessageSegment.image("file://" + str(image_path.resolve())))
+        await search_cmd.finish(
+            MessageSegment.image("file://" + str(image_path.resolve()))
+        )
         return
 
     # 多个结果：格式化选择列表
@@ -173,8 +175,9 @@ async def got_selection(
         selected = candidates[choice - 1]
         cancel(user_id)
         image_path = MEMES_DIR / selected.filename
-        await matcher.send(MessageSegment.image("file://" + str(image_path.resolve())))
-        return
+        await matcher.finish(
+            MessageSegment.image("file://" + str(image_path.resolve()))
+        )
 
     except Exception:
         # 未预期异常：清理 session 状态

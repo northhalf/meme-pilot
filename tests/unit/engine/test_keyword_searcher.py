@@ -130,18 +130,26 @@ class TestSearchExactSubstring:
 
 
 class TestSearchFuzzy:
-    """模糊匹配测试（partial_ratio >= 60 但 < 100）。"""
+    """模糊匹配测试（LCS 相似度 >= 60）。"""
 
     def test_partial_overlap(self, searcher: KeywordSearcher) -> None:
-        """关键词与 OCR 文本部分重叠，应命中但分数低于 100。"""
+        """关键词与 OCR 文本部分重叠，应命中。
+
+        "猫抓蝴蝶" 的每个字符都按序出现在 "一只猫在跳起来抓蝴蝶" 中，
+        LCS = 4 = len(keyword)，因此 LCS 算法给出 100 分（完整子序列匹配）。
+        """
         results = searcher.search("猫抓蝴蝶")
         assert len(results) == 1
         assert results[0].entry_id == "1"
-        assert 60.0 <= results[0].similarity < 100.0
+        assert results[0].similarity == 100.0
 
-    def test_typo_keyword(self, searcher: KeywordSearcher) -> None:
-        """错别字关键词应通过部分匹配命中。"""
-        results = searcher.search("加斑")
+    def test_non_contiguous_match(self, searcher: KeywordSearcher) -> None:
+        """关键词字符在 OCR 文本中非连续出现时，LCS 应命中但分数低于 100。
+
+        "加班凌晨通知" 的字符分散在 "周日晚上的加班通知" 中：
+        LCS = "加班通知"（4字），score = 4/6 * 100 ≈ 66.7。
+        """
+        results = searcher.search("加班凌晨通知")
         assert len(results) >= 1
         assert all(60.0 <= r.similarity < 100.0 for r in results)
 
@@ -199,12 +207,17 @@ class TestSearchEdgeCases:
     def test_keyword_longer_than_text(
         self, searcher: KeywordSearcher
     ) -> None:
-        """关键词比 OCR 文本长时，partial_ratio 以较短文本为基准匹配。"""
-        # "当你的老板说今天要加班" 是长关键词的子串 → 100 分
+        """关键词比 OCR 文本长时，LCS 以 keyword 长度为分母计算相似度。
+
+        "当你的老板说今天要加班而且不给加班费"(15字) vs "当你的老板说今天要加班"(11字)
+        text 是 keyword 的子串 → LCS = 11，score = 11/15 * 100 ≈ 73.3。
+        高于默认阈值 60，应命中但非 100 分。
+        """
         results = searcher.search("当你的老板说今天要加班而且不给加班费")
         assert len(results) == 1
         assert results[0].entry_id == "5"
-        assert results[0].similarity == 100.0
+        assert results[0].similarity < 100.0
+        assert results[0].similarity >= 60.0
 
 
 class TestSearchResultOrder:
@@ -229,6 +242,34 @@ class TestSearchResultOrder:
         s = KeywordSearcher(MockIndex(entries), limit=5)
         results = s.search("加班")
         assert len(results) == 5
+
+    def test_perfect_score_filters_others(self, searcher: KeywordSearcher) -> None:
+        """当存在分数为 100 的结果时，只返回分数为 100 的结果。
+
+        搜索 "加班"：
+        - "加班到凌晨三点的我" (子串命中，score=100)
+        - "当你的老板说今天要加班" (子串命中，score=100)
+        - "周日晚上的加班通知" (子串命中，score=100)
+        所有结果都是 100 分，应全部返回。
+        """
+        results = searcher.search("加班")
+        assert len(results) == 3
+        assert all(r.similarity == 100.0 for r in results)
+
+    def test_perfect_score_excludes_lower(self) -> None:
+        """当存在分数为 100 的结果时，排除低于 100 的结果。"""
+        entries = {
+            "1": {"filename": "a.jpg", "text": "加班", "text_hash": "x"},
+            "2": {"filename": "b.jpg", "text": "加班到凌晨", "text_hash": "y"},
+            "3": {"filename": "c.jpg", "text": "加斑", "text_hash": "z"},  # LCS=1, score=50
+        }
+        s = KeywordSearcher(MockIndex(entries))
+        results = s.search("加班")
+        # 只返回 score=100 的结果（"加班" 和 "加班到凌晨"）
+        assert len(results) == 2
+        assert all(r.similarity == 100.0 for r in results)
+        ids = {r.entry_id for r in results}
+        assert ids == {"1", "2"}
 
 
 class TestSearchResultsFormat:

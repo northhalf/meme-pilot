@@ -61,4 +61,12 @@ class SearchResult:
 |--|------|------|
 | **返回** | `list[SearchResult]` | 按 `similarity` 降序排列，最多 `limit` 条；无匹配或关键词为空时返回 `[]` |
 
-对每条 OCR 文本用 `rapidfuzz.fuzz.partial_ratio(keyword, text)` 计算子串模糊匹配分数，过滤 `score < threshold` 的结果。
+对每条 OCR 文本使用 LCS（最长公共子序列）计算相似度，过滤 `score < threshold` 的结果。如果存在分数为 100 的结果，只返回分数为 100 的结果。
+
+**算法逻辑：**
+
+1. 若 `keyword` 是 `text` 的子串，直接返回 100（精确命中）。
+2. 否则使用 `pylcs.lcs_sequence_length(keyword, text)` 计算最长公共子序列长度，相似度 = `(lcs_len / len(keyword)) * 100`。
+3. 如果存在分数为 100 的结果，过滤掉低于 100 的结果。
+
+**依赖：** `pylcs`（替代早期版本使用的 `rapidfuzz`）。

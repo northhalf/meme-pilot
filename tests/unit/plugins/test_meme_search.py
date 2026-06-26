@@ -656,7 +656,7 @@ class TestHandleSearchResults:
         _reset_cmd()
         mock_get_im.return_value = _make_index_manager()
         ks = _make_keyword_searcher()
-        ks.search.side_effect = RuntimeError("rapidfuzz 错误")
+        ks.search.side_effect = RuntimeError("pylcs 错误")
         mock_get_ks.return_value = ks
 
         await handle_search(_make_bot(), _make_event(), _make_matcher())
