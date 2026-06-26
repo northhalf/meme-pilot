@@ -1,64 +1,50 @@
-"""NoneBot2 入口 — MemePilot QQ 表情包机器人。
+# 启动时索引同步非阻塞化 Implementation Plan
 
-启动流程：
-1. 初始化 NoneBot2 框架（fastapi 驱动器 + OneBot V11 适配器）
-2. 注册 startup hook：初始化 engine 服务，后台执行首次索引同步
-3. 加载 bot/plugins/ 下所有命令插件
-4. 启动驱动器监听反向 WebSocket
-"""
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Goal:** 将 `_on_startup()` 中的 `sync_with_filesystem()` 从阻塞调用改为后台任务，使 Bot 启动后立即可用。
+
+**Architecture:** 仅修改 `bot/bot.py`，将 `init_app()` 移到 `sync_with_filesystem()` 之前调用，同步任务通过 `asyncio.create_task()` 在后台执行。同步期间 `is_locked = True`（sync 内部获取锁），插件层已有检查会自动回复"索引正在更新"。
+
+**Tech Stack:** Python asyncio, NoneBot2
+
+---
+
+## File Structure
+
+- Modify: `bot/bot.py` — 唯一需要修改的文件
+
+不需要修改的文件：
+- `bot/engine/index_manager.py` — sync_with_filesystem() 内部已有锁机制
+- `bot/plugins/*.py` — 已有 is_locked 检查
+- `bot/app_state.py` — 无需修改
+
+---
+
+### Task 1: 修改 bot/bot.py 实现后台同步
+
+**Files:**
+- Modify: `bot/bot.py`
+
+- [ ] **Step 1: 添加 asyncio import**
+
+在 `bot/bot.py` 顶部添加 `import asyncio`：
+
+```python
 import asyncio
 import logging
 import os
+```
 
-import nonebot
-from nonebot.adapters.onebot.v11 import Adapter as OneBotV11Adapter
+- [ ] **Step 2: 新增 _background_sync() 函数**
 
-from bot.app_state import init_app
-from bot.config import MEMES_DIR, PROJECT_ROOT
-from bot.engine import (
-    AIMatcher,
-    DeepSeekOcrService,
-    EmbeddingService,
-    ImageOptimizer,
-    IndexManager,
-    KeywordSearcher,
-    RerankService,
-)
-from bot.logging_config import setup_logging
+在 `_read_bot_port()` 之后、`_on_startup()` 之前添加：
 
-logger = logging.getLogger(__name__)
-
-
-def _read_sync_concurrency() -> int | None:
-    """从环境变量读取索引同步并发上限。
-
-    Returns:
-        有效正整数或 None（使用默认值）。
-    """
-    raw = os.environ.get("SYNC_CONCURRENCY", "")
-    if not raw:
-        return None
-    try:
-        value = int(raw)
-        return value if value > 0 else None
-    except ValueError:
-        return None
-
-
-def _read_bot_port() -> int:
-    """从环境变量读取 Bot 监听端口，无效值回退为 8080。"""
-    raw = os.environ.get("BOT_PORT", "8080")
-    try:
-        return int(raw)
-    except (ValueError, TypeError):
-        return 8080
-
-
+```python
 async def _background_sync(index_manager: IndexManager) -> None:
     """后台索引同步任务，不阻塞启动。
 
-    同步期间通过 acquire_lock() 获取锁（is_locked = True），
+    同步期间 is_locked = True（sync 内部获取锁），
     插件层自动回复"索引正在更新"。
     同步失败时记录错误日志，Bot 继续运行。
 
@@ -67,16 +53,7 @@ async def _background_sync(index_manager: IndexManager) -> None:
     """
     logger.info("开始后台索引同步...")
     try:
-        # 获取锁，同步期间 is_locked = True
-        # 启动时无其他任务持有锁，但防御性检查返回值
-        if not await index_manager.acquire_lock():
-            logger.warning("后台同步获取锁失败（锁已被占用），跳过本次同步")
-            return
-        try:
-            result = await index_manager.sync_with_filesystem()
-        finally:
-            index_manager.release_lock()
-
+        result = await index_manager.sync_with_filesystem()
         logger.info(
             "后台索引同步完成: 新增=%d, 删除=%d, 去重=%d, 无文字移走=%d, 失败=%d",
             result.added,
@@ -89,8 +66,13 @@ async def _background_sync(index_manager: IndexManager) -> None:
             logger.warning("同步失败文件（前 10 个）: %s", result.failed[:10])
     except Exception:
         logger.exception("后台索引同步失败，Bot 继续运行（用已有索引）")
+```
 
+- [ ] **Step 3: 修改 _on_startup() 函数**
 
+将 `_on_startup()` 改为以下内容（关键变化：init_app 移到 sync 之前，sync 改为后台任务）：
+
+```python
 async def _on_startup() -> None:
     """NoneBot2 启动钩子 — 初始化引擎服务，后台执行首次索引同步。
 
@@ -151,31 +133,21 @@ async def _on_startup() -> None:
 
     # 6. 后台执行首次索引同步（不阻塞启动）
     asyncio.create_task(_background_sync(index_manager))
+```
 
+- [ ] **Step 4: 运行 compileall 语法检查**
 
-def main() -> None:
-    """NoneBot2 主入口。"""
-    # 初始化 NoneBot2（driver、host、port 从环境变量读取）
-    nonebot.init(
-        driver="~fastapi",
-        host=os.environ.get("BOT_HOST", "0.0.0.0"),
-        port=_read_bot_port(),
-        env_file=str(PROJECT_ROOT / ".env"),
-    )
+Run: `uv run python -m compileall bot`
+Expected: 无错误输出
 
-    # 注册 startup hook（必须在 init 之后）
-    driver = nonebot.get_driver()
-    driver.on_startup(_on_startup)
+- [ ] **Step 5: 运行现有测试确保不破坏**
 
-    # 注册 OneBot V11 适配器
-    driver.register_adapter(OneBotV11Adapter)
+Run: `uv run pytest tests/ -v`
+Expected: 所有测试通过
 
-    # 加载插件
-    nonebot.load_plugins(str(PROJECT_ROOT / "bot" / "plugins"))
+- [ ] **Step 6: 提交**
 
-    # 启动
-    nonebot.run()
-
-
-if __name__ == "__main__":
-    main()
+```bash
+git add bot/bot.py
+git commit -m "feat(bot): 启动时索引同步改为后台任务，Bot 立即可用"
+```

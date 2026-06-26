@@ -290,8 +290,9 @@ class ImageOptimizer:
 NoneBot2 应用入口，详见 `docs/api/bot/bot.md`。
 
 - 启动：`main()` — 初始化 NoneBot2（`driver="~fastapi"`），注册 OneBot V11 适配器，加载插件，启动驱动器
-- Startup hook：`_on_startup()` — 创建 engine 服务、执行首次索引同步、注册到 `app_state`
-- 同步失败时抛 `RuntimeError` 阻止 Bot 启动
+- Startup hook：`_on_startup()` — 创建 engine 服务、注册到 `app_state`、后台执行索引同步
+- `_background_sync()` — 后台同步任务，`acquire_lock()` 获取锁，同步完成/失败后释放
+- 同步期间 `is_locked = True`，插件层自动回复"索引正在更新"；同步失败时记录日志，Bot 继续运行
 - 环境变量：`BOT_HOST`（默认 `0.0.0.0`）、`BOT_PORT`（默认 `8080`，无效值回退 8080）、`SYNC_CONCURRENCY`（默认 5）
 
 ### `docs/api/bot/logging_config.md`

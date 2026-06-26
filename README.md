@@ -104,7 +104,7 @@ docker compose logs -f bot
 # 文件日志级别为 DEBUG，控制台为 INFO
 ```
 
-首次启动会自动扫描 `memes/` 目录中的图片，用 DeepSeek-OCR 提取文字并建立索引。
+首次启动会自动扫描 `memes/` 目录中的图片，用 DeepSeek-OCR 提取文字并建立索引。索引同步在后台执行，Bot 启动后立即可用；同步期间搜索命令会提示"索引正在更新"。
 
 ### 扫码登录与反向 WebSocket
 

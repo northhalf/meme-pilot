@@ -1,6 +1,6 @@
 # bot/bot.py — NoneBot2 入口 API
 
-> NoneBot2 应用入口，负责框架初始化、引擎服务组装、首次索引同步和插件加载。
+> NoneBot2 应用入口，负责框架初始化、引擎服务组装、后台索引同步和插件加载。
 
 ## 函数
 
@@ -32,6 +32,16 @@ NoneBot2 主入口。
 |--|------|------|
 | **返回** | `int` | 有效端口号，无效值回退为 8080 |
 
+### `_background_sync(index_manager: IndexManager) -> None`
+
+后台索引同步任务，不阻塞启动。
+
+| | 类型 | 说明 |
+|--|------|------|
+| **参数** | `IndexManager` | 已加载索引的 IndexManager 实例 |
+| **锁** | — | 通过 `acquire_lock()` 获取锁，`finally` 中释放 |
+| **异常** | — | 同步失败时记录错误日志，Bot 继续运行 |
+
 ### `_on_startup() -> None`
 
 NoneBot2 启动钩子，按顺序执行：
@@ -39,13 +49,15 @@ NoneBot2 启动钩子，按顺序执行：
 1. `setup_logging("log")` — 配置日志
 2. 创建 `DeepSeekOcrService`、`EmbeddingService`、`RerankService`、`ImageOptimizer`
 3. 创建 `IndexManager` 并调用 `load()`
-4. `await index_manager.sync_with_filesystem()` — 首次索引同步
-5. 创建 `AIMatcher`、`KeywordSearcher`
-6. `app_state.init_app(...)` — 注册全局单例
+4. 创建 `AIMatcher`、`KeywordSearcher`
+5. `app_state.init_app(...)` — 注册全局单例（Bot 立即可用）
+6. `asyncio.create_task(_background_sync(index_manager))` — 后台索引同步
 
 | | 类型 | 说明 |
 |--|------|------|
-| **异常** | `RuntimeError` | 索引同步失败时抛出，阻止 Bot 启动 |
+| **行为** | — | `init_app()` 在 sync 之前调用，Bot 启动后立即可用 |
+| **同步期间** | — | `is_locked = True`，插件层自动回复"索引正在更新" |
+| **同步失败** | — | 记录错误日志，Bot 继续运行（用已有索引） |
 
 ## 环境变量
 
