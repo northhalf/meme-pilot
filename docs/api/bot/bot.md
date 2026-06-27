@@ -47,7 +47,7 @@ NoneBot2 主入口。
 NoneBot2 启动钩子，按顺序执行：
 
 1. `setup_logging("log")` — 配置日志
-2. 创建 `DeepSeekOcrService`、`EmbeddingService`、`RerankService`、`ImageOptimizer`
+2. 根据 `OCR_PROVIDER` 环境变量创建 OCR 引擎（`paddle` → `PaddleOcrClientService`，`deepseek` → `DeepSeekOcrService`），以及 `EmbeddingService`、`RerankService`、`ImageOptimizer`
 3. 创建 `IndexManager` 并调用 `load()`
 4. 创建 `AIMatcher`、`KeywordSearcher`
 5. `app_state.init_app(...)` — 注册全局单例（Bot 立即可用）
@@ -59,6 +59,15 @@ NoneBot2 启动钩子，按顺序执行：
 | **同步期间** | — | `is_locked = True`，插件层自动回复"索引正在更新" |
 | **同步失败** | — | 记录错误日志，Bot 继续运行（用已有索引） |
 
+### `_on_shutdown() -> None`
+
+NoneBot2 关闭钩子，释放 OCR 服务的 HTTP 会话。
+
+| | 类型 | 说明 |
+|--|------|------|
+| **行为** | — | 调用 `get_ocr_service()` 获取 OCR 实例，若存在 `close()` 方法则调用 |
+| **未初始化** | — | 跳过（不抛出异常） |
+
 ## 环境变量
 
 | 变量 | 必填 | 默认值 | 说明 |
@@ -66,8 +75,10 @@ NoneBot2 启动钩子，按顺序执行：
 | `BOT_HOST` | 否 | `0.0.0.0` | 驱动器监听地址 |
 | `BOT_PORT` | 否 | `8080` | 驱动器监听端口（无效值回退 8080） |
 | `SYNC_CONCURRENCY` | 否 | `5` | 索引同步并发上限 |
-| `DEEPSEEK_API_KEY` | 是 | — | DeepSeek API Key（OCR + Rerank） |
-| `SILICONFLOW_API_KEY` | 是 | — | SiliconFlow API Key（OCR） |
+| `OCR_PROVIDER` | 否 | `paddle` | OCR 引擎选择：`paddle`（PaddleOCR 云 API，默认）或 `deepseek`（硅基流动 DeepSeek-OCR） |
+| `DEEPSEEK_API_KEY` | 是 | — | DeepSeek API Key（Rerank 精排） |
+| `SILICONFLOW_API_KEY` | 仅 deepseek | — | SiliconFlow API Key（DeepSeek-OCR） |
+| `PADDLEOCR_ACCESS_TOKEN` | 仅 paddle | — | PaddleOCR 云 API Access Token |
 | `EMBEDDING_API_KEY` | 是 | — | Embedding API Key |
 
 其余可选环境变量（`DEEPSEEK_BASE_URL`、`SILICONFLOW_BASE_URL` 等）由各 engine 服务从环境变量读取，详见对应模块文档。

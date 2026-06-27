@@ -10,13 +10,14 @@ api
 └── bot
     ├── engine
     │   ├── ai_matcher.md
+    │   ├── deepseek_ocr.md
     │   ├── embedding_service.md
-    │   ├── rerank_service.md
+    │   ├── image_optimizer.md
     │   ├── index_manager.md
     │   ├── keyword_searcher.md
-    │   ├── ocr_service.md
-    │   ├── image_optimizer.md
-    │   └── protocols.md
+    │   ├── paddle_ocr.md
+    │   ├── protocols.md
+    │   ├── rerank_service.md
     ├── bot.md
     ├── config.md
     ├── logging_config.md
@@ -229,7 +230,7 @@ class EmbeddingService:
     async def embed(self, text: str) -> list[float]  # 1024 维
 ```
 
-### `docs/api/bot/engine/ocr_service.md`
+### `docs/api/bot/engine/deepseek_ocr.md`
 
 ```python
 class DeepSeekOcrService:
@@ -245,6 +246,30 @@ class DeepSeekOcrService:
 
     async def ocr(self, image_path: str) -> str
 ```
+
+### `docs/api/bot/engine/paddle_ocr.md`
+
+```python
+class PaddleOcrClientService:
+    def __init__(
+        self,
+        access_token: str | None = None,
+        base_url: str | None = None,
+        model: Model | str | None = None,
+        request_timeout: float = 300.0,
+        poll_timeout: float = 600.0,
+    ) -> None
+
+    async def ocr(self, image_path: str) -> str
+    async def close(self) -> None
+```
+
+- `access_token` 默认从 `PADDLEOCR_ACCESS_TOKEN` 环境变量读取
+- `base_url` 默认从 `PADDLEOCR_BASE_URL` 环境变量读取
+- `model` 默认 `Model.PP_OCRV6`
+- `ocr()` 返回识别文本（空字符串表示无结果）
+- `close()` 释放 HTTP 会话
+- 异常：`RuntimeError`（API 调用失败）
 
 ### `docs/api/bot/engine/rerank_service.md`
 
@@ -293,7 +318,8 @@ class ImageOptimizer:
 NoneBot2 应用入口，详见 `docs/api/bot/bot.md`。
 
 - 启动：`main()` — 初始化 NoneBot2（`driver="~fastapi"`），注册 OneBot V11 适配器，加载插件，启动驱动器
-- Startup hook：`_on_startup()` — 创建 engine 服务、注册到 `app_state`、后台执行索引同步
+- Startup hook：`_on_startup()` — 创建 engine 服务、注册到 `app_state`、后台执行索引同步；根据 `OCR_PROVIDER` 环境变量选择 OCR 引擎（`paddle`/`deepseek`）
+- Shutdown hook：`_on_shutdown()` — 释放 OCR 服务的 HTTP 会话（如适用）
 - `_background_sync()` — 后台同步任务，`acquire_lock()` 获取锁，同步完成/失败后释放
 - 同步期间 `is_locked = True`，插件层自动回复"索引正在更新"；同步失败时记录日志，Bot 继续运行
 - 环境变量：`BOT_HOST`（默认 `0.0.0.0`）、`BOT_PORT`（默认 `8080`，无效值回退 8080）、`SYNC_CONCURRENCY`（默认 5）
@@ -309,7 +335,7 @@ def setup_logging(log_dir: str = "log") -> None
 ```python
 def init_app(
     index_manager: IndexManager,
-    ocr_service: DeepSeekOcrService,
+    ocr_service: DeepSeekOcrService | PaddleOcrClientService,
     embedding_service: EmbeddingService,
     image_optimizer: ImageOptimizer | None = None,
     ai_matcher: AIMatcher | None = None,
@@ -317,7 +343,7 @@ def init_app(
 ) -> None
 
 def get_index_manager() -> IndexManager
-def get_ocr_service() -> DeepSeekOcrService
+def get_ocr_service() -> DeepSeekOcrService | PaddleOcrClientService
 def get_embedding_service() -> EmbeddingService
 def get_image_optimizer() -> ImageOptimizer | None
 def get_ai_matcher() -> AIMatcher
@@ -434,3 +460,4 @@ NoneBot2 命令插件，注册 `/search` 命令（薄包装，核心逻辑委托
 - `PROJECT_ROOT: Path` — 项目根目录，绝对路径
 - `MEMES_DIR: Path` — 表情包图片目录，绝对路径 `<项目根>/memes`
 - `read_session_timeout() -> int` — 从 `SESSION_EXPIRE_TIMEOUT` 环境变量读取会话超时秒数，支持纯数字和 `HH:MM:SS` 格式（pydantic 解析），默认 60
+- `read_ocr_provider() -> str` — 从 `OCR_PROVIDER` 环境变量读取 OCR 引擎类型，默认 `"paddle"`，有效值：`"deepseek"`、`"paddle"`

@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 # 加载项目根目录 .env
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
-from bot.engine.ocr_service import DeepSeekOcrService
+from bot.engine.deepseek_ocr import DeepSeekOcrService
 
 # fixture 图片目录
 IMAGES_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "images"
@@ -35,7 +35,7 @@ async def ocr_service() -> AsyncGenerator[DeepSeekOcrService, None]:
     """创建真实的 DeepSeekOcrService 实例。"""
     service = DeepSeekOcrService()
     yield service
-    await service._client.close()
+    await service.close()
 
 
 @pytest.mark.asyncio

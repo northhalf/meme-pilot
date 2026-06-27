@@ -1,4 +1,4 @@
-# bot/engine/ocr_service.py — DeepSeek-OCR API
+# bot/engine/deepseek_ocr.py — DeepSeek-OCR API
 
 > 本文档只记录模块对外接口。模块内部 `_` 前缀函数不在此列出。
 

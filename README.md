@@ -205,7 +205,8 @@ meme-pilot/
         ├── __init__.py          # 包级公共接口导出
         ├── protocols.py         # 共享协议定义（EmbeddingProvider 等）
         ├── image_optimizer.py   # 图片无损压缩
-        ├── ocr_service.py       # DeepSeek-OCR 封装（硅基流动 API）
+        ├── deepseek_ocr.py       # DeepSeek-OCR 封装（硅基流动 API）
+        ├── paddle_ocr.py         # PaddleOCR 云 API 封装
         ├── embedding_service.py # SiliconFlow Embedding 封装（实现 EmbeddingProvider）
         ├── rerank_service.py    # DeepSeek 精排封装（实现 RerankProvider）
         ├── index_manager.py     # 索引管理

@@ -150,3 +150,8 @@ class DeepSeekOcrService:
         text = _clean_ocr_result(raw)
         logger.debug("OCR 完成: %s → %d 字符", path.name, len(text))
         return text
+
+    async def close(self) -> None:
+        """释放 AsyncOpenAI HTTP 客户端会话。"""
+        await self._client.close()
+        logger.debug("DeepSeekOcrService HTTP 会话已关闭")

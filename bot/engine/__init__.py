@@ -24,7 +24,8 @@ from .keyword_searcher import (
     KeywordSearcher,
     SearchResult,
 )
-from .ocr_service import DeepSeekOcrService
+from .deepseek_ocr import DeepSeekOcrService
+from .paddle_ocr import PaddleOcrClientService
 from .protocols import EmbeddingProvider
 from .rerank_service import RerankService
 
@@ -54,6 +55,8 @@ __all__ = [
     "SearchResult",
     # ocr_service
     "DeepSeekOcrService",
+    # paddle_ocr
+    "PaddleOcrClientService",
     # rerank_service
     "RerankService",
 ]

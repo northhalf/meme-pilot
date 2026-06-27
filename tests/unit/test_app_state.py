@@ -80,7 +80,7 @@ class TestGetOcrService:
 
     def test_raises_when_not_initialized(self) -> None:
         """未初始化时应抛出 RuntimeError。"""
-        with pytest.raises(RuntimeError, match="DeepSeekOcrService 尚未初始化"):
+        with pytest.raises(RuntimeError, match="OCR 服务尚未初始化"):
             app_state.get_ocr_service()
 
 

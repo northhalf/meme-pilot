@@ -15,7 +15,7 @@ import nonebot
 from nonebot.adapters.onebot.v11 import Adapter as OneBotV11Adapter
 
 from bot.app_state import init_app
-from bot.config import MEMES_DIR, PROJECT_ROOT
+from bot.config import MEMES_DIR, PROJECT_ROOT, read_ocr_provider
 from bot.engine import (
     AIMatcher,
     DeepSeekOcrService,
@@ -23,6 +23,7 @@ from bot.engine import (
     ImageOptimizer,
     IndexManager,
     KeywordSearcher,
+    PaddleOcrClientService,
     RerankService,
 )
 from bot.logging_config import setup_logging
@@ -109,8 +110,14 @@ async def _on_startup() -> None:
     setup_logging("log")
     logger.info("MemePilot 正在启动...")
 
-    # 2. 创建引擎服务（各服务从环境变量读取配置）
-    ocr_service = DeepSeekOcrService()
+    # 2. 根据 OCR_PROVIDER 环境变量选择 OCR 引擎
+    provider = read_ocr_provider()
+    if provider == "paddle":
+        ocr_service = PaddleOcrClientService()
+        logger.info("OCR 引擎: PaddleOCR 云 API")
+    else:
+        ocr_service = DeepSeekOcrService()
+        logger.info("OCR 引擎: DeepSeek-OCR（硅基流动）")
     embedding_service = EmbeddingService()
     rerank_service = RerankService()
     image_optimizer = ImageOptimizer()
@@ -153,6 +160,18 @@ async def _on_startup() -> None:
     asyncio.create_task(_background_sync(index_manager))
 
 
+async def _on_shutdown() -> None:
+    """NoneBot2 关闭钩子 — 释放 OCR 服务的 HTTP 会话。"""
+    from bot.app_state import get_ocr_service
+
+    try:
+        ocr_service = get_ocr_service()
+    except RuntimeError:
+        return  # 未初始化，跳过
+    await ocr_service.close()
+    logger.info("OCR 服务 HTTP 会话已关闭")
+
+
 def main() -> None:
     """NoneBot2 主入口。"""
     # 初始化 NoneBot2（driver、host、port 从环境变量读取）
@@ -163,9 +182,10 @@ def main() -> None:
         env_file=str(PROJECT_ROOT / ".env"),
     )
 
-    # 注册 startup hook（必须在 init 之后）
+    # 注册 startup/shutdown 钩子（必须在 init 之后）
     driver = nonebot.get_driver()
     driver.on_startup(_on_startup)
+    driver.on_shutdown(_on_shutdown)
 
     # 注册 OneBot V11 适配器
     driver.register_adapter(OneBotV11Adapter)

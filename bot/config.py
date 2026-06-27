@@ -42,4 +42,18 @@ def read_session_timeout() -> int:
     return 60
 
 
-__all__ = ["PROJECT_ROOT", "MEMES_DIR", "read_session_timeout"]
+# 有效 OCR Provider 值
+_VALID_OCR_PROVIDERS: frozenset[str] = frozenset({"deepseek", "paddle"})
+
+
+def read_ocr_provider() -> str:
+    """从环境变量读取 OCR provider 类型。
+
+    Returns:
+        "paddle"（默认）或 "deepseek"。
+    """
+    raw = os.environ.get("OCR_PROVIDER", "paddle").strip().lower()
+    return raw if raw in _VALID_OCR_PROVIDERS else "paddle"
+
+
+__all__ = ["PROJECT_ROOT", "MEMES_DIR", "read_session_timeout", "read_ocr_provider"]

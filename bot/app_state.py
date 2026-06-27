@@ -11,10 +11,11 @@ from .engine import (
     ImageOptimizer,
     IndexManager,
     KeywordSearcher,
+    PaddleOcrClientService,
 )
 
 _index_manager: IndexManager | None = None
-_ocr_service: DeepSeekOcrService | None = None
+_ocr_service: DeepSeekOcrService | PaddleOcrClientService | None = None
 _embedding_service: EmbeddingService | None = None
 _image_optimizer: ImageOptimizer | None = None
 _ai_matcher: AIMatcher | None = None
@@ -23,7 +24,7 @@ _keyword_searcher: KeywordSearcher | None = None
 
 def init_app(
     index_manager: IndexManager,
-    ocr_service: DeepSeekOcrService,
+    ocr_service: DeepSeekOcrService | PaddleOcrClientService,
     embedding_service: EmbeddingService,
     image_optimizer: ImageOptimizer | None = None,
     ai_matcher: AIMatcher | None = None,
@@ -65,17 +66,17 @@ def get_index_manager() -> IndexManager:
     return _index_manager
 
 
-def get_ocr_service() -> DeepSeekOcrService:
-    """获取 DeepSeekOcrService 单例。
+def get_ocr_service() -> DeepSeekOcrService | PaddleOcrClientService:
+    """获取 OCR 服务单例。
 
     Returns:
-        已初始化的 DeepSeekOcrService 实例。
+        已初始化的 OCR 服务实例（DeepSeekOcrService 或 PaddleOcrClientService）。
 
     Raises:
         RuntimeError: 尚未调用 init_app() 初始化。
     """
     if _ocr_service is None:
-        raise RuntimeError("DeepSeekOcrService 尚未初始化，请先调用 init_app()")
+        raise RuntimeError("OCR 服务尚未初始化，请先调用 init_app()")
     return _ocr_service
 
 

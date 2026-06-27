@@ -27,7 +27,7 @@ load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 from bot.engine.ai_matcher import AIMatcher
 from bot.engine.embedding_service import EmbeddingService
 from bot.engine.index_manager import IndexManager
-from bot.engine.ocr_service import DeepSeekOcrService
+from bot.engine.deepseek_ocr import DeepSeekOcrService
 from bot.engine.rerank_service import RerankService
 
 # fixture 图片目录
