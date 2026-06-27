@@ -27,7 +27,7 @@ from bot.engine import (
 )
 from bot.logging_config import setup_logging
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("bot")
 
 
 def _read_sync_concurrency() -> int | None:

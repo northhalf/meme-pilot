@@ -17,7 +17,7 @@ Bot: 当前可用命令：
      /refresh：扫描 memes/ 并增量更新索引
 ```
 
-授权用户在私聊中直接发送普通文本时，Bot 会默认返回帮助。发送未知斜杠命令时，Bot 会提示“未知命令”并附帮助摘要。
+授权用户在私聊中直接发送普通文本时，Bot 会默认当作 `/search` 执行搜索。发送未知斜杠命令时，Bot 会提示”未知命令”并附帮助摘要。
 
 ### 🔍 关键词搜索 `/search`
 ```
@@ -197,7 +197,10 @@ meme-pilot/
     │   ├── meme_ai.py       # /ai 命令
     │   ├── meme_add.py      # /add 命令
     │   ├── meme_help.py     # /help 命令
-    │   └── meme_refresh.py  # /refresh 命令
+    │   ├── meme_plain_text.py # 兜底：普通文本/未知命令
+    │   ├── meme_refresh.py  # /refresh 命令
+    │   ├── _help_text.py    # 帮助文本常量（共享模块）
+    │   └── _search_utils.py # 搜索核心逻辑（共享模块）
     └── engine/
         ├── __init__.py          # 包级公共接口导出
         ├── protocols.py         # 共享协议定义（EmbeddingProvider 等）

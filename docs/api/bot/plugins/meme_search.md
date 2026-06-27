@@ -1,6 +1,6 @@
-# meme_search 插件
+# bot/plugins/meme_search.py — /search 命令插件（薄包装）
 
-`/search <关键词>` — 关键词模糊搜索表情包。
+> NoneBot2 命令插件，无对外 Python API。核心搜索逻辑委托给 `_search_utils.py`。
 
 ## 注册
 
@@ -20,11 +20,10 @@ async def got_selection(bot: Bot, event: PrivateMessageEvent, matcher: Matcher, 
 
 ## 依赖
 
-- `app_state.get_index_manager()` — 检查索引锁和条目数
-- `app_state.get_keyword_searcher()` — 关键词搜索
 - `auth.is_authorized()` — 授权校验
-- `session.check_and_cancel()` / `register()` / `cancel()` / `is_cancelled()` — 会话管理
-- `config.MEMES_DIR` — 图片路径
+- `_search_utils.execute_search()` — 核心搜索逻辑（锁、索引空、搜索、结果分支、session 注册和超时）
+- `_search_utils.handle_selection()` — 处理用户选择编号（返回 `SearchResult` 或错误消息字符串）
+- `session.check_and_cancel()` / `cancel()` / `is_cancelled()` — 会话管理
 
 ## 流程
 
@@ -32,25 +31,19 @@ async def got_selection(bot: Bot, event: PrivateMessageEvent, matcher: Matcher, 
 
 1. 授权校验
 2. 会话覆盖检查 (`check_and_cancel`)
-3. 获取 IndexManager
-4. 检查索引锁 (`index_manager.is_locked`) — 只读检查
-5. 提取关键词（去除 `/search` 前缀）
-6. 空关键词检查
-7. 空索引检查
-8. 获取 KeywordSearcher
-9. 调用 `searcher.search(keyword)`
-10. 结果分支：
-    - 0 条 → 回复无匹配
-    - 1 条 → 直接发送图片
-    - N 条 → 格式化选择列表，注册会话，等待用户选择
+3. 提取关键词（去除 `/search` 前缀）
+4. 空关键词检查
+5. 调用 `execute_search(bot, event, matcher, keyword)` 委托核心逻辑
 
 ### got_selection
 
 1. 检查会话是否已取消
-2. 检查候选列表是否为空（防御性）
-3. 解析用户输入编号
-4. 无效/越界 → reject 提示重输
-5. 有效 → 发送对应图片，清理会话
+2. 调用 `handle_selection(matcher, candidates, text)`：
+   - 返回 `SearchResult` → 发送对应图片，清理会话
+   - 返回 `str`（错误消息）→ reject 提示重输
+3. `FinishedException` / `RejectedException` 透传不捕获
+
+核心搜索逻辑（锁检查、索引空检查、KeywordSearcher 调用、结果分支、session 注册、超时任务）全部在 `_search_utils.execute_search()` 中实现。详见 `docs/api/bot/plugins/_search_utils.md`。
 
 ## 选择列表格式
 
@@ -63,15 +56,9 @@ async def got_selection(bot: Bot, event: PrivateMessageEvent, matcher: Matcher, 
 
 ## 错误处理
 
-| 场景 | 回复 |
+| 场景 | 处理 |
 |------|------|
-| IndexManager 未初始化 | "服务未就绪，请稍后再试" |
-| KeywordSearcher 未初始化 | "服务未就绪，请稍后再试" |
-| 索引锁占用 | "索引正在更新，请稍后再试" |
-| 空关键词 | "/search <关键词>" |
-| 索引为空 | "表情包目录为空，请先添加图片并执行 /refresh" |
-| search() 异常 | "搜索服务暂时不可用，稍后重试" |
-| 无匹配 | "没有匹配到任何表情包 🙁" |
-| 无效编号 | "无效编号，请回复 1-{N} 之间的数字" |
-| candidates 为空 | "搜索状态异常，请重新搜索" |
-| 会话超时 | NoneBot2 `SESSION_EXPIRE_TIMEOUT` 自动处理 |
+| 非授权用户 | 静默忽略（仅日志） |
+| 旧会话存在 | 标记取消并提示"已取消上一条未完成的操作" |
+| 空关键词 | 回复 "/search <关键词>" |
+| 核心搜索逻辑错误 | 委托 `_search_utils.execute_search` 处理 |

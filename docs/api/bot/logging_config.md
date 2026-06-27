@@ -13,7 +13,7 @@
 | | 类型 | 说明 |
 |--|------|------|
 | **返回** | `None` | |
-| **副作用** | 配置全局 `logging.root` | 添加 `RotatingFileHandler` 和 `StreamHandler` |
+| **副作用** | 配置 `bot` logger 层次 | 添加 `RotatingFileHandler` 和 `StreamHandler` 到 `logging.getLogger("bot")`；不修改根 logger，不影响第三方库日志 |
 
 配置内容：
 
@@ -23,3 +23,5 @@
 | `StreamHandler` | stdout | INFO | `时间 - 模块名 - 级别 - 消息` |
 
 启动时调用一次。自动创建 `<log_dir>` 目录。
+
+子 logger（`bot.plugins.*`、`bot.engine.*` 等）通过 Python logging 的继承关系自动获取父级配置。`bot` logger 设置 `propagate = False`，日志消息不会传播到根 logger。

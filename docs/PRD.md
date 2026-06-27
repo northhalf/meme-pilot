@@ -215,7 +215,7 @@ Bot 回复: "已成功添加表情包 ✅"
 
 授权用户在私聊中发送命令：`/help`
 
-授权用户在私聊中发送不以 `/` 开头的普通文本时，Bot 等同执行 `/help`。
+授权用户在私聊中发送不以 `/` 开头的普通文本时，Bot 等同执行 `/search`。
 
 #### 流程
 
@@ -426,11 +426,14 @@ meme-pilot/
     ├── logging_config.py      # 日志滚动配置（RotatingFileHandler + StreamHandler）
     ├── plugins/
     │   ├── __init__.py
-    │   ├── meme_search.py     # /search 命令
-    │   ├── meme_ai.py         # /ai 命令
-    │   ├── meme_add.py        # /add 命令
-    │   ├── meme_help.py       # /help 命令
-    │   └── meme_refresh.py    # /refresh 命令
+    │   ├── _help_text.py        # 帮助文本常量（共享模块）
+    │   ├── _search_utils.py     # 搜索核心逻辑（共享模块）
+    │   ├── meme_search.py       # /search 命令
+    │   ├── meme_ai.py           # /ai 命令
+    │   ├── meme_add.py          # /add 命令
+    │   ├── meme_help.py         # /help 命令
+    │   ├── meme_plain_text.py   # 兜底：普通文本/未知命令
+    │   └── meme_refresh.py      # /refresh 命令
     └── engine/
         ├── __init__.py
         ├── protocols.py       # 共享协议定义（EmbeddingProvider 等）

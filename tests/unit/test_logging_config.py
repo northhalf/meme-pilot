@@ -16,33 +16,35 @@ from bot.logging_config import setup_logging
 
 @pytest.fixture(autouse=True)
 def reset_logging() -> Generator[None, None, None]:
-    """每个测试前重置 Root Logger，测试后关闭 handler。
+    """每个测试前重置 bot Logger，测试后关闭 handler。
 
     测试前：移除已有 handler，避免测试间状态互相干扰。
     测试后：关闭文件 handler 释放句柄。
     """
-    root = logging.getLogger()
-    for h in root.handlers[:]:
-        root.removeHandler(h)
+    bot = logging.getLogger("bot")
+    for h in bot.handlers[:]:
+        bot.removeHandler(h)
         h.close()
-    root.setLevel(logging.WARNING)
+    bot.setLevel(logging.NOTSET)
+    bot.propagate = True
 
     yield
 
-    for h in root.handlers[:]:
-        root.removeHandler(h)
+    for h in bot.handlers[:]:
+        bot.removeHandler(h)
         h.close()
-    root.setLevel(logging.WARNING)
+    bot.setLevel(logging.NOTSET)
+    bot.propagate = True
 
 
 def _get_file_handlers() -> list[RotatingFileHandler]:
-    """从 Root Logger 中获取 RotatingFileHandler 列表。"""
-    return [h for h in logging.getLogger().handlers if isinstance(h, RotatingFileHandler)]
+    """从 bot Logger 中获取 RotatingFileHandler 列表。"""
+    return [h for h in logging.getLogger("bot").handlers if isinstance(h, RotatingFileHandler)]
 
 
 def _get_stream_handlers() -> list[logging.StreamHandler]:
-    """从 Root Logger 中获取 StreamHandler 列表（精确类型，不含子类）。"""
-    return [h for h in logging.getLogger().handlers if type(h) is logging.StreamHandler]
+    """从 bot Logger 中获取 StreamHandler 列表（精确类型，不含子类）。"""
+    return [h for h in logging.getLogger("bot").handlers if type(h) is logging.StreamHandler]
 
 
 class TestSetupLogging:
@@ -56,26 +58,26 @@ class TestSetupLogging:
         assert log_dir.is_dir()
 
     def test_rotating_file_handler_added(self, tmp_path: Path) -> None:
-        """Root Logger 应包含 RotatingFileHandler。"""
+        """bot Logger 应包含 RotatingFileHandler。"""
         setup_logging(log_dir=str(tmp_path / "log"))
         handlers = _get_file_handlers()
         assert len(handlers) == 1
 
     def test_stream_handler_added(self, tmp_path: Path) -> None:
-        """Root Logger 应包含 StreamHandler（精确类型，不含子类）。"""
+        """bot Logger 应包含 StreamHandler（精确类型，不含子类）。"""
         setup_logging(log_dir=str(tmp_path / "log"))
         handlers = _get_stream_handlers()
         assert len(handlers) == 1
 
     def test_handlers_count(self, tmp_path: Path) -> None:
-        """Root Logger 恰好有 2 个 handler。"""
+        """bot Logger 恰好有 2 个 handler。"""
         setup_logging(log_dir=str(tmp_path / "log"))
-        assert len(logging.getLogger().handlers) == 2
+        assert len(logging.getLogger("bot").handlers) == 2
 
-    def test_root_logger_level_debug(self, tmp_path: Path) -> None:
-        """Root Logger level 应为 DEBUG。"""
+    def test_bot_logger_level_debug(self, tmp_path: Path) -> None:
+        """bot Logger level 应为 DEBUG。"""
         setup_logging(log_dir=str(tmp_path / "log"))
-        assert logging.getLogger().level == logging.DEBUG
+        assert logging.getLogger("bot").level == logging.DEBUG
 
     def test_file_handler_debug_level(self, tmp_path: Path) -> None:
         """FileHandler level 应为 DEBUG。"""
@@ -112,11 +114,11 @@ class TestSetupLogging:
         log_dir = tmp_path / "log"
         setup_logging(log_dir=str(log_dir))
 
-        test_logger = logging.getLogger("meme_bot_test")
+        test_logger = logging.getLogger("bot.test")
         test_logger.info("测试日志写入")
 
         # 刷新 handler 确保写入磁盘
-        for h in logging.getLogger().handlers:
+        for h in logging.getLogger("bot").handlers:
             h.flush()
 
         log_file = log_dir / "bot.log"

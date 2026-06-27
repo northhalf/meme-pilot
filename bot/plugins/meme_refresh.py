@@ -29,6 +29,7 @@ async def handle_refresh(bot: Bot, event: PrivateMessageEvent) -> None:
         event: 私聊消息事件。
     """
     user_id = event.get_user_id()
+    logger.info("用户 %s 调用 /refresh", user_id)
 
     # 授权校验
     if not is_authorized(user_id):

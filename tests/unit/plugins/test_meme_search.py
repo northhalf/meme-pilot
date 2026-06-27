@@ -52,33 +52,6 @@ def _make_matcher(*, state: dict | None = None) -> MagicMock:
     return matcher
 
 
-def _make_index_manager(*, is_locked: bool = False, entry_count: int = 10) -> MagicMock:
-    """创建模拟的 IndexManager。"""
-    im = MagicMock()
-    im.is_locked = is_locked
-    im.entry_count = entry_count
-    return im
-
-
-def _make_keyword_searcher(*, results: list | None = None) -> MagicMock:
-    """创建模拟的 KeywordSearcher。"""
-    from bot.engine.keyword_searcher import SearchResult
-
-    ks = MagicMock()
-    if results is not None:
-        ks.search.return_value = results
-    else:
-        ks.search.return_value = [
-            SearchResult(
-                entry_id="1",
-                filename="加班心累.jpg",
-                text="加班到心累",
-                similarity=95.0,
-            )
-        ]
-    return ks
-
-
 def _make_search_result(
     entry_id: str = "1",
     filename: str = "test.jpg",
@@ -122,27 +95,21 @@ class TestHandleSearchAuth:
     """授权校验测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_search, "get_keyword_searcher")
-    @patch.object(meme_search, "get_index_manager")
+    @patch.object(meme_search, "execute_search", new_callable=AsyncMock)
     @patch.object(meme_search, "is_authorized", return_value=True)
     async def test_authorized_user_proceeds(
-        self, mock_auth: MagicMock, mock_get_im: MagicMock, mock_get_ks: MagicMock
+        self, mock_auth: MagicMock, mock_exec: AsyncMock
     ) -> None:
-        """授权用户应正常执行。"""
-        _reset_cmd()
-        mock_get_im.return_value = _make_index_manager()
-        mock_get_ks.return_value = _make_keyword_searcher()
-
+        """授权用户应正常调用 execute_search。"""
         await handle_search(_make_bot(), _make_event(), _make_matcher())
 
-        mock_get_ks.assert_called_once()
+        mock_exec.assert_awaited_once()
 
     @pytest.mark.asyncio
-    @patch.object(meme_search, "get_keyword_searcher")
-    @patch.object(meme_search, "get_index_manager")
+    @patch.object(meme_search, "execute_search", new_callable=AsyncMock)
     @patch.object(meme_search, "is_authorized", return_value=False)
     async def test_unauthorized_user_ignored(
-        self, mock_auth: MagicMock, mock_get_im: MagicMock, mock_get_ks: MagicMock
+        self, mock_auth: MagicMock, mock_exec: AsyncMock
     ) -> None:
         """非授权用户应被静默忽略。"""
         _reset_cmd()
@@ -150,36 +117,9 @@ class TestHandleSearchAuth:
 
         await handle_search(bot, _make_event("999"), _make_matcher())
 
-        mock_get_im.assert_not_called()
-        mock_get_ks.assert_not_called()
+        mock_exec.assert_not_awaited()
         _mock_cmd.finish.assert_not_awaited()
         bot.send.assert_not_awaited()
-
-
-# ---------------------------------------------------------------------------
-# 索引锁
-# ---------------------------------------------------------------------------
-
-
-class TestHandleSearchLock:
-    """索引锁测试。"""
-
-    @pytest.mark.asyncio
-    @patch.object(meme_search, "get_keyword_searcher")
-    @patch.object(meme_search, "get_index_manager")
-    @patch.object(meme_search, "is_authorized", return_value=True)
-    async def test_lock_contention_replies(
-        self, mock_auth: MagicMock, mock_get_im: MagicMock, mock_get_ks: MagicMock
-    ) -> None:
-        """索引锁占用时应回复提示。"""
-        _reset_cmd()
-        mock_get_im.return_value = _make_index_manager(is_locked=True)
-
-        await handle_search(_make_bot(), _make_event(), _make_matcher())
-
-        _mock_cmd.finish.assert_awaited_once()
-        assert "索引正在更新" in _mock_cmd.finish.call_args[0][0]
-        mock_get_ks.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -191,26 +131,18 @@ class TestHandleSearchSessionOverride:
     """会话覆盖测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_search, "register")
+    @patch.object(meme_search, "execute_search", new_callable=AsyncMock)
     @patch.object(
         meme_search, "check_and_cancel", return_value="已取消上一条未完成的操作"
     )
-    @patch.object(meme_search, "get_keyword_searcher")
-    @patch.object(meme_search, "get_index_manager")
     @patch.object(meme_search, "is_authorized", return_value=True)
     async def test_existing_session_cancelled(
         self,
         mock_auth: MagicMock,
-        mock_get_im: MagicMock,
-        mock_get_ks: MagicMock,
         mock_check: MagicMock,
-        mock_register: MagicMock,
+        mock_exec: AsyncMock,
     ) -> None:
         """旧会话存在时应取消并提示。"""
-        _reset_cmd()
-        mock_get_im.return_value = _make_index_manager()
-        mock_get_ks.return_value = _make_keyword_searcher()
-
         matcher = _make_matcher()
         await handle_search(_make_bot(), _make_event(), matcher)
 
@@ -218,24 +150,16 @@ class TestHandleSearchSessionOverride:
         assert "已取消上一条未完成的操作" in matcher.send.call_args[0][0]
 
     @pytest.mark.asyncio
-    @patch.object(meme_search, "register")
+    @patch.object(meme_search, "execute_search", new_callable=AsyncMock)
     @patch.object(meme_search, "check_and_cancel", return_value=None)
-    @patch.object(meme_search, "get_keyword_searcher")
-    @patch.object(meme_search, "get_index_manager")
     @patch.object(meme_search, "is_authorized", return_value=True)
     async def test_no_existing_session_skips_hint(
         self,
         mock_auth: MagicMock,
-        mock_get_im: MagicMock,
-        mock_get_ks: MagicMock,
         mock_check: MagicMock,
-        mock_register: MagicMock,
+        mock_exec: AsyncMock,
     ) -> None:
         """无旧会话时不应发送提示。"""
-        _reset_cmd()
-        mock_get_im.return_value = _make_index_manager()
-        mock_get_ks.return_value = _make_keyword_searcher()
-
         matcher = _make_matcher()
         await handle_search(_make_bot(), _make_event(), matcher)
 
@@ -251,14 +175,12 @@ class TestHandleSearchEmptyKeyword:
     """空关键词测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_search, "get_index_manager")
     @patch.object(meme_search, "is_authorized", return_value=True)
     async def test_empty_keyword_replies_usage(
-        self, mock_auth: MagicMock, mock_get_im: MagicMock
+        self, mock_auth: MagicMock
     ) -> None:
         """/search 无参数时应回复用法提示。"""
         _reset_cmd()
-        mock_get_im.return_value = _make_index_manager()
 
         await handle_search(_make_bot(), _make_event(text="/search"), _make_matcher())
 
@@ -267,218 +189,27 @@ class TestHandleSearchEmptyKeyword:
 
 
 # ---------------------------------------------------------------------------
-# 空索引
+# 委托 execute_search
 # ---------------------------------------------------------------------------
 
 
-class TestHandleSearchEmptyIndex:
-    """空索引测试。"""
+class TestHandleSearchDelegation:
+    """测试 handle_search 正确委托 execute_search。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_search, "get_keyword_searcher")
-    @patch.object(meme_search, "get_index_manager")
+    @patch.object(meme_search, "execute_search", new_callable=AsyncMock)
     @patch.object(meme_search, "is_authorized", return_value=True)
-    async def test_empty_index_replies_empty(
-        self, mock_auth: MagicMock, mock_get_im: MagicMock, mock_get_ks: MagicMock
+    async def test_execute_search_called_with_correct_args(
+        self, mock_auth: MagicMock, mock_exec: AsyncMock
     ) -> None:
-        """索引为空时应回复表情包目录为空。"""
-        _reset_cmd()
-        mock_get_im.return_value = _make_index_manager(entry_count=0)
-
-        await handle_search(_make_bot(), _make_event(), _make_matcher())
-
-        _mock_cmd.finish.assert_awaited_once()
-        assert "表情包目录为空" in _mock_cmd.finish.call_args[0][0]
-        mock_get_ks.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# 无匹配结果
-# ---------------------------------------------------------------------------
-
-
-class TestHandleSearchNoMatch:
-    """无匹配结果测试。"""
-
-    @pytest.mark.asyncio
-    @patch.object(meme_search, "MessageSegment")
-    @patch.object(meme_search, "get_keyword_searcher")
-    @patch.object(meme_search, "get_index_manager")
-    @patch.object(meme_search, "is_authorized", return_value=True)
-    async def test_no_results_replies_no_match(
-        self,
-        mock_auth: MagicMock,
-        mock_get_im: MagicMock,
-        mock_get_ks: MagicMock,
-        mock_segment: MagicMock,
-    ) -> None:
-        """无匹配结果时应回复提示。"""
-        _reset_cmd()
-        mock_get_im.return_value = _make_index_manager()
-        mock_get_ks.return_value = _make_keyword_searcher(results=[])
-
-        await handle_search(_make_bot(), _make_event(), _make_matcher())
-
-        _mock_cmd.finish.assert_awaited_once()
-        assert "没有匹配到" in _mock_cmd.finish.call_args[0][0]
-        mock_segment.image.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# 唯一结果直接发送图片
-# ---------------------------------------------------------------------------
-
-
-class TestHandleSearchSingleResult:
-    """唯一结果测试。"""
-
-    @pytest.mark.asyncio
-    @patch.object(meme_search, "MessageSegment")
-    @patch.object(meme_search, "get_keyword_searcher")
-    @patch.object(meme_search, "get_index_manager")
-    @patch.object(meme_search, "is_authorized", return_value=True)
-    async def test_single_result_sends_image(
-        self,
-        mock_auth: MagicMock,
-        mock_get_im: MagicMock,
-        mock_get_ks: MagicMock,
-        mock_segment: MagicMock,
-    ) -> None:
-        """唯一结果应直接发送图片。"""
-        _reset_cmd()
-        mock_get_im.return_value = _make_index_manager()
-        mock_get_ks.return_value = _make_keyword_searcher(
-            results=[_make_search_result(filename="加班心累.jpg")]
-        )
-
-        await handle_search(_make_bot(), _make_event(), _make_matcher())
-
-        _mock_cmd.finish.assert_awaited_once()
-        mock_segment.image.assert_called_once()
-
-    @pytest.mark.asyncio
-    @patch.object(meme_search, "MessageSegment")
-    @patch.object(meme_search, "get_keyword_searcher")
-    @patch.object(meme_search, "get_index_manager")
-    @patch.object(meme_search, "is_authorized", return_value=True)
-    async def test_single_result_image_path_correct(
-        self,
-        mock_auth: MagicMock,
-        mock_get_im: MagicMock,
-        mock_get_ks: MagicMock,
-        mock_segment: MagicMock,
-    ) -> None:
-        """图片路径应为 file:/// URI 格式。"""
-        _reset_cmd()
-        mock_get_im.return_value = _make_index_manager()
-        mock_get_ks.return_value = _make_keyword_searcher(
-            results=[_make_search_result(filename="test.jpg")]
-        )
-
-        await handle_search(_make_bot(), _make_event(), _make_matcher())
-
-        call_args = mock_segment.image.call_args[0][0]
-        assert "memes" in str(call_args)
-        assert str(call_args).startswith("file:///")
-
-
-# ---------------------------------------------------------------------------
-# 多结果显示选择列表
-# ---------------------------------------------------------------------------
-
-
-class TestHandleSearchMultipleResults:
-    """多结果测试。"""
-
-    @pytest.mark.asyncio
-    @patch.object(meme_search, "register")
-    @patch.object(meme_search, "check_and_cancel", return_value=None)
-    @patch.object(meme_search, "get_keyword_searcher")
-    @patch.object(meme_search, "get_index_manager")
-    @patch.object(meme_search, "is_authorized", return_value=True)
-    async def test_multiple_results_sends_list(
-        self,
-        mock_auth: MagicMock,
-        mock_get_im: MagicMock,
-        mock_get_ks: MagicMock,
-        mock_check: MagicMock,
-        mock_register: MagicMock,
-    ) -> None:
-        """多个结果时应发送选择列表。"""
-        _reset_cmd()
-        results = [
-            _make_search_result(entry_id="1", text="加班到心累", similarity=95.0),
-            _make_search_result(entry_id="2", text="加班使我快乐", similarity=80.0),
-        ]
-        mock_get_im.return_value = _make_index_manager()
-        mock_get_ks.return_value = _make_keyword_searcher(results=results)
-
+        """应将 bot、event、matcher、keyword 传给 execute_search。"""
+        bot = _make_bot()
+        event = _make_event(text="/search 测试关键词")
         matcher = _make_matcher()
-        await handle_search(_make_bot(), _make_event(), matcher)
 
-        matcher.send.assert_awaited_once()
-        sent_text = matcher.send.call_args[0][0]
-        assert "找到多个匹配的表情包" in sent_text
-        assert "1. 加班到心累" in sent_text
-        assert "2. 加班使我快乐" in sent_text
-        assert "回复编号即可" in sent_text
+        await handle_search(bot, event, matcher)
 
-    @pytest.mark.asyncio
-    @patch.object(meme_search, "register")
-    @patch.object(meme_search, "check_and_cancel", return_value=None)
-    @patch.object(meme_search, "get_keyword_searcher")
-    @patch.object(meme_search, "get_index_manager")
-    @patch.object(meme_search, "is_authorized", return_value=True)
-    async def test_multiple_results_stores_candidates(
-        self,
-        mock_auth: MagicMock,
-        mock_get_im: MagicMock,
-        mock_get_ks: MagicMock,
-        mock_check: MagicMock,
-        mock_register: MagicMock,
-    ) -> None:
-        """多个结果时应将候选存储到 matcher.state。"""
-        _reset_cmd()
-        results = [
-            _make_search_result(entry_id="1", text="加班到心累"),
-            _make_search_result(entry_id="2", text="加班使我快乐"),
-        ]
-        mock_get_im.return_value = _make_index_manager()
-        mock_get_ks.return_value = _make_keyword_searcher(results=results)
-
-        matcher = _make_matcher()
-        await handle_search(_make_bot(), _make_event(), matcher)
-
-        assert "candidates" in matcher.state
-        assert len(matcher.state["candidates"]) == 2
-
-    @pytest.mark.asyncio
-    @patch.object(meme_search, "register")
-    @patch.object(meme_search, "check_and_cancel", return_value=None)
-    @patch.object(meme_search, "get_keyword_searcher")
-    @patch.object(meme_search, "get_index_manager")
-    @patch.object(meme_search, "is_authorized", return_value=True)
-    async def test_multiple_results_registers_session(
-        self,
-        mock_auth: MagicMock,
-        mock_get_im: MagicMock,
-        mock_get_ks: MagicMock,
-        mock_check: MagicMock,
-        mock_register: MagicMock,
-    ) -> None:
-        """多个结果时应注册会话。"""
-        _reset_cmd()
-        results = [
-            _make_search_result(entry_id="1", text="加班到心累"),
-            _make_search_result(entry_id="2", text="加班使我快乐"),
-        ]
-        mock_get_im.return_value = _make_index_manager()
-        mock_get_ks.return_value = _make_keyword_searcher(results=results)
-
-        matcher = _make_matcher()
-        await handle_search(_make_bot(), _make_event("111"), matcher)
-
-        mock_register.assert_called_once_with("111", matcher, "search")
+        mock_exec.assert_awaited_once_with(bot, event, matcher, "测试关键词")
 
 
 # ===========================================================================
@@ -506,18 +237,19 @@ class TestGotSelection:
         matcher.finish.assert_not_awaited()
 
     @pytest.mark.asyncio
+    @patch.object(meme_search, "handle_selection")
     @patch.object(meme_search, "cancel")
     @patch.object(meme_search, "is_cancelled", return_value=False)
     async def test_valid_choice_sends_image(
         self,
         mock_cancelled: MagicMock,
         mock_cancel: MagicMock,
+        mock_handle: MagicMock,
     ) -> None:
         """有效编号应发送对应图片。"""
-        candidates = [
-            _make_search_result(entry_id="1", filename="a.jpg", text="甲"),
-            _make_search_result(entry_id="2", filename="b.jpg", text="乙"),
-        ]
+        result = _make_search_result(filename="a.jpg")
+        mock_handle.return_value = result
+        candidates = [result]
         matcher = _make_matcher(state={"candidates": candidates})
 
         await got_selection(_make_bot(), _make_event(text="1"), matcher, _make_message("1"))
@@ -525,37 +257,40 @@ class TestGotSelection:
         matcher.finish.assert_awaited_once()
 
     @pytest.mark.asyncio
+    @patch.object(meme_search, "handle_selection")
     @patch.object(meme_search, "cancel")
     @patch.object(meme_search, "is_cancelled", return_value=False)
     async def test_valid_choice_cancels_session(
         self,
         mock_cancelled: MagicMock,
         mock_cancel: MagicMock,
+        mock_handle: MagicMock,
     ) -> None:
         """有效编号应清理会话。"""
-        candidates = [
-            _make_search_result(entry_id="1", filename="a.jpg", text="甲"),
-        ]
-        matcher = _make_matcher(state={"candidates": candidates})
+        result = _make_search_result(filename="a.jpg")
+        mock_handle.return_value = result
+        matcher = _make_matcher(state={"candidates": [result]})
 
         await got_selection(_make_bot(), _make_event("12345", "1"), matcher, _make_message("1"))
 
         mock_cancel.assert_called_once_with("12345")
 
     @pytest.mark.asyncio
+    @patch.object(meme_search, "handle_selection")
     @patch.object(meme_search, "cancel")
     @patch.object(meme_search, "is_cancelled", return_value=False)
     async def test_valid_choice_sends_correct_image(
         self,
         mock_cancelled: MagicMock,
         mock_cancel: MagicMock,
+        mock_handle: MagicMock,
     ) -> None:
         """选择第 2 个结果应发送对应图片路径。"""
-        from unittest.mock import call
-
+        result = _make_search_result(entry_id="2", filename="b.jpg", text="乙")
+        mock_handle.return_value = result
         candidates = [
             _make_search_result(entry_id="1", filename="a.jpg", text="甲"),
-            _make_search_result(entry_id="2", filename="b.jpg", text="乙"),
+            result,
         ]
         matcher = _make_matcher(state={"candidates": candidates})
 
@@ -566,14 +301,17 @@ class TestGotSelection:
             assert "b.jpg" in str(call_args)
 
     @pytest.mark.asyncio
+    @patch.object(meme_search, "handle_selection")
     @patch.object(meme_search, "cancel")
     @patch.object(meme_search, "is_cancelled", return_value=False)
     async def test_invalid_text_rejects(
         self,
         mock_cancelled: MagicMock,
         mock_cancel: MagicMock,
+        mock_handle: MagicMock,
     ) -> None:
         """非数字输入应 reject 提示重输。"""
+        mock_handle.return_value = "无效编号，请回复 1-1 之间的数字"
         candidates = [_make_search_result()]
         matcher = _make_matcher(state={"candidates": candidates})
 
@@ -583,14 +321,17 @@ class TestGotSelection:
         assert "无效编号" in matcher.reject.call_args[0][0]
 
     @pytest.mark.asyncio
+    @patch.object(meme_search, "handle_selection")
     @patch.object(meme_search, "cancel")
     @patch.object(meme_search, "is_cancelled", return_value=False)
     async def test_out_of_range_low_rejects(
         self,
         mock_cancelled: MagicMock,
         mock_cancel: MagicMock,
+        mock_handle: MagicMock,
     ) -> None:
         """编号小于 1 时应 reject。"""
+        mock_handle.return_value = "无效编号，请回复 1-2 之间的数字"
         candidates = [_make_search_result(), _make_search_result()]
         matcher = _make_matcher(state={"candidates": candidates})
 
@@ -600,14 +341,17 @@ class TestGotSelection:
         assert "无效编号" in matcher.reject.call_args[0][0]
 
     @pytest.mark.asyncio
+    @patch.object(meme_search, "handle_selection")
     @patch.object(meme_search, "cancel")
     @patch.object(meme_search, "is_cancelled", return_value=False)
     async def test_out_of_range_high_rejects(
         self,
         mock_cancelled: MagicMock,
         mock_cancel: MagicMock,
+        mock_handle: MagicMock,
     ) -> None:
         """编号超出范围时应 reject。"""
+        mock_handle.return_value = "无效编号，请回复 1-1 之间的数字"
         candidates = [_make_search_result()]
         matcher = _make_matcher(state={"candidates": candidates})
 
@@ -617,49 +361,21 @@ class TestGotSelection:
         assert "无效编号" in matcher.reject.call_args[0][0]
 
     @pytest.mark.asyncio
+    @patch.object(meme_search, "handle_selection")
     @patch.object(meme_search, "cancel")
     @patch.object(meme_search, "is_cancelled", return_value=False)
-    async def test_empty_candidates_finishes_with_error(
+    async def test_empty_candidates_rejects_with_error(
         self,
         mock_cancelled: MagicMock,
         mock_cancel: MagicMock,
+        mock_handle: MagicMock,
     ) -> None:
-        """candidates 为空时应 finish 并提示搜索状态异常。"""
+        """candidates 为空时 handle_selection 返回错误消息，应 reject。"""
+        mock_handle.return_value = "搜索状态异常，请重新搜索"
         matcher = _make_matcher(state={})
 
         await got_selection(_make_bot(), _make_event(text="1"), matcher, _make_message("1"))
 
-        mock_cancel.assert_called_once_with("12345")
-        matcher.finish.assert_awaited_once()
-        assert "搜索状态异常" in matcher.finish.call_args[0][0]
-
-
-# ===========================================================================
-# search() 异常测试
-# ===========================================================================
-
-
-class TestHandleSearchResults:
-    """search() 异常测试。"""
-
-    @pytest.mark.asyncio
-    @patch.object(meme_search, "get_keyword_searcher")
-    @patch.object(meme_search, "get_index_manager")
-    @patch.object(meme_search, "is_authorized", return_value=True)
-    async def test_search_exception_replies_error(
-        self,
-        mock_auth: MagicMock,
-        mock_get_im: MagicMock,
-        mock_get_ks: MagicMock,
-    ) -> None:
-        """search() 抛异常时应回复服务不可用。"""
-        _reset_cmd()
-        mock_get_im.return_value = _make_index_manager()
-        ks = _make_keyword_searcher()
-        ks.search.side_effect = RuntimeError("pylcs 错误")
-        mock_get_ks.return_value = ks
-
-        await handle_search(_make_bot(), _make_event(), _make_matcher())
-
-        _mock_cmd.finish.assert_awaited_once()
-        assert "搜索服务暂时不可用" in _mock_cmd.finish.call_args[0][0]
+        mock_handle.assert_called_once()
+        matcher.reject.assert_awaited_once()
+        assert "搜索状态异常" in matcher.reject.call_args[0][0]

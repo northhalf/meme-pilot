@@ -18,4 +18,4 @@ COPY bot/ ./bot/
 # 创建挂载卷目录（Docker 挂载会覆盖）
 RUN mkdir -p /app/memes /app/data /app/log /app/meme_no_text
 
-CMD ["uv", "run", "python", "-m", "bot.bot"]
+CMD ["uv", "run", "--no-sync", "python", "-m", "bot.bot"]

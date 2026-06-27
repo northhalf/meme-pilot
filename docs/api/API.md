@@ -24,10 +24,13 @@ api
     ├── app_state.md
     ├── session.md
     └── plugins
+        ├── _help_text.md
+        ├── _search_utils.md
         ├── meme_help.md
         ├── meme_refresh.md
         ├── meme_add.md
         ├── meme_ai.md
+        ├── meme_plain_text.md
         └── meme_search.md
 ```
 
@@ -337,14 +340,51 @@ NoneBot2 命令插件，注册 `/refresh` 命令。
 - 锁：`await IndexManager.acquire_lock()` / `IndexManager.release_lock()`
 - 同步：`IndexManager.sync_with_filesystem() -> SyncResult`
 
+### `bot/plugins/_search_utils.py`
+
+搜索核心逻辑模块，以下划线开头避免 NoneBot2 自动加载为插件。
+
+```python
+async def execute_search(
+    bot: Bot, event: PrivateMessageEvent, cmd_matcher: Matcher, keyword: str
+) -> None
+# 核心搜索逻辑：锁检查 → 索引空检查 → 执行搜索 → 结果分支
+# 多结果时注册 session 并启动超时任务
+
+def handle_selection(
+    matcher: Matcher, candidates: list[SearchResult], text: str
+) -> SearchResult | str
+# 处理用户选择编号，返回 SearchResult 或错误消息字符串
+```
+
+- 依赖：`app_state.get_index_manager()`、`app_state.get_keyword_searcher()`、`bot.session`（register、timeout_session）、`bot.config.MEMES_DIR`
+
+### `bot/plugins/_help_text.py`
+
+帮助文本常量模块，下划线开头避免 NoneBot2 自动加载为插件。
+
+```python
+_HELP_TEXT: str  # 命令帮助摘要文本
+```
+
+- 供 `meme_help.py` 和 `meme_plain_text.py` 共享
+
 ### `bot/plugins/meme_help.py`
 
-NoneBot2 命令插件，注册 `/help` 命令及兜底消息处理。
+NoneBot2 命令插件，注册 `/help` 命令。
 
 - 注册：`on_command("help", rule=to_me(), priority=5, block=True)`
-- 兜底：`on_message(rule=to_me(), priority=99, block=False)` 处理纯文本和未知斜杠命令
 - 依赖：`auth.is_authorized()`
-- 无外部依赖，不获取 IndexManager 实例
+
+### `bot/plugins/meme_plain_text.py`
+
+兜底消息插件，处理普通文本和未知斜杠命令。
+
+- 注册：`on_message(rule=to_me(), priority=99, block=False)`
+- 普通文本：等同执行 `/search`，调用 `_search_utils.execute_search`
+- 未知斜杠命令：回复"未知命令"并附帮助摘要
+- got：`catch_all.got("selection")` 处理搜索多结果选择
+- 依赖：`auth.is_authorized()`、`_search_utils.execute_search`、`_search_utils.handle_selection`、`session.check_and_cancel`、`session.is_cancelled`、`session.cancel`
 
 ### `bot/session.py`
 
@@ -381,14 +421,11 @@ NoneBot2 命令插件，注册 `/ai` 命令。
 
 ### `bot/plugins/meme_search.py`
 
-NoneBot2 命令插件，注册 `/search` 命令。
+NoneBot2 命令插件，注册 `/search` 命令（薄包装，核心逻辑委托 `_search_utils`）。
 
-- 依赖：`app_state.get_keyword_searcher()`、`app_state.get_index_manager()`、`auth.is_authorized()`、`bot.session`
-- 锁：只读检查 `IndexManager.is_locked`
-- 搜索：`KeywordSearcher.search(keyword) -> list[SearchResult]`，异常保护
-- 多结果：`got("selection")` 等待用户选择，候选存入 `matcher.state["candidates"]`
-- 超时：`asyncio.create_task(timeout_session(...))` 启动超时检查
-- 图片：`MessageSegment.image("file://" + str(image_path.resolve()))`
+- 依赖：`auth.is_authorized()`、`_search_utils.execute_search`、`_search_utils.handle_selection`、`session.check_and_cancel`、`session.is_cancelled`、`session.cancel`
+- 流程：`handle_search` — 授权校验 → 会话覆盖 → 提取关键词 → `execute_search`
+- 选择：`got_selection` — 会话检查 → `handle_selection` → 发送图片/reject
 
 ### `bot/config.py`
 

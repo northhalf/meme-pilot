@@ -15,6 +15,7 @@ import httpx
 from nonebot import on_command
 from nonebot.adapters.onebot.v11 import Bot, Message, MessageEvent
 from nonebot.adapters.onebot.v11.helpers import extract_image_urls
+from nonebot.exception import FinishedException, RejectedException
 from nonebot.matcher import Matcher
 from nonebot.params import Arg
 from nonebot.rule import to_me
@@ -61,6 +62,7 @@ async def handle_add(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
         matcher: NoneBot2 Matcher 实例。
     """
     user_id = event.get_user_id()
+    logger.info("用户 %s 调用 /add", user_id)
 
     # 授权校验
     if not is_authorized(user_id):
@@ -220,6 +222,8 @@ async def got_image(
         else:
             await matcher.finish("已成功添加表情包 ✅")
 
+    except (FinishedException, RejectedException):
+        raise
     except Exception:
         # 未预期异常
         logger.exception("用户 %s 的 /add 处理异常", user_id)
