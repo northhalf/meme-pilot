@@ -111,6 +111,9 @@ class KeywordSearcher:
             logger.debug("关键词为空，返回空结果")
             return []
 
+        # 关键词 ≤ 2 字时降低阈值至 50（如"加班""心累"等常见短词更容易匹配）
+        effective_threshold = 50.0 if len(keyword) <= 2 else self._threshold
+
         entries = self._index_provider.get_entries()
         if not entries:
             logger.debug("索引为空，返回空结果")
@@ -124,7 +127,7 @@ class KeywordSearcher:
                 continue
 
             score = self._compute_similarity(keyword, text)
-            if score >= self._threshold:
+            if score >= effective_threshold:
                 results.append(
                     SearchResult(
                         entry_id=entry_id,

@@ -154,6 +154,63 @@ class TestSearchFuzzy:
         assert all(60.0 <= r.similarity < 100.0 for r in results)
 
 
+class TestSearchFuzzyWithShortKeyword:
+    """短关键词（≤2 字）使用更低阈值（50）的测试。"""
+
+    def test_two_char_keyword_fuzzy_score_50_is_included(self) -> None:
+        """2 字关键词模糊匹配分数=50 时应命中。
+
+        因为 2 字关键词使用阈值 50，而非默认的 60。
+        """
+        entries: dict[str, dict[str, str]] = {
+            "1": {
+                "filename": "x.jpg",
+                "text": "加班到凌晨",
+                "text_hash": "a",
+            },
+        }
+        s = KeywordSearcher(MockIndex(entries), threshold=60.0)
+        # "加a": 2 字，LCS vs "加班到凌晨" = 1（"加"），score = 1/2*100 = 50
+        # 默认阈值 60 本会排除，但 2 字关键词使用 50 → 命中
+        results = s.search("加a")
+        assert len(results) == 1
+        assert results[0].similarity == 50.0
+        assert results[0].entry_id == "1"
+
+    def test_two_char_keyword_fuzzy_score_below_50_still_excluded(
+        self,
+    ) -> None:
+        """2 字关键词模糊匹配分数 < 50 时仍不命中。"""
+        entries: dict[str, dict[str, str]] = {
+            "1": {
+                "filename": "x.jpg",
+                "text": "加班到凌晨",
+                "text_hash": "a",
+            },
+        }
+        s = KeywordSearcher(MockIndex(entries))
+        # "xy": 2 字，两字均不出现在文本中 → LCS=0，score=0 < 50 → 排除
+        results = s.search("xy")
+        assert len(results) == 0
+
+    def test_three_plus_char_keyword_still_uses_original_threshold(
+        self,
+    ) -> None:
+        """3 字以上关键词仍使用原始阈值（默认 60）。"""
+        entries: dict[str, dict[str, str]] = {
+            "1": {
+                "filename": "x.jpg",
+                "text": "AB12",
+                "text_hash": "a",
+            },
+        }
+        s = KeywordSearcher(MockIndex(entries), threshold=60.0)
+        # "2AXY": 4 字，LCS vs "AB12" = 2（"A" 和 "2"），score = 2/4*100 = 50
+        # 50 < 60 → 排除
+        results = s.search("2AXY")
+        assert len(results) == 0
+
+
 class TestSearchEdgeCases:
     """边界情况测试。"""
 

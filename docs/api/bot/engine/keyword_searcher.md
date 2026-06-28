@@ -63,7 +63,10 @@ class SearchResult:
 
 对每条 OCR 文本使用 LCS（最长公共子序列）计算相似度，过滤 `score < threshold` 的结果。如果存在分数为 100 的结果，只返回分数为 100 的结果。
 
-**算法逻辑：**
+**搜索逻辑：**
+- 对每条 OCR 文本使用 LCS（最长公共子序列）计算相似度，过滤 `score < threshold` 的结果。
+- 关键词 ≤ 2 字时，有效阈值降为 50（而非 `threshold` 参数的值），使短关键词更易模糊匹配。
+- 如果存在分数为 100 的结果，只返回分数为 100 的结果。
 
 1. 若 `keyword` 是 `text` 的子串，直接返回 100（精确命中）。
 2. 否则使用 `pylcs.lcs_sequence_length(keyword, text)` 计算最长公共子序列长度，相似度 = `(lcs_len / len(keyword)) * 100`。
