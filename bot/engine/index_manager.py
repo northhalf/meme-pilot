@@ -10,6 +10,8 @@ import itertools
 import logging
 import os
 import shutil
+import struct
+import base64
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -26,6 +28,35 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # 工具函数
 # ---------------------------------------------------------------------------
+
+
+def encode_embedding(embedding: list[float]) -> str:
+    """将 float32 列表编码为 base64 字符串。
+
+    使用 big-endian（网络字节序）确保跨平台一致性。
+    float32 roundtrip 精度零误差。
+
+    Args:
+        embedding: float32 向量值列表。
+
+    Returns:
+        base64 编码的字符串。
+    """
+    packed = struct.pack(f"!{len(embedding)}f", *embedding)
+    return base64.b64encode(packed).decode("ascii")
+
+
+def decode_embedding(data: str) -> list[float]:
+    """将 base64 字符串解码为 float32 列表。
+
+    Args:
+        data: base64 编码的 float32 二进制数据。
+
+    Returns:
+        float32 值列表。
+    """
+    packed = base64.b64decode(data)
+    return list(struct.unpack(f"!{len(packed) // 4}f", packed))
 
 
 def normalize_text(text: str) -> str:
@@ -360,7 +391,12 @@ class IndexManager:
             )
 
     def _load_embeddings(self) -> None:
-        """加载 embeddings.json。"""
+        """加载 embeddings.json。
+
+        支持 version=2 格式：
+        {"version": 2, "entries": {"1": {"text_hash": "sha256:xxx", "embedding": "base64..."}}}
+        旧格式（无 version 或 version<2）视为过期，清空 _embeddings 待重建。
+        """
         emb_path = self._data_dir / "embeddings.json"
 
         if not emb_path.exists():
@@ -370,14 +406,46 @@ class IndexManager:
 
         try:
             raw = emb_path.read_text(encoding="utf-8")
-            self._embeddings = ujson.loads(raw)
-            logger.info(
-                "embeddings.json 加载成功，共 %d 条记录",
-                len(self._embeddings),
-            )
+            data = ujson.loads(raw)
         except (ValueError, UnicodeDecodeError) as exc:
             logger.warning("embeddings.json 解析失败，置空 _embeddings 待重建: %s", exc)
             self._embeddings = {}
+            return
+
+        if not isinstance(data, dict) or data.get("version") != 2:
+            logger.warning(
+                "embeddings.json 格式过旧（无 version 或 version<2），置空 _embeddings 待重建"
+            )
+            self._embeddings = {}
+            return
+
+        # version=2 格式：解码 embedding
+        decoded: dict[str, dict[str, object]] = {}
+        entries = data.get("entries", {})
+        if not isinstance(entries, dict):
+            logger.warning("embeddings.json entries 字段不是字典，置空 _embeddings 待重建")
+            self._embeddings = {}
+            return
+
+        for entry_id, entry in entries.items():
+            if not isinstance(entry, dict):
+                logger.warning("跳过无效条目: id=%s", entry_id)
+                continue
+            try:
+                embedding = decode_embedding(entry.get("embedding", ""))
+            except Exception as exc:
+                logger.warning("嵌入解码失败，跳过条目: id=%s, error=%s", entry_id, exc)
+                continue
+            decoded[entry_id] = {
+                "text_hash": entry.get("text_hash", ""),
+                "embedding": embedding,
+            }
+
+        self._embeddings = decoded
+        logger.info(
+            "embeddings.json 加载成功，共 %d 条记录",
+            len(self._embeddings),
+        )
 
     @staticmethod
     def validate_index(data: object) -> None:
@@ -552,13 +620,33 @@ class IndexManager:
         logger.info("index.json 已保存，共 %d 条记录", len(self._entries))
 
     def save_embeddings(self) -> None:
-        """原子写入 embeddings.json。
+        """原子写入 embeddings.json（version 2 格式）。
 
-        将当前内存中的 _embeddings 序列化并原子写入磁盘。
+        将内存中的 _embeddings（embedding 为 list[float]）序列化为：
+        - version=2
+        - entries 中每条 embedding 编码为 base64 字符串
         """
+        entries: dict[str, dict[str, object]] = {}
+        for eid, entry in self._embeddings.items():
+            text_hash = entry.get("text_hash", "")
+            embedding = entry.get("embedding", [])
+            if not isinstance(embedding, list):
+                raise TypeError(
+                    f"embedding 必须是列表，got {type(embedding).__name__}: id={eid}"
+                )
+            emb_b64 = encode_embedding(embedding)
+            entries[eid] = {
+                "text_hash": text_hash,
+                "embedding": emb_b64,
+            }
+
+        data: dict[str, object] = {
+            "version": 2,
+            "entries": entries,
+        }
         emb_path = self._data_dir / "embeddings.json"
-        self._atomic_write(emb_path, self._embeddings)
-        logger.info("embeddings.json 已保存，共 %d 条记录", len(self._embeddings))
+        self._atomic_write(emb_path, data)
+        logger.info("embeddings.json 已保存（version=2），共 %d 条记录", len(entries))
 
     # ------------------------------------------------------------------
     # 单条增删

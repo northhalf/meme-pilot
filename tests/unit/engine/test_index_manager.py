@@ -15,11 +15,12 @@ from bot.engine.index_manager import (
     IndexManager,
     OcrError,
     SyncResult,
-    resolve_unique_filename,
     compute_text_hash,
     dedup_key,
+    encode_embedding,
     is_blank_text,
     normalize_text,
+    resolve_unique_filename,
 )
 
 
@@ -577,7 +578,7 @@ class TestSaveMethods:
     def test_save_embeddings_writes_correct_structure(
         self, tmp_path: Path
     ) -> None:
-        """save_embeddings 写入符合规范的 embeddings.json。"""
+        """save_embeddings 写入符合规范（version 2）的 embeddings.json。"""
         mgr = IndexManager(data_dir=str(tmp_path))
         mgr._embeddings = {
             "1": {
@@ -590,8 +591,88 @@ class TestSaveMethods:
         emb_path = tmp_path / "embeddings.json"
         assert emb_path.exists()
         data = ujson.loads(emb_path.read_text(encoding="utf-8"))
-        assert "1" in data
-        assert data["1"]["text_hash"] == "sha256:abc"
+        assert data.get("version") == 2
+        assert "1" in data.get("entries", {})
+        assert data["entries"]["1"]["text_hash"] == "sha256:abc"
+
+
+class TestSaveEmbeddingsV2:
+    """save_embeddings version 2 格式测试。"""
+
+    def test_saves_v2_format(self, tmp_path: Path) -> None:
+        """写入的 JSON 包含 version=2 字段。"""
+        from bot.engine.index_manager import encode_embedding
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        # 先写一个空 index.json，这样 load() 不会报错
+        index_path = data_dir / "index.json"
+        index_path.write_text(
+            ujson.dumps({"version": 1, "entries": {}}, indent=2),
+            encoding="utf-8",
+        )
+
+        mgr = IndexManager(str(data_dir))
+        mgr.load()
+        emb = [0.1, 0.2]
+        mgr._embeddings["1"] = {"text_hash": "sha256:x", "embedding": emb}
+        mgr.save_embeddings()
+
+        emb_path = data_dir / "embeddings.json"
+        assert emb_path.exists()
+        raw = ujson.loads(emb_path.read_text(encoding="utf-8"))
+        assert raw.get("version") == 2
+        assert "entries" in raw
+
+    def test_embedding_stored_as_string(self, tmp_path: Path) -> None:
+        """embedding 字段存储为 base64 字符串而非数组。"""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        index_path = data_dir / "index.json"
+        index_path.write_text(
+            ujson.dumps({"version": 1, "entries": {}}, indent=2),
+            encoding="utf-8",
+        )
+
+        mgr = IndexManager(str(data_dir))
+        mgr.load()
+        mgr._embeddings["1"] = {
+            "text_hash": "sha256:x",
+            "embedding": [0.1, 0.2],
+        }
+        mgr.save_embeddings()
+
+        emb_path = data_dir / "embeddings.json"
+        raw = ujson.loads(emb_path.read_text(encoding="utf-8"))
+        entry = raw["entries"]["1"]
+        assert isinstance(entry["embedding"], str)
+        assert len(entry["embedding"]) > 0
+
+    def test_roundtrip_save_load(self, tmp_path: Path) -> None:
+        """save → load roundtrip 后 embedding 值不变。"""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        index_path = data_dir / "index.json"
+        index_path.write_text(
+            ujson.dumps({"version": 1, "entries": {}}, indent=2),
+            encoding="utf-8",
+        )
+
+        mgr = IndexManager(str(data_dir))
+        mgr.load()
+        original_emb = [float(i * 0.1) for i in range(1024)]
+        mgr._embeddings["1"] = {
+            "text_hash": "sha256:abc",
+            "embedding": original_emb,
+        }
+        mgr.save_embeddings()
+
+        mgr2 = IndexManager(str(data_dir))
+        mgr2.load()
+        loaded = mgr2.get_embeddings()["1"]["embedding"]
+        assert isinstance(loaded, list)
+        for a, b in zip(original_emb, loaded):
+            assert abs(a - b) < 1e-5
 
 
 class TestAddEntry:
@@ -958,8 +1039,11 @@ class TestSyncWithFilesystem:
         (data_dir / "embeddings.json").write_text(
             ujson.dumps(
                 {
-                    "1": {"text_hash": compute_text_hash("hello"), "embedding": [0.1]},
-                    "2": {"text_hash": compute_text_hash("gone"), "embedding": [0.2]},
+                    "version": 2,
+                    "entries": {
+                        "1": {"text_hash": compute_text_hash("hello"), "embedding": encode_embedding([0.1])},
+                        "2": {"text_hash": compute_text_hash("gone"), "embedding": encode_embedding([0.2])},
+                    },
                 }
             ),
             encoding="utf-8",
@@ -1013,8 +1097,11 @@ class TestSyncWithFilesystem:
         (data_dir / "embeddings.json").write_text(
             ujson.dumps(
                 {
-                    "1": {"text_hash": compute_text_hash("old"), "embedding": [0.1]},
-                    "2": {"text_hash": compute_text_hash("gone"), "embedding": [0.2]},
+                    "version": 2,
+                    "entries": {
+                        "1": {"text_hash": compute_text_hash("old"), "embedding": encode_embedding([0.1])},
+                        "2": {"text_hash": compute_text_hash("gone"), "embedding": encode_embedding([0.2])},
+                    },
                 }
             ),
             encoding="utf-8",
@@ -1076,10 +1163,13 @@ class TestSyncWithFilesystem:
         (data_dir / "embeddings.json").write_text(
             ujson.dumps(
                 {
-                    "1": {
-                        "text_hash": compute_text_hash("original text"),
-                        "embedding": [0.0],
-                    }
+                    "version": 2,
+                    "entries": {
+                        "1": {
+                            "text_hash": compute_text_hash("original text"),
+                            "embedding": encode_embedding([0.0]),
+                        },
+                    },
                 }
             ),
             encoding="utf-8",
@@ -1307,7 +1397,12 @@ class TestSyncWithFilesystem:
         # embeddings.json 里的 text_hash 也是旧的，与修复后的 _entries 不一致
         (data_dir / "embeddings.json").write_text(
             ujson.dumps(
-                {"1": {"text_hash": old_hash, "embedding": [0.0, 0.0]}}
+                {
+                    "version": 2,
+                    "entries": {
+                        "1": {"text_hash": old_hash, "embedding": encode_embedding([0.0, 0.0])},
+                    },
+                }
             ),
             encoding="utf-8",
         )
@@ -1363,7 +1458,7 @@ class TestSyncWithFilesystem:
         disk_emb = ujson.loads(
             (data_dir / "embeddings.json").read_text(encoding="utf-8")
         )
-        assert disk_emb["1"]["text_hash"] == new_hash
+        assert disk_emb["entries"]["1"]["text_hash"] == new_hash
 
     def test_sync_rebuilds_all_when_embeddings_missing(
         self, tmp_path: Path
@@ -1448,7 +1543,7 @@ class TestSyncWithFilesystem:
         disk_emb = ujson.loads(
             (data_dir / "embeddings.json").read_text(encoding="utf-8")
         )
-        assert set(disk_emb.keys()) == {"1", "2"}
+        assert set(disk_emb.get("entries", {}).keys()) == {"1", "2"}
 
     def test_sync_rebuild_failure_recorded_in_failed(
         self, tmp_path: Path
@@ -1541,7 +1636,12 @@ class TestSyncWithFilesystem:
         )
         (data_dir / "embeddings.json").write_text(
             ujson.dumps(
-                {"1": {"text_hash": compute_text_hash("加班"), "embedding": [0.1]}}
+                {
+                    "version": 2,
+                    "entries": {
+                        "1": {"text_hash": compute_text_hash("加班"), "embedding": encode_embedding([0.1])},
+                    },
+                }
             ),
             encoding="utf-8",
         )
@@ -1798,10 +1898,13 @@ class TestSyncWithFilesystem:
         (data_dir / "embeddings.json").write_text(
             ujson.dumps(
                 {
-                    "1": {
-                        "text_hash": compute_text_hash(old_placeholder),
-                        "embedding": [0.0],
-                    }
+                    "version": 2,
+                    "entries": {
+                        "1": {
+                            "text_hash": compute_text_hash(old_placeholder),
+                            "embedding": encode_embedding([0.0]),
+                        },
+                    },
                 }
             ),
             encoding="utf-8",
@@ -2021,4 +2124,88 @@ class TestIndexManagerLock:
         mgr = IndexManager(str(tmp_path), str(tmp_path / "memes"))
         mgr.release_lock()  # 不应抛出
         assert mgr.is_locked is False
+
+
+class TestLoadEmbeddings:
+    """_load_embeddings 方法测试。"""
+
+    V2_DATA: dict[str, object] = {
+        "version": 2,
+        "entries": {
+            "1": {
+                "text_hash": "sha256:abc123",
+                "embedding": "AAAAAEBAP4A=",  # b64 of [2.0, 1.0] as float32 BE
+            },
+        },
+    }
+
+    def test_loads_v2_format(self, tmp_path: Path) -> None:
+        """正确加载 version=2 的 embeddings 文件。"""
+        from bot.engine.index_manager import decode_embedding
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        emb_path = data_dir / "embeddings.json"
+        emb_path.write_text(ujson.dumps(self.V2_DATA, indent=2), encoding="utf-8")
+
+        mgr = IndexManager(str(data_dir))
+        mgr.load()
+        embeddings = mgr.get_embeddings()
+        assert "1" in embeddings
+        entry = embeddings["1"]
+        assert isinstance(entry["embedding"], list)
+        assert all(isinstance(v, float) for v in entry["embedding"])
+
+    def test_decoded_values_match(self, tmp_path: Path) -> None:
+        """解码后的值与编码前一致。"""
+        import struct
+        import base64
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        emb_path = data_dir / "embeddings.json"
+        emb_path.write_text(ujson.dumps(self.V2_DATA, indent=2), encoding="utf-8")
+
+        mgr = IndexManager(str(data_dir))
+        mgr.load()
+        embedding = mgr.get_embeddings()["1"]["embedding"]
+        expected = list(struct.unpack("!2f", base64.b64decode("AAAAAEBAP4A=")))
+        assert embedding == expected
+
+    def test_old_format_without_version_is_cleared(self, tmp_path: Path) -> None:
+        """旧格式（无 version 字段）加载后清空 _embeddings 待重建。"""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        emb_path = data_dir / "embeddings.json"
+        old_data = {
+            "1": {
+                "text_hash": "sha256:old",
+                "embedding": [0.1, 0.2, 0.3],
+            },
+        }
+        emb_path.write_text(ujson.dumps(old_data, indent=2), encoding="utf-8")
+
+        mgr = IndexManager(str(data_dir))
+        mgr.load()
+        embeddings = mgr.get_embeddings()
+        assert embeddings == {}
+
+    def test_corrupted_json_clears_embeddings(self, tmp_path: Path) -> None:
+        """损坏的 JSON 保持清空行为。"""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        emb_path = data_dir / "embeddings.json"
+        emb_path.write_text("{invalid json}", encoding="utf-8")
+
+        mgr = IndexManager(str(data_dir))
+        mgr.load()
+        assert mgr.get_embeddings() == {}
+
+    def test_missing_file_clears_embeddings(self, tmp_path: Path) -> None:
+        """文件不存在时保持清空行为。"""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        mgr = IndexManager(str(data_dir))
+        mgr.load()
+        assert mgr.get_embeddings() == {}
 

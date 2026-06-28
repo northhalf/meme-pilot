@@ -298,16 +298,15 @@ v1.0 不检测同名覆盖：如果用户用新图片覆盖了旧图片但文件
 }
 ```
 
-**embeddings.json**：
+**embeddings.json**（v2）：
 ```json
 {
-  "1": {
-    "text_hash": "sha256:...",
-    "embedding": [0.1, 0.2, 0.3]
-  },
-  "2": {
-    "text_hash": "sha256:...",
-    "embedding": [0.4, 0.5, 0.6]
+  "version": 2,
+  "entries": {
+    "1": {
+      "text_hash": "sha256:...",
+      "embedding": "AACAyT+AAEA/gABAQH8AAEB/AA...=="
+    }
   }
 }
 ```

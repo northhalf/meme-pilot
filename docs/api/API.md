@@ -152,6 +152,7 @@ class IndexManager:
     def save_index(self) -> None
 
     def save_embeddings(self) -> None
+    # 输出 version 2 格式，embedding 自动编码为 base64
 
     def add_entry(
         self,
@@ -178,6 +179,25 @@ class IndexManager:
     # Raises: CompressionError, OcrError, EmbeddingError
 ```
 
+**embeddings.json 格式变更（v2）：**
+
+version=1（旧格式，自动清空重建）：
+```json
+{
+  "1": {"text_hash": "sha256:...", "embedding": [0.1, 0.2, ...]}
+}
+```
+
+version=2（新格式）：
+```json
+{
+  "version": 2,
+  "entries": {
+    "1": {"text_hash": "sha256:...", "embedding": "AAAAAEA/4D8..."}
+  }
+}
+```
+
 **新增异常：**
 
 ```python
@@ -189,6 +209,12 @@ class EmbeddingError(RuntimeError)     # Embedding 生成失败
 **新增模块级函数：**
 
 ```python
+def encode_embedding(embedding: list[float]) -> str
+    # struct.pack + base64，big-endian，float32 roundtrip 零误差
+
+def decode_embedding(data: str) -> list[float]
+    # base64 解码为 float32 向量
+
 def resolve_unique_filename(target_dir: Path, filename: str) -> Path
     # 原 _resolve_unique_filename，已公共化
 ```

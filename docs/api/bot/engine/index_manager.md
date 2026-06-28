@@ -88,6 +88,36 @@ dedup_key("   ")         # → ""
 
 ---
 
+### `encode_embedding(embedding: list[float]) -> str`
+
+将 float32 向量编码为 base64 字符串（big-endian），用于 embeddings.json 压缩存储。
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `embedding` | `list[float]` | float32 向量值列表 |
+
+| | 类型 | 说明 |
+|--|------|------|
+| **返回** | `str` | base64 编码字符串（5464 字符/1024 维）|
+| **异常** | `struct.error` | 空列表 |
+
+---
+
+### `decode_embedding(data: str) -> list[float]`
+
+将 base64 字符串解码为 float32 向量。
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `data` | `str` | base64 编码的 float32 二进制数据 |
+
+| | 类型 | 说明 |
+|--|------|------|
+| **返回** | `list[float]` | float32 值列表 |
+| **异常** | `binascii.Error` | base64 格式错误 |
+
+---
+
 ## 异常
 
 ### `IndexCorruptedError(Exception)`
@@ -300,7 +330,7 @@ class IndexManager:
 | **返回** | `None` | |
 | **异常** | `OSError` | 磁盘写入失败时抛出 |
 
-将当前 embedding 索引原子写入 `data/embeddings.json`。
+将当前 embedding 索引原子写入 `data/embeddings.json`（v2 格式：`{"version": 2, "entries": ...}`，embedding 自动编码为 base64）。
 
 ---
 
