@@ -394,6 +394,7 @@ NoneBot2 命令插件，注册 `/refresh` 命令。
 - 依赖：`app_state.get_index_manager()`、`auth.is_authorized()`
 - 锁：`await IndexManager.acquire_lock()` / `IndexManager.release_lock()`
 - 同步：`IndexManager.sync_with_filesystem() -> SyncResult`
+- 群聊：授权用户群聊 @bot 调用时回复"此命令仅限私聊使用"
 
 ### `bot/plugins/_search_utils.py`
 
@@ -401,7 +402,7 @@ NoneBot2 命令插件，注册 `/refresh` 命令。
 
 ```python
 async def execute_search(
-    bot: Bot, event: PrivateMessageEvent, cmd_matcher: Matcher, keyword: str
+    bot: Bot, event: MessageEvent, cmd_matcher: Matcher, keyword: str
 ) -> None
 # 核心搜索逻辑：锁检查 → 索引空检查 → 执行搜索 → 结果分支
 # 多结果时注册 session 并启动超时任务
@@ -430,14 +431,15 @@ NoneBot2 命令插件，注册 `/help` 命令。
 
 - 注册：`on_command("help", rule=to_me(), priority=5, block=True)`
 - 依赖：`auth.is_authorized()`
+- 群聊：支持群聊 @bot 触发
 
 ### `bot/plugins/meme_plain_text.py`
 
 兜底消息插件，处理普通文本和未知斜杠命令。
 
 - 注册：`on_message(rule=to_me(), priority=99, block=False)`
-- 普通文本：等同执行 `/search`，调用 `_search_utils.execute_search`
-- 未知斜杠命令：回复"未知命令"并附帮助摘要
+- 普通文本：等同执行 `/search`，调用 `_search_utils.execute_search`（支持私聊和群聊 @bot）
+- 未知斜杠命令：回复"未知命令"并附帮助摘要（支持私聊和群聊 @bot）
 - got：`catch_all.got("selection")` 处理搜索多结果选择
 - 依赖：`auth.is_authorized()`、`_search_utils.execute_search`、`_search_utils.handle_selection`、`session.check_and_cancel`、`session.is_cancelled`、`session.cancel`
 
@@ -464,6 +466,7 @@ NoneBot2 命令插件，注册 `/add` 命令。
 - 文件名：`_sanitize_filename()` 安全化 / `_auto_filename()` 自动生成
 - 文件冲突：`resolve_unique_filename()`
 - 超时：`asyncio.create_task(timeout_session(..., on_cleanup=...))` 启动超时检查，超时后释放索引锁
+- 群聊：授权用户群聊 @bot 调用时回复"此命令仅限私聊使用"
 
 ### `bot/plugins/meme_ai.py`
 
@@ -473,6 +476,7 @@ NoneBot2 命令插件，注册 `/ai` 命令。
 - 锁：只读检查 `IndexManager.is_locked`
 - 匹配：`_do_match()` 封装异常处理，`asyncio.gather()` 并发执行 send 与 match
 - 图片：`MessageSegment.image("file://" + str(image_path.resolve()))`
+- 群聊：授权用户群聊 @bot 调用时回复"此命令仅限私聊使用"
 
 ### `bot/plugins/meme_search.py`
 

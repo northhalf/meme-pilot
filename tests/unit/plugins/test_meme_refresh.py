@@ -29,9 +29,10 @@ with (
 
 
 def _make_event(user_id: str = "12345") -> MagicMock:
-    """创建模拟的 PrivateMessageEvent。"""
+    """创建模拟的 MessageEvent。"""
     event = MagicMock()
     event.get_user_id.return_value = user_id
+    event.message_type = "private"
     return event
 
 
@@ -107,6 +108,25 @@ class TestHandleRefreshAuth:
         mock_get_im.assert_not_called()
         _mock_cmd.finish.assert_not_called()
         bot.send.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch.object(meme_refresh, "is_authorized", return_value=True)
+    @patch.object(meme_refresh, "get_index_manager")
+    async def test_group_chat_rejected(
+        self, mock_get_im: MagicMock, mock_auth: MagicMock
+    ) -> None:
+        """群聊中调用 /refresh 应回复仅限私聊提示。"""
+        _reset_cmd()
+        event = MagicMock()
+        event.get_user_id.return_value = "111"
+        event.message_type = "group"
+
+        await handle_refresh(_make_bot(), event)
+
+        _mock_cmd.finish.assert_awaited_once()
+        call_args = _mock_cmd.finish.call_args[0][0]
+        assert "仅限私聊" in call_args
+        mock_get_im.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

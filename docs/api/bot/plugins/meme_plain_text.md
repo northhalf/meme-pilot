@@ -12,14 +12,14 @@ catch_all = on_message(rule=to_me(), priority=99, block=False)
 
 ### 普通文本
 
-授权用户私聊发送不以 `/` 开头的普通文本时，等同执行 `/search`：
+授权用户私聊或群聊 @bot 发送不以 `/` 开头的普通文本时，等同执行 `/search`：
 1. 授权校验
 2. `check_and_cancel()` 会话覆盖检查
 3. 调用 `_search_utils.execute_search()` 执行搜索
 
 ### 未知斜杠命令
 
-授权用户私聊发送未知斜杠命令时，回复"未知命令"并附帮助摘要。
+授权用户私聊或群聊 @bot 发送未知斜杠命令时，回复"未知命令"并附帮助摘要。
 
 ### 非授权用户
 

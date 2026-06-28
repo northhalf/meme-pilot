@@ -6,7 +6,7 @@
 import logging
 
 from nonebot import on_command
-from nonebot.adapters.onebot.v11 import Bot, PrivateMessageEvent
+from nonebot.adapters.onebot.v11 import Bot, MessageEvent
 from nonebot.rule import to_me
 
 from bot.auth import is_authorized, log_unauthorized
@@ -18,14 +18,14 @@ help_cmd = on_command("help", rule=to_me(), priority=5, block=True)
 
 
 @help_cmd.handle()
-async def handle_help(bot: Bot, event: PrivateMessageEvent) -> None:
+async def handle_help(bot: Bot, event: MessageEvent) -> None:
     """/help 命令处理入口。
 
     流程：授权校验 → 回复帮助文本。
 
     Args:
         bot: OneBot V11 Bot 实例。
-        event: 私聊消息事件。
+        event: 消息事件。
     """
     user_id = event.get_user_id()
     logger.info("用户 %s 调用 /help", user_id)

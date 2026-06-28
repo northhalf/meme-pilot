@@ -11,8 +11,8 @@ from nonebot import on_message
 from nonebot.adapters.onebot.v11 import (
     Bot,
     Message,
+    MessageEvent,
     MessageSegment,
-    PrivateMessageEvent,
 )
 from nonebot.matcher import Matcher
 from nonebot.params import Arg
@@ -37,7 +37,7 @@ catch_all = on_message(rule=to_me(), priority=99, block=False)
 
 @catch_all.handle()
 async def handle_plain_text(
-    bot: Bot, event: PrivateMessageEvent, matcher: Matcher
+    bot: Bot, event: MessageEvent, matcher: Matcher
 ) -> None:
     """兜底处理授权用户的普通文本和未知斜杠命令。
 
@@ -69,7 +69,7 @@ async def handle_plain_text(
 @catch_all.got("selection")
 async def got_selection(
     bot: Bot,
-    event: PrivateMessageEvent,
+    event: MessageEvent,
     matcher: Matcher,
     selection_msg: Message = Arg("selection"),
 ) -> None:

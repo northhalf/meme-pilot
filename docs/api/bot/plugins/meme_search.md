@@ -11,11 +11,11 @@ search_cmd = on_command("search", rule=to_me(), priority=5, block=True)
 ## 处理函数
 
 ```python
-async def handle_search(bot: Bot, event: PrivateMessageEvent, matcher: Matcher) -> None
+async def handle_search(bot: Bot, event: MessageEvent, matcher: Matcher) -> None
 ```
 
 ```python
-async def got_selection(bot: Bot, event: PrivateMessageEvent, matcher: Matcher, selection_msg: Message = Arg("selection")) -> None
+async def got_selection(bot: Bot, event: MessageEvent, matcher: Matcher, selection_msg: Message = Arg("selection")) -> None
 ```
 
 ## 依赖

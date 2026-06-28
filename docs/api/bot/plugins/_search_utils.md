@@ -11,7 +11,7 @@
 | 参数 | 类型 | 说明 |
 |------|------|------|
 | `bot` | `Bot` | OneBot V11 Bot 实例 |
-| `event` | `PrivateMessageEvent` | 私聊消息事件 |
+| `event` | `MessageEvent` | 消息事件（兼容私聊和群聊@） |
 | `cmd_matcher` | `Matcher` | 调用方的 Matcher（用于 send/finish） |
 | `keyword` | `str` | 搜索关键词 |
 

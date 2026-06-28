@@ -8,7 +8,7 @@ import asyncio
 import logging
 
 from nonebot import on_command
-from nonebot.adapters.onebot.v11 import Bot, MessageSegment, PrivateMessageEvent
+from nonebot.adapters.onebot.v11 import Bot, MessageEvent, MessageSegment
 from nonebot.rule import to_me
 
 from bot.app_state import get_ai_matcher, get_index_manager
@@ -49,14 +49,14 @@ async def _do_match(
 
 
 @ai_cmd.handle()
-async def handle_ai(bot: Bot, event: PrivateMessageEvent) -> None:
+async def handle_ai(bot: Bot, event: MessageEvent) -> None:
     """/ai 命令处理入口。
 
     流程：授权校验 → 锁检查 → 空索引检查 → 并发发送进度 + AI 匹配 → 发送结果。
 
     Args:
         bot: OneBot V11 Bot 实例。
-        event: 私聊消息事件。
+        event: 消息事件。
     """
     user_id = event.get_user_id()
     logger.info("用户 %s 调用 /ai", user_id)
@@ -64,6 +64,12 @@ async def handle_ai(bot: Bot, event: PrivateMessageEvent) -> None:
     # 授权校验
     if not is_authorized(user_id):
         log_unauthorized(user_id, "ai")
+        return
+
+    # 群聊拦截：/ai 仅限私聊使用
+    if event.message_type != "private":
+        logger.info("用户 %s 在群聊中调用 /ai，已拒绝", user_id)
+        await ai_cmd.finish("此命令仅限私聊使用")
         return
 
     # 获取 IndexManager

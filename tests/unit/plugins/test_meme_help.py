@@ -25,9 +25,10 @@ with patch("nonebot.on_command", return_value=_mock_cmd):
 
 
 def _make_event(user_id: str = "12345") -> MagicMock:
-    """创建模拟的 PrivateMessageEvent。"""
+    """创建模拟的 MessageEvent。"""
     event = MagicMock()
     event.get_user_id.return_value = user_id
+    event.message_type = "private"
     return event
 
 

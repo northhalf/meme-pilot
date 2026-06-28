@@ -11,8 +11,8 @@ from nonebot import on_command
 from nonebot.adapters.onebot.v11 import (
     Bot,
     Message,
+    MessageEvent,
     MessageSegment,
-    PrivateMessageEvent,
 )
 from nonebot.matcher import Matcher
 from nonebot.params import Arg
@@ -29,14 +29,14 @@ search_cmd = on_command("search", rule=to_me(), priority=5, block=True)
 
 
 @search_cmd.handle()
-async def handle_search(bot: Bot, event: PrivateMessageEvent, matcher: Matcher) -> None:
+async def handle_search(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
     """/search 命令入口。
 
     流程：授权校验 → 会话覆盖 → 提取关键词 → 调用 execute_search。
 
     Args:
         bot: OneBot V11 Bot 实例。
-        event: 私聊消息事件。
+        event: 消息事件。
         matcher: NoneBot2 Matcher 实例。
     """
     user_id = event.get_user_id()
@@ -67,7 +67,7 @@ async def handle_search(bot: Bot, event: PrivateMessageEvent, matcher: Matcher) 
 @search_cmd.got("selection")
 async def got_selection(
     bot: Bot,
-    event: PrivateMessageEvent,
+    event: MessageEvent,
     matcher: Matcher,
     selection_msg: Message = Arg("selection"),
 ) -> None:
@@ -75,7 +75,7 @@ async def got_selection(
 
     Args:
         bot: OneBot V11 Bot 实例。
-        event: 私聊消息事件。
+        event: 消息事件。
         matcher: NoneBot2 Matcher 实例。
         selection_msg: 用户回复的选择编号消息。
     """

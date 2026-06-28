@@ -69,6 +69,12 @@ async def handle_add(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
         log_unauthorized(user_id, "add")
         return
 
+    # 群聊拦截：/add 仅限私聊使用
+    if event.message_type != "private":
+        logger.info("用户 %s 在群聊中调用 /add，已拒绝", user_id)
+        await matcher.finish("此命令仅限私聊使用")
+        return
+
     # 会话覆盖检查
     hint = check_and_cancel(user_id, "add")
     if hint:

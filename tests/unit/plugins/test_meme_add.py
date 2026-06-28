@@ -38,10 +38,11 @@ with (
 
 
 def _make_event(user_id: str = "12345", text: str = "/add") -> MagicMock:
-    """创建模拟的 PrivateMessageEvent。"""
+    """创建模拟的 MessageEvent。"""
     event = MagicMock()
     event.get_user_id.return_value = user_id
     event.get_plaintext.return_value = text
+    event.message_type = "private"
     return event
 
 
@@ -248,6 +249,26 @@ class TestHandleAdd:
         matcher.finish.assert_not_awaited()
         matcher.send.assert_not_awaited()
         mock_register.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch.object(meme_add, "get_index_manager")
+    @patch.object(meme_add, "is_authorized", return_value=True)
+    async def test_group_chat_rejected(
+        self, mock_auth: MagicMock, mock_get_im: MagicMock
+    ) -> None:
+        """群聊中调用 /add 应回复仅限私聊提示。"""
+        event = MagicMock()
+        event.get_user_id.return_value = "111"
+        event.get_plaintext.return_value = "/add 测试"
+        event.message_type = "group"
+
+        matcher = _make_matcher()
+        await handle_add(_make_bot(), event, matcher)
+
+        matcher.finish.assert_awaited_once()
+        call_args = matcher.finish.call_args[0][0]
+        assert "仅限私聊" in call_args
+        mock_get_im.assert_not_called()
 
     @pytest.mark.asyncio
     @patch.object(meme_add, "register")

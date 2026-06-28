@@ -10,7 +10,7 @@ import logging
 from nonebot.adapters.onebot.v11 import (
     Bot,
     MessageSegment,
-    PrivateMessageEvent,
+    MessageEvent,
 )
 from nonebot.matcher import Matcher
 
@@ -54,7 +54,7 @@ def handle_selection(
 
 async def execute_search(
     bot: Bot,
-    event: PrivateMessageEvent,
+    event: MessageEvent,
     cmd_matcher: Matcher,
     keyword: str,
 ) -> None:
@@ -65,7 +65,7 @@ async def execute_search(
 
     Args:
         bot: OneBot V11 Bot 实例。
-        event: 私聊消息事件。
+        event: 消息事件。
         cmd_matcher: 调用方的 Matcher（用于 send/finish）。
         keyword: 搜索关键词。
     """

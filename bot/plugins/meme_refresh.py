@@ -7,7 +7,7 @@
 import logging
 
 from nonebot import on_command
-from nonebot.adapters.onebot.v11 import Bot, PrivateMessageEvent
+from nonebot.adapters.onebot.v11 import Bot, MessageEvent
 from nonebot.rule import to_me
 
 from bot.app_state import get_index_manager
@@ -19,14 +19,14 @@ refresh_cmd = on_command("refresh", rule=to_me(), priority=5, block=True)
 
 
 @refresh_cmd.handle()
-async def handle_refresh(bot: Bot, event: PrivateMessageEvent) -> None:
+async def handle_refresh(bot: Bot, event: MessageEvent) -> None:
     """/refresh 命令处理入口。
 
-    流程：授权校验 → 获取锁 → 执行同步 → 释放锁 → 回复摘要。
+    流程：授权校验 → 群聊拦截 → 获取锁 → 执行同步 → 释放锁 → 回复摘要。
 
     Args:
         bot: OneBot V11 Bot 实例。
-        event: 私聊消息事件。
+        event: 消息事件（仅限私聊）。
     """
     user_id = event.get_user_id()
     logger.info("用户 %s 调用 /refresh", user_id)
@@ -34,6 +34,12 @@ async def handle_refresh(bot: Bot, event: PrivateMessageEvent) -> None:
     # 授权校验
     if not is_authorized(user_id):
         log_unauthorized(user_id, "refresh")
+        return
+
+    # 群聊拦截：/refresh 仅限私聊使用
+    if event.message_type != "private":
+        logger.info("用户 %s 在群聊中调用 /refresh，已拒绝", user_id)
+        await refresh_cmd.finish("此命令仅限私聊使用")
         return
 
     # 获取 IndexManager
