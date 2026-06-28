@@ -14,7 +14,8 @@
 |--------|------|------|
 | `IndexManager` | `app_state.get_index_manager()` | 索引增删改查、锁检查、单张图片添加 |
 | `is_authorized()` | `bot.auth` | 授权用户校验 |
-| `activate_chat()` / `deactivate_chat()` / `got_intercept_bypass()` | `bot.session` | 新会话管理：激活、停用、got 入口拦截 |
+| `activate_chat()` / `deactivate_chat()` / `got_intercept_bypass()` / `create_selection()` / `timeout_session()` | `bot.session` | 新会话管理：激活、停用、got 入口拦截、选择会话与超时 |
+| `read_session_timeout()` | `bot.config` | 读取会话超时秒数，用于动态 prompt |
 | `extract_image_urls()` | `nonebot.adapters.onebot.v11.helpers` | 从消息提取图片 URL |
 | `resolve_unique_filename()` | `bot.engine.index_manager` | 文件名冲突自动编号 |
 
@@ -28,7 +29,8 @@
 4. 获取 `IndexManager`，未初始化则回复"服务未就绪"
 5. 检查索引锁（`IndexManager.is_locked`），锁占用则回复"索引正在更新"
 6. 捕获目标命名（`/add` 后的文本）存入 `matcher.state`
-7. 回复"请发送图片"并等待用户图片
+7. 创建选择会话（`selection_id` + `create_selection`）并启动超时任务（`timeout_session`，超时提示"发送图片超时，请重新 /add"）
+8. 回复"请发送图片"并等待用户图片
 
 ### got_image（等待图片）
 

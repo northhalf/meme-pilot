@@ -4,11 +4,13 @@
 下载、压缩、OCR、Embedding 并写入索引。
 """
 
+import asyncio
 import hashlib
 import logging
 import re
 from datetime import datetime
 from pathlib import Path
+import uuid
 
 import httpx
 from nonebot import on_command
@@ -21,7 +23,7 @@ from nonebot.rule import to_me
 
 from bot.app_state import get_index_manager
 from bot.auth import is_authorized, log_unauthorized
-from bot.config import MEMES_DIR
+from bot.config import MEMES_DIR, read_session_timeout
 from bot.engine.index_manager import (
     CompressionError,
     EmbeddingError,
@@ -31,8 +33,10 @@ from bot.engine.index_manager import (
 from bot.plugins._help_text import HELP_TEXT
 from bot.session import (
     activate_chat,
+    create_selection,
     deactivate_chat,
     got_intercept_bypass,
+    timeout_session,
 )
 
 logger = logging.getLogger(__name__)
@@ -98,10 +102,14 @@ async def handle_add(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
     target_name = raw_text.removeprefix("/add").removeprefix("add").strip()
     matcher.state["target_name"] = target_name
 
-    # 不再注册 session 或获取锁——got 中使用 got_intercept_bypass 处理
+    selection_id = str(uuid.uuid4())
+    task = asyncio.create_task(
+        timeout_session(bot, event, user_id, selection_id, "发送图片超时，请重新 /add")
+    )
+    create_selection(user_id, selection_id, task)
 
 
-@add_cmd.got("image", prompt="请发送图片，60 秒内有效")
+@add_cmd.got("image", prompt=f"请发送图片，{read_session_timeout()} 秒内有效")
 async def got_image(
     bot: Bot,
     event: MessageEvent,
@@ -214,7 +222,9 @@ async def got_image(
                 await matcher.finish(f"替换旧图✅，识别到的文字为：\n「{ocr_display}」")
             else:
                 ocr_display = _format_ocr_text(result.text)
-                await matcher.finish(f"新增表情包✅，识别到的文字为：\n「{ocr_display}」")
+                await matcher.finish(
+                    f"新增表情包✅，识别到的文字为：\n「{ocr_display}」"
+                )
             return
 
         # 统一错误处理：删除已保存的图片 + 清理会话

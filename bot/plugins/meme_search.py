@@ -65,7 +65,7 @@ async def handle_search(bot: Bot, event: MessageEvent, matcher: Matcher) -> None
     if not keyword:
         deactivate_chat(user_id)
         logger.info("用户 %s 的 /search 缺少关键词", user_id)
-        await search_cmd.finish("/search <关键词>")
+        await matcher.finish("/search <关键词>")
         return
 
     logger.info("用户 %s 搜索关键词: %r", user_id, keyword)

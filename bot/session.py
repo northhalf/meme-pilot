@@ -161,10 +161,10 @@ def get_selection(user_id: str) -> SelectionSession | None:
     return selection_sessions.get(user_id)
 
 
-async def execute_cancel(user_id: str) -> str | None:
+async def execute_cancel(user_id: str, message: str = "当前会话已取消") -> bool:
     """执行取消逻辑。
 
-    1. 检查是否有活跃会话，无则返回 None
+    1. 检查是否有活跃会话，无则返回 False
     2. current_task.cancel()（非当前 task 且未完成时）
     3. remove_selection() + 取消 timeout_task（若有）
     4. 在旧 matcher 上 finish()（发送"会话已取消"到原上下文）
@@ -172,14 +172,14 @@ async def execute_cancel(user_id: str) -> str | None:
 
     Args:
         user_id: 用户 ID。
+        message: 结束事件的提示信息
 
     Returns:
-        str: 成功提示 "已取消 ✅"
-        None: 无活跃会话，调用方自行发送提示
+        bool: 无活跃会话返回False，成功重置对话返回True
     """
     chat = chat_sessions.get(user_id)
     if not (chat and chat.active):
-        return None
+        return False
 
     # 防止自取消：同频道 /cancel 时 current_task 等于当前 task，跳过
     current = asyncio.current_task()
@@ -198,12 +198,12 @@ async def execute_cancel(user_id: str) -> str | None:
     # finish 老 matcher（发送取消消息到原上下文）
     if chat.matcher:
         try:
-            await chat.matcher.finish("当前会话已取消")
+            await chat.matcher.finish(message)
         except FinishedException:
             pass
 
     deactivate_chat(user_id)
-    return "已取消 ✅"
+    return True
 
 
 async def got_intercept_bypass(
@@ -227,8 +227,8 @@ async def got_intercept_bypass(
         False 表示正常流程继续。
     """
     if text.startswith("/cancel ") or text == "/cancel":
-        result = await execute_cancel(user_id)
-        if result is None:
+        succeed_cancel = await execute_cancel(user_id)
+        if not succeed_cancel:
             await matcher.finish("当前没有活跃的会话")
         return True
 
@@ -276,7 +276,8 @@ async def timeout_session(
     ss = selection_sessions.get(user_id)
     if ss is not None and ss.selection_id == selection_id:
         logger.info("用户 %s 的选择会话超时（%d 秒）", user_id, timeout)
-        selection_sessions.pop(user_id, None)
+        remove_selection(user_id)
+        deactivate_chat(user_id)
         if on_cleanup is not None:
             result = on_cleanup()
             if asyncio.iscoroutine(result) or asyncio.isfuture(result):

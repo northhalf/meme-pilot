@@ -70,17 +70,17 @@ selection_sessions: dict[str, SelectionSession]  # user_id → SelectionSession
 
 查询用户的选择会话。不存在时返回 None。
 
-### `execute_cancel(user_id) -> str | None`
+### `execute_cancel(user_id, message="当前会话已取消") -> bool`
 
 执行取消逻辑。
 
-1. 检查是否有活跃会话，无则返回 None
+1. 检查是否有活跃会话，无则返回 `False`
 2. `current_task.cancel()`（非当前 task 且未完成时）
 3. `remove_selection()` + 取消 `timeout_task`
-4. 在旧 matcher 上 `finish()`（发送"会话已取消"到原上下文）
+4. 在旧 matcher 上 `finish()`（发送 `message` 到原上下文）
 5. `deactivate_chat(user_id)`
 
-**返回：** 成功时返回 `"已取消 ✅"`，无活跃会话返回 `None`（调用方处理提示）。
+**返回：** `True` 表示成功重置对话，`False` 表示无活跃会话（调用方处理提示）。
 
 **自取消保护：** 当 `current_task is asyncio.current_task()`（同频道 /cancel）时跳过 `cancel()` 调用，避免自取消。
 
@@ -98,7 +98,7 @@ Got handler 入口统一拦截 /help 和 /cancel。
 会话超时检查任务。
 
 超时后按 `user_id + selection_id` 双重校验：
-- 匹配 → 发送超时提示 + `remove_selection` + 可选 `on_cleanup`
+- 匹配 → `remove_selection` + `deactivate_chat` 清理会话 + 可选 `on_cleanup` + 发送超时提示
 - 不匹配（被新选择或 /cancel 覆盖）→ 静默退出
 
 支持 `CancelledError` 捕获，超时任务可被外部取消。

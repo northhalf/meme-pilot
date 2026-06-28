@@ -434,6 +434,15 @@ NoneBot2 命令插件，注册 `/help` 命令。
 - 依赖：`auth.is_authorized()`
 - 群聊：支持群聊 @bot 触发
 
+### `bot/plugins/meme_cancel.py`
+
+NoneBot2 命令插件，注册 `/cancel` 命令。
+
+- 注册：`on_command("cancel", rule=to_me(), priority=5, block=True)`
+- 依赖：`auth.is_authorized()`、`bot.session.execute_cancel()`
+- 行为：授权用户私聊或群聊 @bot 调用 → `execute_cancel()` 取消活跃会话；无活跃会话时回复"当前没有活跃的会话"
+- 旁路：`/cancel` 在 `got` 等待阶段可通过 `got_intercept_bypass` 旁路触发，不受会话互斥影响
+
 ### `bot/plugins/meme_plain_text.py`
 
 兜底消息插件，处理普通文本和未知斜杠命令。
@@ -458,7 +467,7 @@ NoneBot2 命令插件，注册 `/help` 命令。
 - `create_selection(user_id, selection_id, timeout_task) -> None` — 创建选择会话
 - `remove_selection(user_id) -> SelectionSession | None` — 移除选择会话
 - `get_selection(user_id) -> SelectionSession | None` — 查询选择会话
-- `execute_cancel(user_id) -> str | None` — 取消逻辑（自取消保护、跨 task 取消、选择会话清理）
+- `execute_cancel(user_id, message="当前会话已取消") -> bool` — 取消逻辑（自取消保护、跨 task 取消、选择会话清理）
 - `got_intercept_bypass(user_id, matcher, text, HELP_TEXT) -> bool` — got handler 入口拦截 /help 和 /cancel
 - `timeout_session(bot, event, user_id, selection_id, message, *, on_cleanup, timeout)` — 会话超时检查任务
 
@@ -466,13 +475,13 @@ NoneBot2 命令插件，注册 `/help` 命令。
 
 NoneBot2 命令插件，注册 `/add` 命令。
 
-- 依赖：`app_state.get_index_manager()`、`auth.is_authorized()`、`bot.session`（`activate_chat`/`deactivate_chat`/`got_intercept_bypass`）
+- 依赖：`app_state.get_index_manager()`、`auth.is_authorized()`、`bot.session`（`activate_chat`/`deactivate_chat`/`got_intercept_bypass`/`create_selection`/`timeout_session`）、`bot.config.read_session_timeout()`
 - 锁：只读检查 `IndexManager.is_locked`；管道并发由 `IndexManager._add_sem` 控制
 - 管道：`IndexManager.add_single_file() -> AddResult`
 - 图片下载：`httpx.AsyncClient`，30s 超时
 - 文件名：`_sanitize_filename()` 安全化 / `_auto_filename()` 自动生成
 - 文件冲突：`resolve_unique_filename()`
-- 超时：`asyncio.create_task(timeout_session(..., on_cleanup=...))` 启动超时检查，超时后清理会话
+- 超时：`handle_add` 中创建 selection_id 并注册 `timeout_session` 超时任务；`got` prompt 由 `read_session_timeout()` 动态生成
 - 群聊：授权用户群聊 @bot 调用时回复"此命令仅限私聊使用"
 - `/cancel` 和 `/help` 在 got 等待阶段可旁路触发（`got_intercept_bypass`）
 - 错误处理：`try/except/else` 模式，异常统一集中处理
