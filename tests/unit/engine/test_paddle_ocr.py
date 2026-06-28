@@ -78,6 +78,7 @@ class TestOcr:
         mock_client.ocr.assert_called_once_with(
             file_path="/path/to/image.png",
             model=service._model,
+            options=service._ocr_options,
         )
 
     @pytest.mark.asyncio
@@ -176,6 +177,85 @@ class TestOcr:
 
         result = await service.ocr("/path/to/image.png")
         assert result == "从dict提取的文本"
+
+    @pytest.mark.asyncio
+    async def test_pruned_result_dict_with_rec_texts(self) -> None:
+        """pruned_result 为含 rec_texts 的 dict 时提取文本（PaddleOCR 新版 API 格式）。"""
+        mock_client = MagicMock()
+        mock_ocr_result = MagicMock()
+        mock_page = MagicMock()
+        mock_page.pruned_result = {
+            "model_settings": {"use_doc_preprocessor": True},
+            "text_type": "general",
+            "rec_texts": ["你走了我们吃什么"],
+            "rec_scores": [0.99995],
+            "textline_orientation_angles": [0],
+        }
+        mock_ocr_result.pages = [mock_page]
+        mock_client.ocr = AsyncMock(return_value=mock_ocr_result)
+
+        service = PaddleOcrClientService(access_token="test-token")
+        service._client = mock_client
+
+        result = await service.ocr("/path/to/image.png")
+        assert result == "你走了我们吃什么"
+
+    @pytest.mark.asyncio
+    async def test_pruned_result_dict_with_rec_texts_filters_low_score(self) -> None:
+        """rec_scores 低于阈值时对应文本被过滤（PaddleOCR 新版 API 多行格式）。"""
+        mock_client = MagicMock()
+        mock_ocr_result = MagicMock()
+        mock_page = MagicMock()
+        mock_page.pruned_result = {
+            "rec_texts": ["皇叔入住的话", "能使我东吴人丁兴旺", "模糊不清"],
+            "rec_scores": [0.999, 0.97, 0.85],
+        }
+        mock_ocr_result.pages = [mock_page]
+        mock_client.ocr = AsyncMock(return_value=mock_ocr_result)
+
+        service = PaddleOcrClientService(access_token="test-token", text_rec_score_thresh=0.9)
+        service._client = mock_client
+
+        result = await service.ocr("/path/to/image.png")
+        # "模糊不清" 得分 0.85 < 0.9 应被过滤
+        assert result == "皇叔入住的话 能使我东吴人丁兴旺"
+
+    @pytest.mark.asyncio
+    async def test_rec_texts_without_scores_all_included(self) -> None:
+        """rec_texts 无 rec_scores 时全部保留（向后兼容）。"""
+        mock_client = MagicMock()
+        mock_ocr_result = MagicMock()
+        mock_page = MagicMock()
+        mock_page.pruned_result = {
+            "rec_texts": ["第一行", "第二行"],
+        }
+        mock_ocr_result.pages = [mock_page]
+        mock_client.ocr = AsyncMock(return_value=mock_ocr_result)
+
+        service = PaddleOcrClientService(access_token="test-token")
+        service._client = mock_client
+
+        result = await service.ocr("/path/to/image.png")
+        assert result == "第一行 第二行"
+
+    @pytest.mark.asyncio
+    async def test_all_texts_below_threshold_returns_empty(self) -> None:
+        """所有文本行均低于阈值时返回空字符串。"""
+        mock_client = MagicMock()
+        mock_ocr_result = MagicMock()
+        mock_page = MagicMock()
+        mock_page.pruned_result = {
+            "rec_texts": ["低分文本"],
+            "rec_scores": [0.3],
+        }
+        mock_ocr_result.pages = [mock_page]
+        mock_client.ocr = AsyncMock(return_value=mock_ocr_result)
+
+        service = PaddleOcrClientService(access_token="test-token", text_rec_score_thresh=0.9)
+        service._client = mock_client
+
+        result = await service.ocr("/path/to/image.png")
+        assert result == ""
 
     @pytest.mark.asyncio
     async def test_api_auth_error_raises_runtime_error(self) -> None:

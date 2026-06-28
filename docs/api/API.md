@@ -258,6 +258,7 @@ class PaddleOcrClientService:
         model: Model | str | None = None,
         request_timeout: float = 300.0,
         poll_timeout: float = 600.0,
+        text_rec_score_thresh: float = 0.9,
     ) -> None
 
     async def ocr(self, image_path: str) -> str
@@ -267,7 +268,8 @@ class PaddleOcrClientService:
 - `access_token` 默认从 `PADDLEOCR_ACCESS_TOKEN` 环境变量读取
 - `base_url` 默认从 `PADDLEOCR_BASE_URL` 环境变量读取
 - `model` 默认 `Model.PP_OCRV6`
-- `ocr()` 返回识别文本（空字符串表示无结果）
+- `text_rec_score_thresh` 置信度阈值（0~1），低于此值的文本行被过滤；设为 0 关闭过滤
+- `ocr()` 返回识别文本（空字符串表示无结果）；支持新版 API dict 格式（`rec_texts`）与旧版格式自动适配
 - `close()` 释放 HTTP 会话
 - 异常：`RuntimeError`（API 调用失败）
 

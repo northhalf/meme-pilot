@@ -8,7 +8,7 @@
 
 ---
 
-### `__init__(access_token: str | None = None, base_url: str | None = None, model: Model | str | None = None, request_timeout: float = 300.0, poll_timeout: float = 600.0) -> None`
+### `__init__(access_token: str | None = None, base_url: str | None = None, model: Model | str | None = None, request_timeout: float = 300.0, poll_timeout: float = 600.0, text_rec_score_thresh: float = 0.9) -> None`
 
 | 参数 | 类型 | 默认 | 说明 |
 |------|------|------|------|
@@ -17,6 +17,7 @@
 | `model` | `Model \| str \| None` | `None` | OCR 模型，默认 `Model.PP_OCRV6` |
 | `request_timeout` | `float` | `300.0` | 请求超时秒数 |
 | `poll_timeout` | `float` | `600.0` | 轮询超时秒数 |
+| `text_rec_score_thresh` | `float` | `0.9` | 置信度阈值（0~1），低于此值的文本行被过滤；设为 0 关闭过滤 |
 
 ---
 
@@ -29,6 +30,12 @@
 | **异常** | `RuntimeError` | API 调用失败 |
 
 调用 `AsyncPaddleOCRClient.ocr()` 提交 OCR 任务并等待完成，从返回结果的 `pruned_result` 中防御性提取文本。
+
+兼容多种 API 返回格式：
+- PaddleOCR v3.7 新版：API 返回 `prunedResult` 为完整字典，从 `rec_texts` 列表中提取所有文本行并用空格拼接；根据 `text_rec_score_thresh` 阈值，以 `rec_scores` 置信度过滤低分行
+- 旧版兼容：`prunedResult` 为字符串或 `list[dict]` 时直接提取
+
+调用 API 时传入 `OCROptions` 禁用文档预处理和文本行方向检测，避免多行文本被预处理合并。
 
 ---
 
