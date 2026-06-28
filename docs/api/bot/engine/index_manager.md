@@ -156,6 +156,7 @@ class SyncResult:
 class AddResult:
     entry_id: str | None
     reason: str
+    text: str = ""
     replaced_filename: str | None = None
     moved_to: str | None = None
 ```
@@ -164,6 +165,7 @@ class AddResult:
 |------|------|------|------|
 | `entry_id` | `str \| None` | 必填 | 分配或复用的索引 ID；无文字移图场景为 `None` |
 | `reason` | `str` | 必填 | 结果类别：`"added"`、`"replaced"`、`"no_text"` |
+| `text` | `str` | `""` | OCR 识别文本；无文字时为空字符串 |
 | `replaced_filename` | `str \| None` | `None` | `reason="replaced"` 时为被删旧图文件名，否则为 `None` |
 | `moved_to` | `str \| None` | `None` | `reason="no_text"` 时为移入 `meme_no_text/` 的完整路径，否则为 `None` |
 

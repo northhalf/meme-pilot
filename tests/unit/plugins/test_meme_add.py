@@ -200,6 +200,29 @@ class TestReleaseLockSafe:
         _release_lock_safe(im)  # 不应抛异常
 
 
+class TestFormatOcrText:
+    """_format_ocr_text 测试。"""
+
+    def test_short_text_returned_as_is(self) -> None:
+        """短于等于 50 字的文本原样返回。"""
+        assert meme_add._format_ocr_text("心好累啊") == "心好累啊"
+
+    def test_exactly_50_chars(self) -> None:
+        """刚好 50 字不截断。"""
+        text = "a" * 50
+        assert meme_add._format_ocr_text(text) == text
+
+    def test_long_text_truncated(self) -> None:
+        """超过 50 字截断并标注总长度。"""
+        text = "a" * 60
+        expected = "a" * 50 + "...（总文本长度60）"
+        assert meme_add._format_ocr_text(text) == expected
+
+    def test_empty_string(self) -> None:
+        """空字符串不截断。"""
+        assert meme_add._format_ocr_text("") == ""
+
+
 # ===========================================================================
 # handle_add 测试
 # ===========================================================================
@@ -428,7 +451,7 @@ class TestGotImage:
 
         im = _make_index_manager()
         im.add_single_file = AsyncMock(
-            return_value=AddResult(entry_id="1", reason="added")
+            return_value=AddResult(entry_id="1", reason="added", text="加班心好累")
         )
         mock_get_im.return_value = im
 
@@ -443,7 +466,7 @@ class TestGotImage:
         await got_image(bot, _make_event(), matcher, MagicMock())
 
         matcher.finish.assert_awaited_once()
-        assert "已成功添加" in matcher.finish.call_args[0][0]
+        assert "新增表情包✅" in matcher.finish.call_args[0][0]
 
     @pytest.mark.asyncio
     @patch.object(meme_add, "cancel")
@@ -475,7 +498,7 @@ class TestGotImage:
 
         im = _make_index_manager()
         im.add_single_file = AsyncMock(
-            return_value=AddResult(entry_id="1", reason="added")
+            return_value=AddResult(entry_id="1", reason="added", text="加班心好累")
         )
         mock_get_im.return_value = im
 
@@ -490,7 +513,7 @@ class TestGotImage:
         await got_image(bot, _make_event(), matcher, MagicMock())
 
         matcher.finish.assert_awaited_once()
-        assert "已成功添加" in matcher.finish.call_args[0][0]
+        assert "新增表情包✅" in matcher.finish.call_args[0][0]
 
     @pytest.mark.asyncio
     @patch.object(meme_add, "cancel")
@@ -723,7 +746,7 @@ class TestGotImage:
 
         im = _make_index_manager()
         im.add_single_file = AsyncMock(
-            return_value=AddResult(entry_id="1", reason="added")
+            return_value=AddResult(entry_id="1", reason="added", text="加班心好累")
         )
         mock_get_im.return_value = im
 
@@ -795,7 +818,7 @@ class TestGotImage:
 
         im = _make_index_manager()
         im.add_single_file = AsyncMock(
-            return_value=AddResult(entry_id="1", reason="added")
+            return_value=AddResult(entry_id="1", reason="added", text="加班心好累")
         )
         mock_get_im.return_value = im
 

@@ -43,14 +43,15 @@
 8. `resolve_unique_filename()` 处理文件名冲突
 9. 保存图片到 `memes/`
 10. 调用 `IndexManager.add_single_file()` 执行压缩→OCR→Embedding 管道
-11. 回复结果
-12. `finally`：若会话未取消则 `cancel(user_id)`，若 `index_manager` 非 None 则 `_release_lock_safe(index_manager)`
+11. 调用 `_format_ocr_text()` 截断 OCR 文本（超 50 字时截断并标注总长度）
+12. 回复结果（`added`/`replaced` 分支附 OCR 文字，`no_text` 分支不变）
+13. `finally`：若会话未取消则 `cancel(user_id)`，若 `index_manager` 非 None 则 `_release_lock_safe(index_manager)`
 
 ## 回复格式
 
-**成功添加：** `已成功添加表情包 ✅`
+**成功添加：** `新增表情包✅，识别到的文字为：{OCR 文本}`
 
-**替换旧图：** `已成功添加（替换旧图）✅`
+**替换旧图：** `替换旧图✅，识别到的文字为：{OCR 文本}`
 
 **无文字：** `未识别到文字，已移至 meme_no_text/`
 

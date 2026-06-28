@@ -114,6 +114,7 @@ class SyncResult:
 class AddResult:
     entry_id: str | None
     reason: str
+    text: str = ""
     replaced_filename: str | None = None
     moved_to: str | None = None
 

@@ -201,6 +201,7 @@ class AddResult:
 
     entry_id: str | None
     reason: str
+    text: str = ""
     replaced_filename: str | None = None
     moved_to: str | None = None
 
@@ -629,6 +630,7 @@ class IndexManager:
             return AddResult(
                 entry_id=old_id,
                 reason="replaced",
+                text=text,
                 replaced_filename=old_filename,
             )
 
@@ -648,7 +650,7 @@ class IndexManager:
         self.save_index()
         self.save_embeddings()
         logger.info("已添加索引记录: id=%s, filename=%s", entry_id, filename)
-        return AddResult(entry_id=entry_id, reason="added")
+        return AddResult(entry_id=entry_id, reason="added", text=text)
 
     async def add_single_file(self, filename: str) -> AddResult:
         """处理单张已保存的图片：管道处理 → add_entry。

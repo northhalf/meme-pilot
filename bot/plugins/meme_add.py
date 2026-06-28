@@ -214,13 +214,15 @@ async def got_image(
             await matcher.finish("添加失败，请查看日志")
             return
 
-        # 成功：回复结果
+        # 成功：回复结果，附带 OCR 文字
         if result.reason == "no_text":
             await matcher.finish("未识别到文字，已移至 meme_no_text/")
         elif result.reason == "replaced":
-            await matcher.finish("已成功添加（替换旧图）✅")
+            ocr_display = _format_ocr_text(result.text)
+            await matcher.finish(f"替换旧图✅，识别到的文字为：\n「{ocr_display}」")
         else:
-            await matcher.finish("已成功添加表情包 ✅")
+            ocr_display = _format_ocr_text(result.text)
+            await matcher.finish(f"新增表情包✅，识别到的文字为：\n「{ocr_display}」")
 
     except (FinishedException, RejectedException):
         raise
@@ -347,6 +349,22 @@ def _build_filename(target_name: str, image_data: bytes, ext: str) -> str:
         base = _auto_filename(image_data)
 
     return f"{base}{ext}"
+
+
+def _format_ocr_text(text: str, max_len: int = 50) -> str:
+    """格式化 OCR 文本：过长时截断并标注总长度。
+
+    Args:
+        text: OCR 识别文本。
+        max_len: 截断长度，默认 50。
+
+    Returns:
+        格式化后的文本。不超过 max_len 时原样返回；
+        超过时截断为前 max_len 字并追加「...（总文本长度N）」。
+    """
+    if len(text) <= max_len:
+        return text
+    return f"{text[:max_len]}...（总文本长度{len(text)}）"
 
 
 def _release_lock_safe(index_manager: IndexManager) -> None:
