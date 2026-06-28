@@ -32,8 +32,10 @@ from bot.engine.index_manager import (
 )
 from bot.session import (
     cancel,
+    cancel_timeout_task,
     check_and_cancel,
     is_cancelled,
+    pending_sessions,
     register,
     timeout_session,
 )
@@ -103,7 +105,7 @@ async def handle_add(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
     register(user_id, matcher, "add")
 
     # 启动超时任务
-    asyncio.create_task(
+    task = asyncio.create_task(
         timeout_session(
             bot,
             event,
@@ -112,6 +114,10 @@ async def handle_add(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
             on_cleanup=lambda: _release_lock_safe(index_manager),
         )
     )
+    # 保存 task 引用到 session，供 got_image 取消
+    session = pending_sessions.get(user_id)
+    if session is not None:
+        session.timeout_task = task
 
 
 @add_cmd.got("image", prompt="请发送图片，60 秒内有效")
@@ -151,7 +157,11 @@ async def got_image(
 
     # 会话有效性检查
     if is_cancelled(user_id):
+        cancel_timeout_task(user_id)
         return
+
+    # 用户已发送有效图片，处理开始前取消超时任务
+    cancel_timeout_task(user_id)
 
     index_manager: IndexManager | None = None
 

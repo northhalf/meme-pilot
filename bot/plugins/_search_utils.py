@@ -17,7 +17,7 @@ from nonebot.matcher import Matcher
 from bot.app_state import get_index_manager, get_keyword_searcher
 from bot.config import MEMES_DIR
 from bot.engine.keyword_searcher import SearchResult
-from bot.session import cancel, register, timeout_session
+from bot.session import pending_sessions, register, timeout_session
 
 logger = logging.getLogger(__name__)
 
@@ -130,4 +130,10 @@ async def execute_search(
     await cmd_matcher.send("\n".join(lines))
 
     # 启动超时任务
-    asyncio.create_task(timeout_session(bot, event, user_id, "选择已过期，请重新搜索"))
+    task = asyncio.create_task(
+        timeout_session(bot, event, user_id, "选择已过期，请重新搜索")
+    )
+    # 保存 task 引用到 session，供 got_selection 取消
+    session = pending_sessions.get(user_id)
+    if session is not None:
+        session.timeout_task = task

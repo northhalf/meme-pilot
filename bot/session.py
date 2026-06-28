@@ -28,11 +28,13 @@ class PendingSession:
         matcher: NoneBot2 Matcher 实例。
         cancelled: 是否已被新命令取消。
         type: 命令类型，如 "add" 或 "search"。
+        timeout_task: 超时 asyncio.Task 引用，用于在 got 中取消。
     """
 
     matcher: Matcher
     cancelled: bool = False
     type: str = "add"
+    timeout_task: asyncio.Task | None = None
 
 
 # 模块级会话字典：user_id → PendingSession
@@ -86,6 +88,21 @@ def cancel(user_id: str) -> None:
         logger.debug("移除会话: user=%s", user_id)
 
 
+def cancel_timeout_task(user_id: str) -> None:
+    """取消用户会话的超时 asyncio Task。
+
+    在 got 处理函数确认用户已有效响应后调用，
+    防止 timeout_session 在后台继续计时并发送超时消息。
+
+    Args:
+        user_id: 用户 ID。
+    """
+    session = pending_sessions.get(user_id)
+    if session is not None and session.timeout_task is not None:
+        session.timeout_task.cancel()
+        session.timeout_task = None
+
+
 def is_cancelled(user_id: str) -> bool:
     """检查会话是否已被取消。
 
@@ -125,7 +142,10 @@ async def timeout_session(
     """
     if timeout is None:
         timeout = read_session_timeout()
-    await asyncio.sleep(timeout)
+    try:
+        await asyncio.sleep(timeout)
+    except asyncio.CancelledError:
+        return  # 任务被外部取消（got 已接手处理），静默退出
     if not is_cancelled(user_id) and user_id in pending_sessions:
         logger.info("用户 %s 的会话超时（%d 秒）", user_id, timeout)
         cancel(user_id)

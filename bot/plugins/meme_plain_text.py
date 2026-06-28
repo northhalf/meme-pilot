@@ -22,7 +22,7 @@ from bot.auth import is_authorized, log_unauthorized
 from bot.config import MEMES_DIR
 from bot.plugins._help_text import HELP_TEXT
 from bot.plugins._search_utils import execute_search, handle_selection
-from bot.session import cancel, check_and_cancel, is_cancelled
+from bot.session import cancel, cancel_timeout_task, check_and_cancel, is_cancelled
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +80,7 @@ async def got_selection(
     user_id = event.get_user_id()
 
     if is_cancelled(user_id):
+        cancel_timeout_task(user_id)
         return
 
     candidates = matcher.state.get("candidates", [])
@@ -90,6 +91,9 @@ async def got_selection(
     if isinstance(result, str):
         await catch_all.reject(result)
         return
+
+    # 用户已有效选择，取消超时任务
+    cancel_timeout_task(user_id)
 
     cancel(user_id)
     image_path = MEMES_DIR / result.filename
