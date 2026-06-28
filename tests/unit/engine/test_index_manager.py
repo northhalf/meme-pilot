@@ -2209,3 +2209,42 @@ class TestLoadEmbeddings:
         mgr.load()
         assert mgr.get_embeddings() == {}
 
+
+class TestIndexManagerLockRefactoring:
+    """索引锁重构行为测试。"""
+
+    @pytest.mark.asyncio
+    async def test_is_locked_reflects_syncing(self) -> None:
+        """is_locked 在 acquire_lock 时返回 True，release_lock 后返回 False。"""
+        im = IndexManager(data_dir="/tmp/test_lock", memes_dir="/tmp/test_lock_memes")
+        assert im.is_locked is False
+
+        await im.acquire_lock()
+        assert im.is_locked is True
+
+        im.release_lock()
+        assert im.is_locked is False
+
+    @pytest.mark.asyncio
+    async def test_add_single_file_no_lock_held(self, monkeypatch) -> None:
+        """add_single_file 不持有 _lock（仅用 _add_sem）。"""
+        im = IndexManager(data_dir="/tmp/test_add", memes_dir="/tmp/test_add_memes")
+
+        async def mock_pipeline(filename: str) -> tuple[str, list[float]]:
+            return "test text", [0.1, 0.2]
+
+        monkeypatch.setattr(im, '_process_image_pipeline', mock_pipeline)
+        monkeypatch.setattr(im, 'add_entry', lambda filename, text, embedding: None)
+
+        assert im._lock.locked() is False
+        await im.add_single_file("test.jpg")
+        assert im._lock.locked() is False
+
+    @pytest.mark.asyncio
+    async def test_acquire_lock_fails_when_locked(self) -> None:
+        """acquire_lock 在锁已被占用时返回 False。"""
+        im = IndexManager(data_dir="/tmp/test_lock2", memes_dir="/tmp/test_lock2_memes")
+        await im.acquire_lock()
+        result = await im.acquire_lock()
+        assert result is False
+

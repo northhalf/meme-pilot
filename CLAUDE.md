@@ -67,6 +67,6 @@ uv run python -m compileall bot tests   # 语法检查
 
 ## 当前实现注意事项
 
-已完成：engine 全部模块（index_manager、keyword_searcher、ai_matcher、deepseek_ocr、paddle_ocr、embedding_service、rerank_service、image_optimizer、protocols）、app_state 共享实例（含 get_ai_matcher 和 get_keyword_searcher）、config 全局路径常量（含 PROJECT_ROOT、read_session_timeout）、auth 授权校验、bot.session 会话管理（含 timeout_session）、bot.py（NoneBot2 入口，fastapi 驱动器）、/help、/refresh、/search、/add 和 /ai 插件及其测试、bot/Dockerfile、napcat/entrypoint.sh。
+已完成：engine 全部模块（index_manager、keyword_searcher、ai_matcher、deepseek_ocr、paddle_ocr、embedding_service、rerank_service、image_optimizer、protocols）、app_state 共享实例（含 get_ai_matcher 和 get_keyword_searcher）、config 全局路径常量（含 PROJECT_ROOT、read_session_timeout）、auth 授权校验、bot.session 会话管理（含 timeout_session）、bot.py（NoneBot2 入口，fastapi 驱动器）、/help、/refresh、/search、/add、/ai 和 /cancel 插件及其测试、bot/Dockerfile、napcat/entrypoint.sh。
 
 尚未实现：无。实现或重构前，以 `docs/PRD.md` 和 `CONTEXT.md` 为准，并同步更新 README、`.env.example`、`docker-compose.yml`。

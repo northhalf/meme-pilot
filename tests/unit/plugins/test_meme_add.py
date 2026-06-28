@@ -25,7 +25,6 @@ with (
     from bot.plugins.meme_add import (
         _build_filename,
         _get_extension,
-        _release_lock_safe,
         _sanitize_filename,
         got_image,
         handle_add,
@@ -64,11 +63,10 @@ def _make_matcher(*, state: dict | None = None) -> MagicMock:
     return matcher
 
 
-def _make_index_manager(*, lock_ok: bool = True) -> MagicMock:
+def _make_index_manager(*, locked: bool = False) -> MagicMock:
     """创建模拟的 IndexManager。"""
     im = MagicMock()
-    im.acquire_lock = AsyncMock(return_value=lock_ok)
-    im.release_lock = MagicMock()
+    im.is_locked = locked
     im.add_single_file = AsyncMock()
     return im
 
@@ -185,22 +183,6 @@ class TestBuildFilename:
         assert result.endswith(".jpg")
 
 
-class TestReleaseLockSafe:
-    """_release_lock_safe 测试。"""
-
-    def test_releases_lock(self) -> None:
-        """正常释放锁。"""
-        im = MagicMock()
-        _release_lock_safe(im)
-        im.release_lock.assert_called_once()
-
-    def test_exception_swallowed(self) -> None:
-        """释放锁异常不抛出。"""
-        im = MagicMock()
-        im.release_lock.side_effect = RuntimeError("锁错误")
-        _release_lock_safe(im)  # 不应抛异常
-
-
 class TestFormatOcrText:
     """_format_ocr_text 测试。"""
 
@@ -233,14 +215,10 @@ class TestHandleAdd:
     """handle_add 处理函数测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "register")
-    @patch.object(meme_add, "check_and_cancel", return_value=None)
     @patch.object(meme_add, "is_authorized", return_value=False)
     async def test_unauthorized_rejected(
         self,
         mock_auth: MagicMock,
-        mock_check: MagicMock,
-        mock_register: MagicMock,
     ) -> None:
         """非授权用户应被静默忽略。"""
         matcher = _make_matcher()
@@ -248,7 +226,6 @@ class TestHandleAdd:
 
         matcher.finish.assert_not_awaited()
         matcher.send.assert_not_awaited()
-        mock_register.assert_not_called()
 
     @pytest.mark.asyncio
     @patch.object(meme_add, "get_index_manager")
@@ -271,60 +248,50 @@ class TestHandleAdd:
         mock_get_im.assert_not_called()
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "register")
-    @patch.object(meme_add, "check_and_cancel", return_value=None)
-    @patch.object(meme_add, "is_authorized", return_value=True)
     @patch.object(meme_add, "get_index_manager")
+    @patch.object(meme_add, "is_authorized", return_value=True)
+    @patch.object(meme_add, "activate_chat", return_value=True)
     async def test_authorized_proceeds(
         self,
+        mock_activate: MagicMock,
         mock_get_im: MagicMock,
         mock_auth: MagicMock,
-        mock_check: MagicMock,
-        mock_register: MagicMock,
     ) -> None:
-        """授权用户应正常注册会话。"""
+        """授权用户应正常激活会话。"""
         mock_get_im.return_value = _make_index_manager()
 
         matcher = _make_matcher()
         await handle_add(_make_bot(), _make_event("111"), matcher)
 
-        mock_register.assert_called_once_with("111", matcher, "add")
+        mock_activate.assert_called_once_with("111", "add", matcher)
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "register")
-    @patch.object(meme_add, "check_and_cancel", return_value="旧会话已取消")
     @patch.object(meme_add, "is_authorized", return_value=True)
-    @patch.object(meme_add, "get_index_manager")
-    async def test_existing_session_cancelled(
+    @patch.object(meme_add, "activate_chat", return_value=False)
+    async def test_existing_session_rejected(
         self,
-        mock_get_im: MagicMock,
+        mock_activate: MagicMock,
         mock_auth: MagicMock,
-        mock_check: MagicMock,
-        mock_register: MagicMock,
     ) -> None:
-        """旧会话存在时应取消并提示。"""
-        mock_get_im.return_value = _make_index_manager()
-
+        """激活失败（已有活跃会话）时应拒绝。"""
         matcher = _make_matcher()
         await handle_add(_make_bot(), _make_event("111"), matcher)
 
-        matcher.send.assert_awaited_once()
-        assert "旧会话已取消" in matcher.send.call_args[0][0]
+        matcher.finish.assert_awaited_once()
+        assert "已有命令在处理中" in matcher.finish.call_args[0][0]
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "register")
-    @patch.object(meme_add, "check_and_cancel", return_value=None)
-    @patch.object(meme_add, "is_authorized", return_value=True)
     @patch.object(meme_add, "get_index_manager")
+    @patch.object(meme_add, "is_authorized", return_value=True)
+    @patch.object(meme_add, "activate_chat", return_value=True)
     async def test_lock_contention(
         self,
+        mock_activate: MagicMock,
         mock_get_im: MagicMock,
         mock_auth: MagicMock,
-        mock_check: MagicMock,
-        mock_register: MagicMock,
     ) -> None:
         """锁占用时应回复提示。"""
-        mock_get_im.return_value = _make_index_manager(lock_ok=False)
+        mock_get_im.return_value = _make_index_manager(locked=True)
 
         matcher = _make_matcher()
         await handle_add(_make_bot(), _make_event("111"), matcher)
@@ -333,16 +300,14 @@ class TestHandleAdd:
         assert "索引正在更新" in matcher.finish.call_args[0][0]
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "register")
-    @patch.object(meme_add, "check_and_cancel", return_value=None)
-    @patch.object(meme_add, "is_authorized", return_value=True)
     @patch.object(meme_add, "get_index_manager")
+    @patch.object(meme_add, "is_authorized", return_value=True)
+    @patch.object(meme_add, "activate_chat", return_value=True)
     async def test_target_name_captured(
         self,
-        mock_get_im: MagicMock,
+        mock_activate: MagicMock,
         mock_auth: MagicMock,
-        mock_check: MagicMock,
-        mock_register: MagicMock,
+        mock_get_im: MagicMock,
     ) -> None:
         """/add 后的目标命名应正确提取到 state。"""
         mock_get_im.return_value = _make_index_manager()
@@ -353,16 +318,14 @@ class TestHandleAdd:
         assert matcher.state["target_name"] == "我的表情"
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "register")
-    @patch.object(meme_add, "check_and_cancel", return_value=None)
-    @patch.object(meme_add, "is_authorized", return_value=True)
     @patch.object(meme_add, "get_index_manager")
+    @patch.object(meme_add, "is_authorized", return_value=True)
+    @patch.object(meme_add, "activate_chat", return_value=True)
     async def test_target_name_empty_when_no_arg(
         self,
-        mock_get_im: MagicMock,
+        mock_activate: MagicMock,
         mock_auth: MagicMock,
-        mock_check: MagicMock,
-        mock_register: MagicMock,
+        mock_get_im: MagicMock,
     ) -> None:
         """/add 无参数时 target_name 为空字符串。"""
         mock_get_im.return_value = _make_index_manager()
@@ -373,16 +336,16 @@ class TestHandleAdd:
         assert matcher.state["target_name"] == ""
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "register")
-    @patch.object(meme_add, "check_and_cancel", return_value=None)
-    @patch.object(meme_add, "is_authorized", return_value=True)
+    @patch.object(meme_add, "deactivate_chat")
     @patch.object(meme_add, "get_index_manager")
+    @patch.object(meme_add, "is_authorized", return_value=True)
+    @patch.object(meme_add, "activate_chat", return_value=True)
     async def test_init_error_replies(
         self,
-        mock_get_im: MagicMock,
+        mock_activate: MagicMock,
         mock_auth: MagicMock,
-        mock_check: MagicMock,
-        mock_register: MagicMock,
+        mock_get_im: MagicMock,
+        mock_deactivate: MagicMock,
     ) -> None:
         """IndexManager 未初始化时应回复错误。"""
         mock_get_im.side_effect = RuntimeError("未初始化")
@@ -392,6 +355,7 @@ class TestHandleAdd:
 
         matcher.finish.assert_awaited_once()
         assert "未就绪" in matcher.finish.call_args[0][0]
+        mock_deactivate.assert_called_once_with("111")
 
 
 # ===========================================================================
@@ -403,68 +367,79 @@ class TestGotImage:
     """got_image 处理函数测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "cancel")
-    @patch.object(meme_add, "is_cancelled", return_value=True)
-    @patch.object(meme_add, "extract_image_urls")
-    async def test_cancelled_session_exits(
+    @patch.object(meme_add, "activate_chat")
+    @patch.object(meme_add, "got_intercept_bypass", return_value=True)
+    async def test_cancel_intercepted(
         self,
-        mock_extract: MagicMock,
-        mock_cancelled: MagicMock,
-        mock_cancel: MagicMock,
+        mock_bypass: MagicMock,
+        mock_activate: MagicMock,
     ) -> None:
-        """已取消的会话应静默退出。"""
+        """/cancel 旁路拦截。"""
         matcher = _make_matcher()
-        image_msg = MagicMock()
-        await got_image(_make_bot(), _make_event(), matcher, image_msg)
+        event = _make_event(text="/cancel")
+        await got_image(_make_bot(), event, matcher, MagicMock())
 
-        mock_cancel.assert_not_called()  # 不额外调用 cancel
-        matcher.finish.assert_not_awaited()
+        mock_bypass.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "cancel")
-    @patch.object(meme_add, "is_cancelled", return_value=False)
-    @patch.object(meme_add, "get_index_manager")
+    @patch.object(meme_add, "activate_chat")
+    @patch.object(meme_add, "got_intercept_bypass", return_value=True)
+    @patch.object(meme_add, "deactivate_chat")
+    async def test_help_intercepted(
+        self,
+        mock_deactivate: MagicMock,
+        mock_bypass: MagicMock,
+        mock_activate: MagicMock,
+    ) -> None:
+        """/help 旁路拦截，不应反激活。"""
+        matcher = _make_matcher()
+        event = _make_event(text="/help")
+        await got_image(_make_bot(), event, matcher, MagicMock())
+
+        mock_deactivate.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch.object(meme_add, "activate_chat")
+    @patch.object(meme_add, "got_intercept_bypass", return_value=False)
     @patch.object(meme_add, "extract_image_urls", return_value=[])
+    @patch.object(meme_add, "deactivate_chat")
     async def test_no_image_rejects(
         self,
+        mock_deactivate: MagicMock,
         mock_extract: MagicMock,
-        mock_get_im: MagicMock,
-        mock_cancelled: MagicMock,
-        mock_cancel: MagicMock,
+        mock_bypass: MagicMock,
+        mock_activate: MagicMock,
     ) -> None:
         """无图片时应 reject 提示重发。"""
-        mock_get_im.return_value = _make_index_manager()
-
         matcher = _make_matcher()
         image_msg = MagicMock()
         await got_image(_make_bot(), _make_event(), matcher, image_msg)
 
         matcher.reject.assert_awaited_once()
         assert "图片" in matcher.reject.call_args[0][0]
+        mock_deactivate.assert_not_called()  # reject 后会话继续等待
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "cancel")
-    @patch.object(meme_add, "_release_lock_safe")
+    @patch.object(meme_add, "activate_chat")
+    @patch.object(meme_add, "got_intercept_bypass", return_value=False)
+    @patch.object(meme_add, "deactivate_chat")
     @patch.object(meme_add, "resolve_unique_filename")
     @patch.object(meme_add, "_build_filename", return_value="a.jpg")
     @patch.object(meme_add, "_get_extension", return_value=".jpg")
     @patch.object(meme_add, "_download_image")
     @patch.object(meme_add, "get_index_manager")
-    @patch.object(meme_add, "is_cancelled", return_value=False)
-    @patch.object(
-        meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"]
-    )
+    @patch.object(meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
     async def test_success(
         self,
         mock_extract: MagicMock,
-        mock_cancelled: MagicMock,
         mock_get_im: MagicMock,
         mock_download: MagicMock,
         mock_ext: MagicMock,
         mock_build: MagicMock,
         mock_resolve: MagicMock,
-        mock_release: MagicMock,
-        mock_cancel: MagicMock,
+        mock_deactivate: MagicMock,
+        mock_bypass: MagicMock,
+        mock_activate: MagicMock,
         tmp_path: Path,
     ) -> None:
         """正常流程应回复成功。"""
@@ -487,31 +462,29 @@ class TestGotImage:
         await got_image(bot, _make_event(), matcher, MagicMock())
 
         matcher.finish.assert_awaited_once()
-        assert "新增表情包✅" in matcher.finish.call_args[0][0]
+        assert "新增表情包" in matcher.finish.call_args[0][0]
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "cancel")
-    @patch.object(meme_add, "_release_lock_safe")
+    @patch.object(meme_add, "activate_chat")
+    @patch.object(meme_add, "got_intercept_bypass", return_value=False)
+    @patch.object(meme_add, "deactivate_chat")
     @patch.object(meme_add, "resolve_unique_filename")
     @patch.object(meme_add, "_build_filename", return_value="我的表情.jpg")
     @patch.object(meme_add, "_get_extension", return_value=".jpg")
     @patch.object(meme_add, "_download_image")
     @patch.object(meme_add, "get_index_manager")
-    @patch.object(meme_add, "is_cancelled", return_value=False)
-    @patch.object(
-        meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"]
-    )
+    @patch.object(meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
     async def test_success_with_target_name(
         self,
         mock_extract: MagicMock,
-        mock_cancelled: MagicMock,
         mock_get_im: MagicMock,
         mock_download: MagicMock,
         mock_ext: MagicMock,
         mock_build: MagicMock,
         mock_resolve: MagicMock,
-        mock_release: MagicMock,
-        mock_cancel: MagicMock,
+        mock_deactivate: MagicMock,
+        mock_bypass: MagicMock,
+        mock_activate: MagicMock,
         tmp_path: Path,
     ) -> None:
         """带 target_name 时应回复成功。"""
@@ -534,25 +507,23 @@ class TestGotImage:
         await got_image(bot, _make_event(), matcher, MagicMock())
 
         matcher.finish.assert_awaited_once()
-        assert "新增表情包✅" in matcher.finish.call_args[0][0]
+        assert "新增表情包" in matcher.finish.call_args[0][0]
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "cancel")
-    @patch.object(meme_add, "_release_lock_safe")
+    @patch.object(meme_add, "activate_chat")
+    @patch.object(meme_add, "got_intercept_bypass", return_value=False)
+    @patch.object(meme_add, "deactivate_chat")
     @patch.object(meme_add, "_download_image", side_effect=RuntimeError("下载失败"))
     @patch.object(meme_add, "get_index_manager")
-    @patch.object(meme_add, "is_cancelled", return_value=False)
-    @patch.object(
-        meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"]
-    )
+    @patch.object(meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
     async def test_download_error_replies(
         self,
         mock_extract: MagicMock,
-        mock_cancelled: MagicMock,
         mock_get_im: MagicMock,
         mock_download: MagicMock,
-        mock_release: MagicMock,
-        mock_cancel: MagicMock,
+        mock_deactivate: MagicMock,
+        mock_bypass: MagicMock,
+        mock_activate: MagicMock,
     ) -> None:
         """下载失败时应回复错误。"""
         mock_get_im.return_value = _make_index_manager()
@@ -562,30 +533,64 @@ class TestGotImage:
 
         matcher.finish.assert_awaited_once()
         assert "下载失败" in matcher.finish.call_args[0][0]
+        mock_deactivate.assert_called_once_with("12345")
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "cancel")
-    @patch.object(meme_add, "_release_lock_safe")
+    @patch.object(meme_add, "activate_chat")
+    @patch.object(meme_add, "got_intercept_bypass", return_value=False)
+    @patch.object(meme_add, "deactivate_chat")
     @patch.object(meme_add, "resolve_unique_filename")
     @patch.object(meme_add, "_build_filename", return_value="a.jpg")
     @patch.object(meme_add, "_get_extension", return_value=".jpg")
     @patch.object(meme_add, "_download_image")
     @patch.object(meme_add, "get_index_manager")
-    @patch.object(meme_add, "is_cancelled", return_value=False)
-    @patch.object(
-        meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"]
-    )
-    async def test_compression_error_replies(
+    @patch.object(meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
+    async def test_unsupported_extension_replies(
         self,
         mock_extract: MagicMock,
-        mock_cancelled: MagicMock,
         mock_get_im: MagicMock,
         mock_download: MagicMock,
         mock_ext: MagicMock,
         mock_build: MagicMock,
         mock_resolve: MagicMock,
-        mock_release: MagicMock,
-        mock_cancel: MagicMock,
+        mock_deactivate: MagicMock,
+        mock_bypass: MagicMock,
+        mock_activate: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """不支持的图片格式应回复错误。"""
+        mock_get_im.return_value = _make_index_manager()
+        mock_download.return_value = (b"fake", _make_response())
+        mock_ext.return_value = None  # 无法推断扩展名
+
+        matcher = _make_matcher()
+        await got_image(_make_bot(), _make_event(), matcher, MagicMock())
+
+        matcher.finish.assert_awaited_once()
+        assert "不支持的图片格式" in matcher.finish.call_args[0][0]
+        mock_deactivate.assert_called_once_with("12345")
+
+    @pytest.mark.asyncio
+    @patch.object(meme_add, "activate_chat")
+    @patch.object(meme_add, "got_intercept_bypass", return_value=False)
+    @patch.object(meme_add, "deactivate_chat")
+    @patch.object(meme_add, "resolve_unique_filename")
+    @patch.object(meme_add, "_build_filename", return_value="a.jpg")
+    @patch.object(meme_add, "_get_extension", return_value=".jpg")
+    @patch.object(meme_add, "_download_image")
+    @patch.object(meme_add, "get_index_manager")
+    @patch.object(meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
+    async def test_compression_error_replies(
+        self,
+        mock_extract: MagicMock,
+        mock_get_im: MagicMock,
+        mock_download: MagicMock,
+        mock_ext: MagicMock,
+        mock_build: MagicMock,
+        mock_resolve: MagicMock,
+        mock_deactivate: MagicMock,
+        mock_bypass: MagicMock,
+        mock_activate: MagicMock,
         tmp_path: Path,
     ) -> None:
         """压缩失败时应回复对应错误。"""
@@ -606,30 +611,29 @@ class TestGotImage:
 
         matcher.finish.assert_awaited_once()
         assert "压缩失败" in matcher.finish.call_args[0][0]
+        mock_deactivate.assert_called_once_with("12345")
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "cancel")
-    @patch.object(meme_add, "_release_lock_safe")
+    @patch.object(meme_add, "activate_chat")
+    @patch.object(meme_add, "got_intercept_bypass", return_value=False)
+    @patch.object(meme_add, "deactivate_chat")
     @patch.object(meme_add, "resolve_unique_filename")
     @patch.object(meme_add, "_build_filename", return_value="a.jpg")
     @patch.object(meme_add, "_get_extension", return_value=".jpg")
     @patch.object(meme_add, "_download_image")
     @patch.object(meme_add, "get_index_manager")
-    @patch.object(meme_add, "is_cancelled", return_value=False)
-    @patch.object(
-        meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"]
-    )
+    @patch.object(meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
     async def test_ocr_error_replies(
         self,
         mock_extract: MagicMock,
-        mock_cancelled: MagicMock,
         mock_get_im: MagicMock,
         mock_download: MagicMock,
         mock_ext: MagicMock,
         mock_build: MagicMock,
         mock_resolve: MagicMock,
-        mock_release: MagicMock,
-        mock_cancel: MagicMock,
+        mock_deactivate: MagicMock,
+        mock_bypass: MagicMock,
+        mock_activate: MagicMock,
         tmp_path: Path,
     ) -> None:
         """OCR 失败时应回复对应错误。"""
@@ -650,30 +654,29 @@ class TestGotImage:
 
         matcher.finish.assert_awaited_once()
         assert "OCR" in matcher.finish.call_args[0][0]
+        mock_deactivate.assert_called_once_with("12345")
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "cancel")
-    @patch.object(meme_add, "_release_lock_safe")
+    @patch.object(meme_add, "activate_chat")
+    @patch.object(meme_add, "got_intercept_bypass", return_value=False)
+    @patch.object(meme_add, "deactivate_chat")
     @patch.object(meme_add, "resolve_unique_filename")
     @patch.object(meme_add, "_build_filename", return_value="a.jpg")
     @patch.object(meme_add, "_get_extension", return_value=".jpg")
     @patch.object(meme_add, "_download_image")
     @patch.object(meme_add, "get_index_manager")
-    @patch.object(meme_add, "is_cancelled", return_value=False)
-    @patch.object(
-        meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"]
-    )
+    @patch.object(meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
     async def test_embedding_error_replies(
         self,
         mock_extract: MagicMock,
-        mock_cancelled: MagicMock,
         mock_get_im: MagicMock,
         mock_download: MagicMock,
         mock_ext: MagicMock,
         mock_build: MagicMock,
         mock_resolve: MagicMock,
-        mock_release: MagicMock,
-        mock_cancel: MagicMock,
+        mock_deactivate: MagicMock,
+        mock_bypass: MagicMock,
+        mock_activate: MagicMock,
         tmp_path: Path,
     ) -> None:
         """Embedding 失败时应回复对应错误。"""
@@ -694,30 +697,29 @@ class TestGotImage:
 
         matcher.finish.assert_awaited_once()
         assert "Embedding" in matcher.finish.call_args[0][0]
+        mock_deactivate.assert_called_once_with("12345")
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "cancel")
-    @patch.object(meme_add, "_release_lock_safe")
+    @patch.object(meme_add, "activate_chat")
+    @patch.object(meme_add, "got_intercept_bypass", return_value=False)
+    @patch.object(meme_add, "deactivate_chat")
     @patch.object(meme_add, "resolve_unique_filename")
     @patch.object(meme_add, "_build_filename", return_value="a.jpg")
     @patch.object(meme_add, "_get_extension", return_value=".jpg")
     @patch.object(meme_add, "_download_image")
     @patch.object(meme_add, "get_index_manager")
-    @patch.object(meme_add, "is_cancelled", return_value=False)
-    @patch.object(
-        meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"]
-    )
+    @patch.object(meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
     async def test_generic_error_replies(
         self,
         mock_extract: MagicMock,
-        mock_cancelled: MagicMock,
         mock_get_im: MagicMock,
         mock_download: MagicMock,
         mock_ext: MagicMock,
         mock_build: MagicMock,
         mock_resolve: MagicMock,
-        mock_release: MagicMock,
-        mock_cancel: MagicMock,
+        mock_deactivate: MagicMock,
+        mock_bypass: MagicMock,
+        mock_activate: MagicMock,
         tmp_path: Path,
     ) -> None:
         """未知异常时应回复通用错误。"""
@@ -736,120 +738,48 @@ class TestGotImage:
 
         matcher.finish.assert_awaited_once()
         assert "添加失败" in matcher.finish.call_args[0][0]
+        mock_deactivate.assert_called_once_with("12345")
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "cancel")
-    @patch.object(meme_add, "_release_lock_safe")
-    @patch.object(meme_add, "resolve_unique_filename")
-    @patch.object(meme_add, "_build_filename", return_value="a.jpg")
-    @patch.object(meme_add, "_get_extension", return_value=".jpg")
-    @patch.object(meme_add, "_download_image")
+    @patch.object(meme_add, "activate_chat")
+    @patch.object(meme_add, "got_intercept_bypass", return_value=False)
+    @patch.object(meme_add, "deactivate_chat")
     @patch.object(meme_add, "get_index_manager")
-    @patch.object(meme_add, "is_cancelled", return_value=False)
-    @patch.object(
-        meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"]
-    )
-    async def test_lock_released_on_success(
+    @patch.object(meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
+    async def test_lock_contention_in_got(
         self,
         mock_extract: MagicMock,
-        mock_cancelled: MagicMock,
         mock_get_im: MagicMock,
-        mock_download: MagicMock,
-        mock_ext: MagicMock,
-        mock_build: MagicMock,
-        mock_resolve: MagicMock,
-        mock_release: MagicMock,
-        mock_cancel: MagicMock,
-        tmp_path: Path,
+        mock_deactivate: MagicMock,
+        mock_bypass: MagicMock,
+        mock_activate: MagicMock,
     ) -> None:
-        """成功时应释放锁。"""
-        from bot.engine.index_manager import AddResult
-
-        im = _make_index_manager()
-        im.add_single_file = AsyncMock(
-            return_value=AddResult(entry_id="1", reason="added", text="加班心好累")
-        )
-        mock_get_im.return_value = im
-
-        fake_file = tmp_path / "a.jpg"
-        fake_file.write_bytes(b"fake")
-        mock_resolve.return_value = fake_file
-
-        mock_download.return_value = (b"fake", _make_response())
-
-        matcher = _make_matcher()
-        await got_image(_make_bot(), _make_event(), matcher, MagicMock())
-
-        mock_release.assert_called_once_with(im)
-
-    @pytest.mark.asyncio
-    @patch.object(meme_add, "cancel")
-    @patch.object(meme_add, "_release_lock_safe")
-    @patch.object(meme_add, "_download_image", side_effect=RuntimeError("下载失败"))
-    @patch.object(meme_add, "get_index_manager")
-    @patch.object(meme_add, "is_cancelled", return_value=False)
-    @patch.object(
-        meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"]
-    )
-    async def test_lock_released_on_error(
-        self,
-        mock_extract: MagicMock,
-        mock_cancelled: MagicMock,
-        mock_get_im: MagicMock,
-        mock_download: MagicMock,
-        mock_release: MagicMock,
-        mock_cancel: MagicMock,
-    ) -> None:
-        """异常时也应释放锁。"""
-        im = _make_index_manager()
+        """got 中索引锁占用时应回复提示。"""
+        im = _make_index_manager(locked=True)
         mock_get_im.return_value = im
 
         matcher = _make_matcher()
         await got_image(_make_bot(), _make_event(), matcher, MagicMock())
 
-        mock_release.assert_called_once_with(im)
+        matcher.finish.assert_awaited_once()
+        assert "索引正在更新" in matcher.finish.call_args[0][0]
+        mock_deactivate.assert_called_once_with("12345")
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "cancel")
-    @patch.object(meme_add, "_release_lock_safe")
-    @patch.object(meme_add, "resolve_unique_filename")
-    @patch.object(meme_add, "_build_filename", return_value="a.jpg")
-    @patch.object(meme_add, "_get_extension", return_value=".jpg")
-    @patch.object(meme_add, "_download_image")
-    @patch.object(meme_add, "get_index_manager")
-    @patch.object(meme_add, "is_cancelled", return_value=False)
-    @patch.object(
-        meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"]
-    )
-    async def test_session_cancelled_on_success(
+    @patch.object(meme_add, "activate_chat")
+    @patch.object(meme_add, "got_intercept_bypass", return_value=False)
+    @patch.object(meme_add, "extract_image_urls", side_effect=ValueError("解析失败"))
+    @patch.object(meme_add, "deactivate_chat")
+    async def test_extract_urls_exception(
         self,
+        mock_deactivate: MagicMock,
         mock_extract: MagicMock,
-        mock_cancelled: MagicMock,
-        mock_get_im: MagicMock,
-        mock_download: MagicMock,
-        mock_ext: MagicMock,
-        mock_build: MagicMock,
-        mock_resolve: MagicMock,
-        mock_release: MagicMock,
-        mock_cancel: MagicMock,
-        tmp_path: Path,
+        mock_bypass: MagicMock,
+        mock_activate: MagicMock,
     ) -> None:
-        """成功时应清理会话。"""
-        from bot.engine.index_manager import AddResult
-
-        im = _make_index_manager()
-        im.add_single_file = AsyncMock(
-            return_value=AddResult(entry_id="1", reason="added", text="加班心好累")
-        )
-        mock_get_im.return_value = im
-
-        fake_file = tmp_path / "a.jpg"
-        fake_file.write_bytes(b"fake")
-        mock_resolve.return_value = fake_file
-
-        mock_download.return_value = (b"fake", _make_response())
-
+        """extract_image_urls 异常应传播。"""
         matcher = _make_matcher()
-        await got_image(_make_bot(), _make_event("user999"), matcher, MagicMock())
-
-        mock_cancel.assert_called_once_with("user999")
+        with pytest.raises(ValueError):
+            await got_image(_make_bot(), _make_event(), matcher, MagicMock())
+        # deactivate_chat 在内外 except 中各调用一次
+        assert mock_deactivate.call_count >= 1

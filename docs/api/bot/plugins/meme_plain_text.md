@@ -14,7 +14,7 @@ catch_all = on_message(rule=to_me(), priority=99, block=False)
 
 授权用户私聊或群聊 @bot 发送不以 `/` 开头的普通文本时，等同执行 `/search`：
 1. 授权校验
-2. `check_and_cancel()` 会话覆盖检查
+2. `activate_chat()` 激活会话，若已有活跃会话则 `matcher.finish("已有命令在处理中，请先 /cancel")`
 3. 调用 `_search_utils.execute_search()` 执行搜索
 
 ### 未知斜杠命令
@@ -27,7 +27,7 @@ catch_all = on_message(rule=to_me(), priority=99, block=False)
 
 ### 多结果选择
 
-`got("selection")` 处理由本 matcher 触发的搜索多结果选择。委托 `_search_utils.handle_selection()` 处理用户输入编号。
+`got("selection")` 处理由本 matcher 触发的搜索多结果选择。入口调用 `got_intercept_bypass()` 拦截 `/cancel` 和 `/help`；委托 `_search_utils.handle_selection()` 处理用户输入编号。
 
 ## 依赖
 
@@ -36,7 +36,7 @@ catch_all = on_message(rule=to_me(), priority=99, block=False)
 | `is_authorized()` / `log_unauthorized()` | `bot.auth` | 授权校验 |
 | `execute_search()` / `handle_selection()` | `bot.plugins._search_utils` | 搜索核心逻辑 |
 | `HELP_TEXT` | `bot.plugins._help_text` | 帮助文本常量 |
-| `check_and_cancel()` / `cancel()` / `is_cancelled()` | `bot.session` | 会话管理 |
+| `activate_chat()` / `deactivate_chat()` / `got_intercept_bypass()` | `bot.session` | 会话管理 |
 | `MEMES_DIR` | `bot.config` | 图片路径 |
 
 ## 匹配器

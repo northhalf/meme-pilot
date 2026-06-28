@@ -4,7 +4,6 @@
 下载、压缩、OCR、Embedding 并写入索引。
 """
 
-import asyncio
 import hashlib
 import logging
 import re
@@ -26,18 +25,14 @@ from bot.config import MEMES_DIR
 from bot.engine.index_manager import (
     CompressionError,
     EmbeddingError,
-    IndexManager,
     OcrError,
     resolve_unique_filename,
 )
+from bot.plugins._help_text import HELP_TEXT
 from bot.session import (
-    cancel,
-    cancel_timeout_task,
-    check_and_cancel,
-    is_cancelled,
-    pending_sessions,
-    register,
-    timeout_session,
+    activate_chat,
+    deactivate_chat,
+    got_intercept_bypass,
 )
 
 logger = logging.getLogger(__name__)
@@ -56,7 +51,7 @@ add_cmd = on_command("add", rule=to_me(), priority=5, block=True)
 async def handle_add(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
     """/add 命令入口。
 
-    流程：授权校验 → 会话覆盖 → 锁检查 → 捕获目标命名 → 注册会话。
+    流程：授权校验 → 会话检查 → 只读锁检查 → 捕获目标命名。
 
     Args:
         bot: OneBot V11 Bot 实例。
@@ -77,21 +72,23 @@ async def handle_add(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
         await matcher.finish("此命令仅限私聊使用")
         return
 
-    # 会话覆盖检查
-    hint = check_and_cancel(user_id, "add")
-    if hint:
-        await matcher.send(hint)
+    # 会话检查：拒绝而非覆盖
+    if not activate_chat(user_id, "add", matcher):
+        await matcher.finish("已有命令在处理中，请先 /cancel")
+        return
 
     # 获取 IndexManager
     try:
         index_manager = get_index_manager()
     except RuntimeError:
+        deactivate_chat(user_id)
         logger.error("IndexManager 尚未初始化")
         await matcher.finish("服务未就绪，请稍后再试")
         return
 
-    # 检查索引锁
-    if not await index_manager.acquire_lock():
+    # 只读检查索引锁（不持有锁）
+    if index_manager.is_locked:
+        deactivate_chat(user_id)
         logger.info("用户 %s 的 /add 被拒绝：索引正在更新", user_id)
         await matcher.finish("索引正在更新，请稍后再试")
         return
@@ -101,23 +98,7 @@ async def handle_add(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
     target_name = raw_text.removeprefix("/add").removeprefix("add").strip()
     matcher.state["target_name"] = target_name
 
-    # 注册会话
-    register(user_id, matcher, "add")
-
-    # 启动超时任务
-    task = asyncio.create_task(
-        timeout_session(
-            bot,
-            event,
-            user_id,
-            "添加已取消，请重新 /add",
-            on_cleanup=lambda: _release_lock_safe(index_manager),
-        )
-    )
-    # 保存 task 引用到 session，供 got_image 取消
-    session = pending_sessions.get(user_id)
-    if session is not None:
-        session.timeout_task = task
+    # 不再注册 session 或获取锁——got 中使用 got_intercept_bypass 处理
 
 
 @add_cmd.got("image", prompt="请发送图片，60 秒内有效")
@@ -129,8 +110,8 @@ async def got_image(
 ) -> None:
     """接收图片并处理。
 
-    非图片消息时 reject 重新等待；图片消息执行完整添加流程。
-    会话超时时清理 session 状态并提示用户。
+    got 入口重新激活 chat session（不同 asyncio task），
+    然后拦截 /help 和 /cancel，正常图片时执行完整添加流程。
 
     Args:
         bot: OneBot V11 Bot 实例。
@@ -140,39 +121,40 @@ async def got_image(
     """
     user_id = event.get_user_id()
 
-    # ── 阶段 1：图片验证（不涉及锁释放）──
+    # got 入口重新激活 chat session（不同 asyncio task）
+    activate_chat(user_id, "add", matcher)
+
     try:
-        urls = extract_image_urls(image_msg)
-    except Exception:
-        logger.exception("extract_image_urls 异常")
+        # ── 阶段 0：/help 和 /cancel 旁路拦截 ──
+        text = event.get_plaintext().strip()
+        if await got_intercept_bypass(user_id, matcher, text, HELP_TEXT):
+            return
+
+        # ── 阶段 1：图片验证 ──
         try:
-            _release_lock_safe(get_index_manager())
+            urls = extract_image_urls(image_msg)
         except Exception:
-            pass
-        cancel(user_id)
-        raise
-    if not urls:
-        await matcher.reject("请发送一张图片")
-        return  # reject 后锁保持持有，会话继续等待
+            logger.exception("extract_image_urls 异常")
+            deactivate_chat(user_id)
+            raise
+        if not urls:
+            await matcher.reject("请发送一张图片")
+            return  # reject 后会话继续等待
 
-    # 会话有效性检查
-    if is_cancelled(user_id):
-        cancel_timeout_task(user_id)
-        return
-
-    # 用户已发送有效图片，处理开始前取消超时任务
-    cancel_timeout_task(user_id)
-
-    index_manager: IndexManager | None = None
-
-    try:
         # 获取 IndexManager
         try:
             index_manager = get_index_manager()
         except RuntimeError:
+            deactivate_chat(user_id)
             return
 
-        # ── 阶段 2：处理流程（finally 统一释放锁）──
+        # 只读检查索引锁
+        if index_manager.is_locked:
+            deactivate_chat(user_id)
+            await matcher.finish("索引正在更新，请稍后再试")
+            return
+
+        # ── 阶段 2：处理流程 ──
         image_url = urls[0]
         target_name = str(matcher.state.get("target_name", ""))
 
@@ -181,19 +163,19 @@ async def got_image(
             image_data, response = await _download_image(image_url)
         except Exception as exc:
             logger.error("图片下载失败: %s", exc)
+            deactivate_chat(user_id)
             await matcher.finish("图片下载失败")
             return
 
         # 确定扩展名
         ext = _get_extension(image_url, response)
         if ext is None or ext.lower() not in SUPPORTED_EXTENSIONS:
+            deactivate_chat(user_id)
             await matcher.finish(f"不支持的图片格式: {ext or '未知'}")
             return
 
         # 文件名处理
         filename = _build_filename(target_name, image_data, ext)
-
-        # 检查文件名冲突
         filepath = resolve_unique_filename(MEMES_DIR, filename)
         filename = filepath.name
 
@@ -203,6 +185,7 @@ async def got_image(
             filepath.write_bytes(image_data)
         except OSError as exc:
             logger.error("保存图片失败: %s", exc)
+            deactivate_chat(user_id)
             await matcher.finish("图片保存失败")
             return
 
@@ -211,46 +194,41 @@ async def got_image(
             result = await index_manager.add_single_file(filename)
         except CompressionError as exc:
             logger.error("图片压缩失败: %s", exc)
-            filepath.unlink(missing_ok=True)
-            await matcher.finish("图片压缩失败")
-            return
+            msg = "图片压缩失败"
         except OcrError as exc:
             logger.error("OCR 失败: %s", exc)
-            filepath.unlink(missing_ok=True)
-            await matcher.finish("OCR 服务不可用")
-            return
+            msg = "OCR 服务不可用"
         except EmbeddingError as exc:
             logger.error("Embedding 失败: %s", exc)
-            filepath.unlink(missing_ok=True)
-            await matcher.finish("Embedding 服务不可用")
-            return
+            msg = "Embedding 服务不可用"
         except Exception as exc:
             logger.exception("添加表情包异常")
-            filepath.unlink(missing_ok=True)
-            await matcher.finish("添加失败，请查看日志")
+            msg = "添加失败，请查看日志"
+        else:
+            # 成功：回复结果
+            deactivate_chat(user_id)
+            if result.reason == "no_text":
+                await matcher.finish("未识别到文字，已移至 meme_no_text/")
+            elif result.reason == "replaced":
+                ocr_display = _format_ocr_text(result.text)
+                await matcher.finish(f"替换旧图✅，识别到的文字为：\n「{ocr_display}」")
+            else:
+                ocr_display = _format_ocr_text(result.text)
+                await matcher.finish(f"新增表情包✅，识别到的文字为：\n「{ocr_display}」")
             return
 
-        # 成功：回复结果，附带 OCR 文字
-        if result.reason == "no_text":
-            await matcher.finish("未识别到文字，已移至 meme_no_text/")
-        elif result.reason == "replaced":
-            ocr_display = _format_ocr_text(result.text)
-            await matcher.finish(f"替换旧图✅，识别到的文字为：\n「{ocr_display}」")
-        else:
-            ocr_display = _format_ocr_text(result.text)
-            await matcher.finish(f"新增表情包✅，识别到的文字为：\n「{ocr_display}」")
+        # 统一错误处理：删除已保存的图片 + 清理会话
+        filepath.unlink(missing_ok=True)
+        deactivate_chat(user_id)
+        await matcher.finish(msg)
 
     except (FinishedException, RejectedException):
+        deactivate_chat(user_id)
         raise
     except Exception:
-        # 未预期异常
         logger.exception("用户 %s 的 /add 处理异常", user_id)
+        deactivate_chat(user_id)
         raise
-    finally:
-        if not is_cancelled(user_id):
-            cancel(user_id)
-        if index_manager is not None:
-            _release_lock_safe(index_manager)
 
 
 # ---------------------------------------------------------------------------
@@ -381,15 +359,3 @@ def _format_ocr_text(text: str, max_len: int = 50) -> str:
     if len(text) <= max_len:
         return text
     return f"{text[:max_len]}...（总文本长度{len(text)}）"
-
-
-def _release_lock_safe(index_manager: IndexManager) -> None:
-    """安全释放索引锁。
-
-    Args:
-        index_manager: 索引管理器实例。
-    """
-    try:
-        index_manager.release_lock()
-    except Exception:
-        logger.debug("释放锁时异常", exc_info=True)

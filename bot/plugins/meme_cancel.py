@@ -1,0 +1,45 @@
+"""/cancel 命令插件 — 取消当前活跃会话。
+
+授权用户在任何状态（包括 got 等待中）发送 /cancel 时，
+通过 execute_cancel 取消正在进行的命令会话。
+"""
+
+import logging
+
+from nonebot import on_command
+from nonebot.adapters.onebot.v11 import Bot, MessageEvent
+from nonebot.matcher import Matcher
+from nonebot.rule import to_me
+
+from bot.auth import is_authorized, log_unauthorized
+from bot.session import execute_cancel
+
+logger = logging.getLogger(__name__)
+
+cancel_cmd = on_command("cancel", rule=to_me(), priority=5, block=True)
+
+
+@cancel_cmd.handle()
+async def handle_cancel(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
+    """/cancel 命令处理入口。
+
+    execute_cancel 内部处理自取消（同频道）和跨 task 取消的逻辑。
+    此 handler 只负责授权校验和结果转发。
+
+    Args:
+        bot: OneBot V11 Bot 实例。
+        event: 消息事件。
+        matcher: NoneBot2 Matcher 实例。
+    """
+    user_id = event.get_user_id()
+    logger.info("用户 %s 调用 /cancel", user_id)
+
+    if not is_authorized(user_id):
+        log_unauthorized(user_id, "cancel")
+        return
+
+    result = await execute_cancel(user_id)
+    if result is None:
+        await matcher.finish("当前没有活跃的会话")
+    else:
+        await matcher.finish(result)

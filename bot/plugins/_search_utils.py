@@ -6,6 +6,7 @@
 
 import asyncio
 import logging
+import uuid
 
 from nonebot.adapters.onebot.v11 import (
     Bot,
@@ -17,7 +18,12 @@ from nonebot.matcher import Matcher
 from bot.app_state import get_index_manager, get_keyword_searcher
 from bot.config import MEMES_DIR
 from bot.engine.keyword_searcher import SearchResult
-from bot.session import pending_sessions, register, timeout_session
+
+from bot.session import (
+    create_selection,
+    deactivate_chat,
+    timeout_session,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +67,7 @@ async def execute_search(
     """核心搜索逻辑。
 
     流程：锁检查 → 索引空检查 → 执行搜索 → 结果分支。
-    多结果时注册 session 并启动超时任务。
+    多结果时创建选择会话（selection_id + create_selection）并启动超时任务。
 
     Args:
         bot: OneBot V11 Bot 实例。
@@ -107,10 +113,12 @@ async def execute_search(
         return
 
     if not results:
+        deactivate_chat(user_id)
         await cmd_matcher.finish("没有匹配到任何表情包 🙁")
         return
 
     if len(results) == 1:
+        deactivate_chat(user_id)
         image_path = MEMES_DIR / results[0].filename
         await cmd_matcher.finish(
             MessageSegment.image("file://" + str(image_path.resolve()))
@@ -123,17 +131,15 @@ async def execute_search(
         lines.append(f"{i}. {r.text}")
     lines.append(f"回复编号即可 (1-{len(results)})")
 
-    # 存储候选并注册会话
+    # 存储候选、创建选择会话
     cmd_matcher.state["candidates"] = results
-    register(user_id, cmd_matcher, "search")
+    selection_id = str(uuid.uuid4())
+    cmd_matcher.state["selection_id"] = selection_id
 
     await cmd_matcher.send("\n".join(lines))
 
-    # 启动超时任务
+    # 启动超时任务（使用 selection_id 双重校验）
     task = asyncio.create_task(
-        timeout_session(bot, event, user_id, "选择已过期，请重新搜索")
+        timeout_session(bot, event, user_id, selection_id, "选择已过期，请重新搜索")
     )
-    # 保存 task 引用到 session，供 got_selection 取消
-    session = pending_sessions.get(user_id)
-    if session is not None:
-        session.timeout_task = task
+    create_selection(user_id, selection_id, task)

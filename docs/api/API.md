@@ -31,6 +31,7 @@ api
         ├── meme_refresh.md
         ├── meme_add.md
         ├── meme_ai.md
+        ├── meme_cancel.md
         ├── meme_plain_text.md
         └── meme_search.md
 ```
@@ -413,7 +414,7 @@ def handle_selection(
 # 处理用户选择编号，返回 SearchResult 或错误消息字符串
 ```
 
-- 依赖：`app_state.get_index_manager()`、`app_state.get_keyword_searcher()`、`bot.session`（register、timeout_session）、`bot.config.MEMES_DIR`
+- 依赖：`app_state.get_index_manager()`、`app_state.get_keyword_searcher()`、`bot.session`（`create_selection`、`timeout_session`、`deactivate_chat`）、`bot.config.MEMES_DIR`
 
 ### `bot/plugins/_help_text.py`
 
@@ -441,32 +442,40 @@ NoneBot2 命令插件，注册 `/help` 命令。
 - 普通文本：等同执行 `/search`，调用 `_search_utils.execute_search`（支持私聊和群聊 @bot）
 - 未知斜杠命令：回复"未知命令"并附帮助摘要（支持私聊和群聊 @bot）
 - got：`catch_all.got("selection")` 处理搜索多结果选择
-- 依赖：`auth.is_authorized()`、`_search_utils.execute_search`、`_search_utils.handle_selection`、`session.check_and_cancel`、`session.is_cancelled`、`session.cancel`
+- 依赖：`auth.is_authorized()`、`_search_utils.execute_search`、`_search_utils.handle_selection`、`bot.session`（`activate_chat`、`deactivate_chat`、`got_intercept_bypass`）
 
 ### `bot/session.py`
 
-共享会话管理模块，管理 /add、/search 等命令的待处理会话。
+共享会话管理模块，管理聊天会话（ChatSession）和选择会话（SelectionSession）。
 
-- `PendingSession` — 待处理会话数据类（matcher, cancelled, type）
-- `pending_sessions: dict[str, PendingSession]` — 模块级会话字典
-- `check_and_cancel(user_id, new_type) -> str | None` — 检查旧会话并标记取消
-- `register(user_id, matcher, type) -> None` — 注册新会话
-- `cancel(user_id) -> None` — 移除会话
-- `is_cancelled(user_id) -> bool` — 检查会话是否已取消
-- `timeout_session(bot, event, user_id, message, *, on_cleanup=None, timeout=None) -> None` — 会话超时检查任务，等待指定秒数后若会话仍活跃则发送超时提示并清理；`timeout` 默认从 `SESSION_EXPIRE_TIMEOUT` 环境变量读取
+- `ChatSession(session_id, active=False, command_type=None, matcher=None, current_task=None)` — 聊天会话数据类
+- `SelectionSession(selection_id, timeout_task=None)` — 选择会话数据类
+- `chat_sessions: dict[str, ChatSession]` — 用户聊天会话字典
+- `selection_sessions: dict[str, SelectionSession]` — 用户选择会话字典
+- `get_or_create_chat(user_id) -> ChatSession` — 获取或创建聊天会话
+- `activate_chat(user_id, command_type, matcher) -> bool` — 激活会话（返回 False 表示已有活跃会话）
+- `deactivate_chat(user_id) -> None` — 重置会话为空闲
+- `create_selection(user_id, selection_id, timeout_task) -> None` — 创建选择会话
+- `remove_selection(user_id) -> SelectionSession | None` — 移除选择会话
+- `get_selection(user_id) -> SelectionSession | None` — 查询选择会话
+- `execute_cancel(user_id) -> str | None` — 取消逻辑（自取消保护、跨 task 取消、选择会话清理）
+- `got_intercept_bypass(user_id, matcher, text, HELP_TEXT) -> bool` — got handler 入口拦截 /help 和 /cancel
+- `timeout_session(bot, event, user_id, selection_id, message, *, on_cleanup, timeout)` — 会话超时检查任务
 
 ### `bot/plugins/meme_add.py`
 
 NoneBot2 命令插件，注册 `/add` 命令。
 
-- 依赖：`app_state.get_index_manager()`、`auth.is_authorized()`、`bot.session`
-- 锁：`await IndexManager.acquire_lock()` 获取；释放集中在 `got_image` 的 `finally` 块（`_release_lock_safe`）和 `handle_add` 超时回调中
+- 依赖：`app_state.get_index_manager()`、`auth.is_authorized()`、`bot.session`（`activate_chat`/`deactivate_chat`/`got_intercept_bypass`）
+- 锁：只读检查 `IndexManager.is_locked`；管道并发由 `IndexManager._add_sem` 控制
 - 管道：`IndexManager.add_single_file() -> AddResult`
 - 图片下载：`httpx.AsyncClient`，30s 超时
 - 文件名：`_sanitize_filename()` 安全化 / `_auto_filename()` 自动生成
 - 文件冲突：`resolve_unique_filename()`
-- 超时：`asyncio.create_task(timeout_session(..., on_cleanup=...))` 启动超时检查，超时后释放索引锁
+- 超时：`asyncio.create_task(timeout_session(..., on_cleanup=...))` 启动超时检查，超时后清理会话
 - 群聊：授权用户群聊 @bot 调用时回复"此命令仅限私聊使用"
+- `/cancel` 和 `/help` 在 got 等待阶段可旁路触发（`got_intercept_bypass`）
+- 错误处理：`try/except/else` 模式，异常统一集中处理
 
 ### `bot/plugins/meme_ai.py`
 
@@ -482,9 +491,9 @@ NoneBot2 命令插件，注册 `/ai` 命令。
 
 NoneBot2 命令插件，注册 `/search` 命令（薄包装，核心逻辑委托 `_search_utils`）。
 
-- 依赖：`auth.is_authorized()`、`_search_utils.execute_search`、`_search_utils.handle_selection`、`session.check_and_cancel`、`session.is_cancelled`、`session.cancel`
-- 流程：`handle_search` — 授权校验 → 会话覆盖 → 提取关键词 → `execute_search`
-- 选择：`got_selection` — 会话检查 → `handle_selection` → 发送图片/reject
+- 依赖：`auth.is_authorized()`、`_search_utils.execute_search`、`_search_utils.handle_selection`、`bot.session`（`activate_chat`、`deactivate_chat`、`got_intercept_bypass`）
+- 流程：`handle_search` — 授权校验 → 会话检查 → 提取关键词 → `execute_search`
+- 选择：`got_selection` — `got_intercept_bypass` 拦截 → 会话检查 → `handle_selection` → 发送图片/reject
 
 ### `bot/config.py`
 

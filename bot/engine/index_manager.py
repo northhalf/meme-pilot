@@ -253,7 +253,9 @@ class IndexManager:
         _entries: 内存中的 index entries。
         _dedup_index: 去重键到 entry_id 的反向索引，加速 _find_entry_by_dedup_key。
         _embeddings: 内存中的 embedding 数据。
-        _lock: 索引更新 asyncio.Lock。
+        _lock: sync_with_filesystem 独占 asyncio.Lock。
+        _add_sem: add_single_file pipeline 并发信号量。
+        _is_syncing: 布尔值，True 表示 sync_with_filesystem 正在执行。
         _sync_semaphore: 文件系统同步并发上限信号量。
         _sync_concurrency: 当前同步并发上限值。
         index_version: 索引版本号。
@@ -319,6 +321,11 @@ class IndexManager:
         )
         self._sync_semaphore = asyncio.Semaphore(concurrency)
         self._sync_concurrency = concurrency
+
+        # add_single_file 并发上限（与 _sync_semaphore 共享同一并发值）
+        self._add_sem = asyncio.Semaphore(concurrency)
+        # _is_syncing: True 表示 sync_with_filesystem 正在执行，is_locked 反映此值
+        self._is_syncing: bool = False
 
     # ------------------------------------------------------------------
     # 加载 / 校验
@@ -746,6 +753,9 @@ class IndexManager:
         供 /add 插件调用。图片已保存在 memes/ 目录下，
         本方法执行压缩 → OCR → Embedding → 写入索引。
 
+        受 _add_sem 信号量约束 pipeline 并发数，不持有 _lock，
+        不影响 sync_with_filesystem 独占锁。
+
         Args:
             filename: memes/ 下的文件名。
 
@@ -757,7 +767,8 @@ class IndexManager:
             OcrError: OCR 服务未注入或调用失败。
             EmbeddingError: Embedding 服务未注入或调用失败。
         """
-        text, embedding = await self._process_image_pipeline(filename)
+        async with self._add_sem:
+            text, embedding = await self._process_image_pipeline(filename)
         return self.add_entry(filename, text, embedding)
 
     def remove_entry(self, entry_id: str) -> bool:
@@ -888,11 +899,13 @@ class IndexManager:
         if self._lock.locked():
             return False
         await self._lock.acquire()
+        self._is_syncing = True
         logger.debug("索引更新锁已获取")
         return True
 
     def release_lock(self) -> None:
         """释放索引更新锁。"""
+        self._is_syncing = False
         if self._lock.locked():
             self._lock.release()
             logger.debug("索引更新锁已释放")
@@ -1288,4 +1301,4 @@ class IndexManager:
     @property
     def is_locked(self) -> bool:
         """索引是否处于锁定状态。"""
-        return self._lock.locked()
+        return self._is_syncing

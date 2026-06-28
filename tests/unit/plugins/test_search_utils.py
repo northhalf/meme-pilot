@@ -167,12 +167,13 @@ class TestExecuteSearch:
         assert "表情包目录为空" in _cmd.finish.call_args[0][0]
 
     @pytest.mark.asyncio
+    @patch("bot.plugins._search_utils.deactivate_chat")
     @patch("bot.plugins._search_utils.get_keyword_searcher")
     @patch("bot.plugins._search_utils.get_index_manager")
     async def test_no_results_replies(
-        self, mock_get_im: MagicMock, mock_get_ks: MagicMock
+        self, mock_get_im: MagicMock, mock_get_ks: MagicMock, mock_deactivate: MagicMock
     ) -> None:
-        """无匹配结果时应回复提示。"""
+        """无匹配结果时应回复提示并 deactivate_chat。"""
         from bot.plugins._search_utils import execute_search
 
         mock_get_im.return_value = _make_index_manager()
@@ -184,15 +185,21 @@ class TestExecuteSearch:
 
         _cmd.finish.assert_awaited_once()
         assert "没有匹配到" in _cmd.finish.call_args[0][0]
+        mock_deactivate.assert_called_once_with("12345")
 
     @pytest.mark.asyncio
+    @patch("bot.plugins._search_utils.deactivate_chat")
     @patch("bot.plugins._search_utils.MessageSegment")
     @patch("bot.plugins._search_utils.get_keyword_searcher")
     @patch("bot.plugins._search_utils.get_index_manager")
     async def test_single_result_sends_image(
-        self, mock_get_im: MagicMock, mock_get_ks: MagicMock, mock_segment: MagicMock
+        self,
+        mock_get_im: MagicMock,
+        mock_get_ks: MagicMock,
+        mock_segment: MagicMock,
+        mock_deactivate: MagicMock,
     ) -> None:
-        """唯一结果应直接发送图片。"""
+        """唯一结果应直接发送图片并 deactivate_chat。"""
         from bot.plugins._search_utils import execute_search
 
         mock_get_im.return_value = _make_index_manager()
@@ -206,20 +213,21 @@ class TestExecuteSearch:
 
         _cmd.finish.assert_awaited_once()
         mock_segment.image.assert_called_once()
+        mock_deactivate.assert_called_once_with("12345")
 
     @pytest.mark.asyncio
+    @patch("bot.plugins._search_utils.create_selection")
     @patch("bot.plugins._search_utils.timeout_session")
-    @patch("bot.plugins._search_utils.register")
     @patch("bot.plugins._search_utils.get_keyword_searcher")
     @patch("bot.plugins._search_utils.get_index_manager")
     async def test_multiple_results_registers_session(
         self,
         mock_get_im: MagicMock,
         mock_get_ks: MagicMock,
-        mock_register: MagicMock,
         mock_timeout: MagicMock,
+        mock_create_selection: MagicMock,
     ) -> None:
-        """多个结果时应注册会话并启动超时。"""
+        """多个结果时应创建选择会话并启动超时。"""
         from bot.plugins._search_utils import execute_search
 
         results = [
@@ -234,9 +242,18 @@ class TestExecuteSearch:
 
         await execute_search(_make_bot(), _make_event("111"), _cmd, "加班")
 
-        mock_register.assert_called_once_with("111", _cmd, "search")
         assert "candidates" in _cmd.state
         assert len(_cmd.state["candidates"]) == 2
+        assert "selection_id" in _cmd.state
+        mock_create_selection.assert_called_once()
+        args = mock_create_selection.call_args[0]
+        assert args[0] == "111"  # user_id
+        assert args[1] == _cmd.state["selection_id"]  # selection_id matches
+        mock_timeout.assert_called_once()
+        timeout_args = mock_timeout.call_args[0]
+        assert timeout_args[2] == "111"  # user_id
+        assert timeout_args[3] == _cmd.state["selection_id"]  # selection_id
+        assert "选择已过期" in timeout_args[4]  # message
 
     @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.get_keyword_searcher")

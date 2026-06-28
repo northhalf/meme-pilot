@@ -8,6 +8,7 @@
 import logging
 
 from nonebot import on_message
+from nonebot.exception import FinishedException, RejectedException
 from nonebot.adapters.onebot.v11 import (
     Bot,
     Message,
@@ -20,9 +21,15 @@ from nonebot.rule import to_me
 
 from bot.auth import is_authorized, log_unauthorized
 from bot.config import MEMES_DIR
-from bot.plugins._help_text import HELP_TEXT
 from bot.plugins._search_utils import execute_search, handle_selection
-from bot.session import cancel, cancel_timeout_task, check_and_cancel, is_cancelled
+from bot.plugins._help_text import HELP_TEXT
+from bot.session import (
+    activate_chat,
+    deactivate_chat,
+    get_selection,
+    got_intercept_bypass,
+    remove_selection,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +43,7 @@ catch_all = on_message(rule=to_me(), priority=99, block=False)
 
 
 @catch_all.handle()
-async def handle_plain_text(
-    bot: Bot, event: MessageEvent, matcher: Matcher
-) -> None:
+async def handle_plain_text(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
     """兜底处理授权用户的普通文本和未知斜杠命令。
 
     授权用户私聊发送不以 / 开头的普通文本时，等同执行 /search。
@@ -55,14 +60,16 @@ async def handle_plain_text(
 
     if text.startswith("/"):
         logger.info("用户 %s 发送未知命令: %r", user_id, text)
-        await catch_all.finish(f"未知命令\n\n{HELP_TEXT}")
+        await matcher.finish(f"未知命令\n\n{HELP_TEXT}")
         return
 
     # 普通文本当作 /search
     logger.info("用户 %s 的普通文本当作 /search: %r", user_id, text)
-    hint = check_and_cancel(user_id, "search")
-    if hint:
-        await matcher.send(hint)
+    # 会话检查：拒绝而非覆盖
+    if not activate_chat(user_id, "search", matcher):
+        await matcher.finish("已有命令在处理中，请先 /cancel")
+        return
+
     await execute_search(bot, event, matcher, text)
 
 
@@ -75,26 +82,47 @@ async def got_selection(
 ) -> None:
     """接收用户选择编号并发送对应表情包。
 
-    仅处理由本 matcher（catch_all）触发的搜索会话。
+    got 入口重新激活 chat session（不同 asyncio task），
+    然后拦截 /help 和 /cancel，有效选择时发送图片。
     """
     user_id = event.get_user_id()
 
-    if is_cancelled(user_id):
-        cancel_timeout_task(user_id)
-        return
+    # got 入口重新激活 chat session
+    activate_chat(user_id, "search", matcher)
 
-    candidates = matcher.state.get("candidates", [])
+    try:
+        # /help 和 /cancel 旁路拦截
+        text = event.get_plaintext().strip()
+        if await got_intercept_bypass(user_id, matcher, text, HELP_TEXT):
+            return
 
-    text = selection_msg.extract_plain_text().strip()
-    result = handle_selection(matcher, candidates, text)
+        # 检查选择会话是否仍有效
+        ss = get_selection(user_id)
+        if ss is None:
+            deactivate_chat(user_id)
+            await matcher.finish("选择已过期，请重新搜索")
+            return
 
-    if isinstance(result, str):
-        await catch_all.reject(result)
-        return
+        candidates = matcher.state.get("candidates", [])
+        selection_text = selection_msg.extract_plain_text().strip()
 
-    # 用户已有效选择，取消超时任务
-    cancel_timeout_task(user_id)
+        result = handle_selection(matcher, candidates, selection_text)
+        if isinstance(result, str):
+            await matcher.reject(result)
+            return
 
-    cancel(user_id)
-    image_path = MEMES_DIR / result.filename
-    await catch_all.finish(MessageSegment.image("file://" + str(image_path.resolve())))
+        # 有效选择：清除选择会话
+        remove_selection(user_id)
+        image_path = MEMES_DIR / result.filename
+        await matcher.finish(
+            MessageSegment.image("file://" + str(image_path.resolve()))
+        )
+        deactivate_chat(user_id)
+
+    except (FinishedException, RejectedException):
+        deactivate_chat(user_id)
+        raise
+    except Exception:
+        logger.exception("用户 %s 的兜底搜索处理异常", user_id)
+        deactivate_chat(user_id)
+        raise

@@ -40,7 +40,7 @@
 |--------|------|------|
 | `get_index_manager()` | `bot.app_state` | 锁检查和索引空检查 |
 | `get_keyword_searcher()` | `bot.app_state` | 关键词搜索 |
-| `register()` / `timeout_session()` / `cancel()` | `bot.session` | 会话管理 |
+| `create_selection()` / `deactivate_chat()` / `timeout_session()` | `bot.session` | 会话管理（创建选择、停用聊天、超时检查） |
 | `MEMES_DIR` | `bot.config` | 图片路径 |
 
 ## 错误处理

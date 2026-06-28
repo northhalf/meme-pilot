@@ -43,6 +43,14 @@ def _make_bot() -> MagicMock:
     return bot
 
 
+def _make_matcher() -> MagicMock:
+    """创建模拟的 Matcher。"""
+    matcher = MagicMock()
+    matcher.finish = AsyncMock()
+    matcher.send = AsyncMock()
+    return matcher
+
+
 def _make_index_manager(
     *,
     acquire_result: bool = True,
@@ -63,13 +71,8 @@ def _make_index_manager(
     return im
 
 
-def _reset_cmd() -> None:
-    """重置 mock_cmd 的 finish 为新的 AsyncMock。"""
-    _mock_cmd.finish = AsyncMock()
-    _mock_cmd.send = AsyncMock()
 
-
-# ---------------------------------------------------------------------------
+# ----------
 # 测试：授权校验
 # ---------------------------------------------------------------------------
 
@@ -84,11 +87,11 @@ class TestHandleRefreshAuth:
         self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
         """授权用户应触发同步。"""
-        _reset_cmd()
+        matcher = _make_matcher()
         im = _make_index_manager()
         mock_get_im.return_value = im
 
-        await handle_refresh(_make_bot(), _make_event("111"))
+        await handle_refresh(_make_bot(), _make_event("111"), matcher)
 
         im.acquire_lock.assert_called_once()
         im.sync_with_filesystem.assert_awaited_once()
@@ -100,13 +103,13 @@ class TestHandleRefreshAuth:
         self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
         """非授权用户应被静默忽略。"""
-        _reset_cmd()
+        matcher = _make_matcher()
         bot = _make_bot()
 
-        await handle_refresh(bot, _make_event("999"))
+        await handle_refresh(bot, _make_event("999"), matcher)
 
         mock_get_im.assert_not_called()
-        _mock_cmd.finish.assert_not_called()
+        matcher.finish.assert_not_called()
         bot.send.assert_not_called()
 
     @pytest.mark.asyncio
@@ -116,15 +119,15 @@ class TestHandleRefreshAuth:
         self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
         """群聊中调用 /refresh 应回复仅限私聊提示。"""
-        _reset_cmd()
+        matcher = _make_matcher()
         event = MagicMock()
         event.get_user_id.return_value = "111"
         event.message_type = "group"
 
-        await handle_refresh(_make_bot(), event)
+        await handle_refresh(_make_bot(), event, matcher)
 
-        _mock_cmd.finish.assert_awaited_once()
-        call_args = _mock_cmd.finish.call_args[0][0]
+        matcher.finish.assert_awaited_once()
+        call_args = matcher.finish.call_args[0][0]
         assert "仅限私聊" in call_args
         mock_get_im.assert_not_called()
 
@@ -144,13 +147,13 @@ class TestHandleRefreshLock:
         self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
         """锁占用时应回复提示。"""
-        _reset_cmd()
+        matcher = _make_matcher()
         im = _make_index_manager(acquire_result=False)
         mock_get_im.return_value = im
 
-        await handle_refresh(_make_bot(), _make_event("12345"))
+        await handle_refresh(_make_bot(), _make_event("12345"), matcher)
 
-        _mock_cmd.finish.assert_awaited_once_with("索引正在更新，请稍后再试")
+        matcher.finish.assert_awaited_once_with("索引正在更新，请稍后再试")
         im.sync_with_filesystem.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -160,11 +163,11 @@ class TestHandleRefreshLock:
         self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
         """同步完成后应释放锁。"""
-        _reset_cmd()
+        matcher = _make_matcher()
         im = _make_index_manager()
         mock_get_im.return_value = im
 
-        await handle_refresh(_make_bot(), _make_event("12345"))
+        await handle_refresh(_make_bot(), _make_event("12345"), matcher)
 
         im.release_lock.assert_called_once()
 
@@ -175,12 +178,12 @@ class TestHandleRefreshLock:
         self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
         """sync_with_filesystem 异常时也应释放锁。"""
-        _reset_cmd()
+        matcher = _make_matcher()
         im = _make_index_manager()
         im.sync_with_filesystem = AsyncMock(side_effect=RuntimeError("API 失败"))
         mock_get_im.return_value = im
 
-        await handle_refresh(_make_bot(), _make_event("12345"))
+        await handle_refresh(_make_bot(), _make_event("12345"), matcher)
 
         im.release_lock.assert_called_once()
 
@@ -200,12 +203,12 @@ class TestHandleRefreshSync:
         self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
         """应先发送进度提示消息。"""
-        _reset_cmd()
+        matcher = _make_matcher()
         im = _make_index_manager()
         mock_get_im.return_value = im
         bot = _make_bot()
 
-        await handle_refresh(bot, _make_event("12345"))
+        await handle_refresh(bot, _make_event("12345"), matcher)
 
         bot.send.assert_awaited_once()
         call_args = bot.send.call_args[0]
@@ -218,15 +221,15 @@ class TestHandleRefreshSync:
         self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
         """sync_with_filesystem 异常时应回复错误提示。"""
-        _reset_cmd()
+        matcher = _make_matcher()
         im = _make_index_manager()
         im.sync_with_filesystem = AsyncMock(side_effect=RuntimeError("网络错误"))
         mock_get_im.return_value = im
 
-        await handle_refresh(_make_bot(), _make_event("12345"))
+        await handle_refresh(_make_bot(), _make_event("12345"), matcher)
 
-        _mock_cmd.finish.assert_awaited_once()
-        call_args = _mock_cmd.finish.call_args[0][0]
+        matcher.finish.assert_awaited_once()
+        call_args = matcher.finish.call_args[0][0]
         assert "失败" in call_args
 
 
@@ -247,14 +250,14 @@ class TestHandleRefreshResult:
         """memes/ 为空时应回复空目录提示。"""
         from bot.engine.index_manager import SyncResult
 
-        _reset_cmd()
+        matcher = _make_matcher()
         im = _make_index_manager(entry_count=0, sync_result=SyncResult())
         mock_get_im.return_value = im
 
-        await handle_refresh(_make_bot(), _make_event("12345"))
+        await handle_refresh(_make_bot(), _make_event("12345"), matcher)
 
-        _mock_cmd.finish.assert_awaited_once()
-        call_args = _mock_cmd.finish.call_args[0][0]
+        matcher.finish.assert_awaited_once()
+        call_args = matcher.finish.call_args[0][0]
         assert "表情包目录为空" in call_args
 
     @pytest.mark.asyncio
@@ -266,15 +269,15 @@ class TestHandleRefreshResult:
         """正常同步后应回复摘要。"""
         from bot.engine.index_manager import SyncResult
 
-        _reset_cmd()
+        matcher = _make_matcher()
         result = SyncResult(added=3, deleted=1, deduped=0, no_text_moved=0)
         im = _make_index_manager(entry_count=7, sync_result=result)
         mock_get_im.return_value = im
 
-        await handle_refresh(_make_bot(), _make_event("12345"))
+        await handle_refresh(_make_bot(), _make_event("12345"), matcher)
 
-        _mock_cmd.finish.assert_awaited_once()
-        call_args = _mock_cmd.finish.call_args[0][0]
+        matcher.finish.assert_awaited_once()
+        call_args = matcher.finish.call_args[0][0]
         assert "索引刷新完成" in call_args
         assert "新增: 3" in call_args
         assert "删除: 1" in call_args
@@ -288,14 +291,14 @@ class TestHandleRefreshResult:
         """有失败文件时应列出。"""
         from bot.engine.index_manager import SyncResult
 
-        _reset_cmd()
+        matcher = _make_matcher()
         result = SyncResult(added=1, failed=["bad.jpg", "corrupt.png"])
         im = _make_index_manager(entry_count=3, sync_result=result)
         mock_get_im.return_value = im
 
-        await handle_refresh(_make_bot(), _make_event("12345"))
+        await handle_refresh(_make_bot(), _make_event("12345"), matcher)
 
-        call_args = _mock_cmd.finish.call_args[0][0]
+        call_args = matcher.finish.call_args[0][0]
         assert "失败: 2" in call_args
         assert "bad.jpg" in call_args
         assert "corrupt.png" in call_args
@@ -309,15 +312,15 @@ class TestHandleRefreshResult:
         """失败文件最多显示前 10 个。"""
         from bot.engine.index_manager import SyncResult
 
-        _reset_cmd()
+        matcher = _make_matcher()
         failed = [f"f{i}.jpg" for i in range(15)]
         result = SyncResult(added=0, failed=failed)
         im = _make_index_manager(entry_count=5, sync_result=result)
         mock_get_im.return_value = im
 
-        await handle_refresh(_make_bot(), _make_event("12345"))
+        await handle_refresh(_make_bot(), _make_event("12345"), matcher)
 
-        call_args = _mock_cmd.finish.call_args[0][0]
+        call_args = matcher.finish.call_args[0][0]
         assert "f0.jpg" in call_args
         assert "f9.jpg" in call_args
         assert "f14.jpg" not in call_args
@@ -338,11 +341,11 @@ class TestHandleRefreshInitError:
         self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
         """IndexManager 未初始化时应回复错误提示。"""
-        _reset_cmd()
+        matcher = _make_matcher()
         mock_get_im.side_effect = RuntimeError("未初始化")
 
-        await handle_refresh(_make_bot(), _make_event("12345"))
+        await handle_refresh(_make_bot(), _make_event("12345"), matcher)
 
-        _mock_cmd.finish.assert_awaited_once()
-        call_args = _mock_cmd.finish.call_args[0][0]
+        matcher.finish.assert_awaited_once()
+        call_args = matcher.finish.call_args[0][0]
         assert "未就绪" in call_args

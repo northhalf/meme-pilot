@@ -96,10 +96,11 @@ class TestHandleSearchAuth:
     """授权校验测试。"""
 
     @pytest.mark.asyncio
+    @patch.object(meme_search, "activate_chat", return_value=True)
     @patch.object(meme_search, "execute_search", new_callable=AsyncMock)
     @patch.object(meme_search, "is_authorized", return_value=True)
     async def test_authorized_user_proceeds(
-        self, mock_auth: MagicMock, mock_exec: AsyncMock
+        self, mock_auth: MagicMock, mock_exec: AsyncMock, mock_activate: MagicMock
     ) -> None:
         """授权用户应正常调用 execute_search。"""
         await handle_search(_make_bot(), _make_event(), _make_matcher())
@@ -124,47 +125,46 @@ class TestHandleSearchAuth:
 
 
 # ---------------------------------------------------------------------------
-# 会话覆盖
+# 会话拒绝
 # ---------------------------------------------------------------------------
 
 
-class TestHandleSearchSessionOverride:
-    """会话覆盖测试。"""
+class TestHandleSearchSessionRejection:
+    """会话拒绝测试。"""
 
     @pytest.mark.asyncio
     @patch.object(meme_search, "execute_search", new_callable=AsyncMock)
-    @patch.object(
-        meme_search, "check_and_cancel", return_value="已取消上一条未完成的操作"
-    )
+    @patch.object(meme_search, "activate_chat", return_value=False)
     @patch.object(meme_search, "is_authorized", return_value=True)
-    async def test_existing_session_cancelled(
+    async def test_active_session_rejected(
         self,
         mock_auth: MagicMock,
-        mock_check: MagicMock,
+        mock_activate: MagicMock,
         mock_exec: AsyncMock,
     ) -> None:
-        """旧会话存在时应取消并提示。"""
+        """活跃会话存在时应拒绝新命令。"""
         matcher = _make_matcher()
         await handle_search(_make_bot(), _make_event(), matcher)
 
-        matcher.send.assert_awaited_once()
-        assert "已取消上一条未完成的操作" in matcher.send.call_args[0][0]
+        matcher.finish.assert_awaited_once_with("已有命令在处理中，请先 /cancel")
+        mock_exec.assert_not_awaited()
 
     @pytest.mark.asyncio
     @patch.object(meme_search, "execute_search", new_callable=AsyncMock)
-    @patch.object(meme_search, "check_and_cancel", return_value=None)
+    @patch.object(meme_search, "activate_chat", return_value=True)
     @patch.object(meme_search, "is_authorized", return_value=True)
-    async def test_no_existing_session_skips_hint(
+    async def test_inactive_session_proceeds(
         self,
         mock_auth: MagicMock,
-        mock_check: MagicMock,
+        mock_activate: MagicMock,
         mock_exec: AsyncMock,
     ) -> None:
-        """无旧会话时不应发送提示。"""
+        """无活跃会话时应正常执行搜索。"""
         matcher = _make_matcher()
         await handle_search(_make_bot(), _make_event(), matcher)
 
         matcher.send.assert_not_awaited()
+        mock_exec.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -176,9 +176,10 @@ class TestHandleSearchEmptyKeyword:
     """空关键词测试。"""
 
     @pytest.mark.asyncio
+    @patch.object(meme_search, "activate_chat", return_value=True)
     @patch.object(meme_search, "is_authorized", return_value=True)
     async def test_empty_keyword_replies_usage(
-        self, mock_auth: MagicMock
+        self, mock_auth: MagicMock, mock_activate: MagicMock
     ) -> None:
         """/search 无参数时应回复用法提示。"""
         _reset_cmd()
@@ -199,9 +200,13 @@ class TestHandleSearchDelegation:
 
     @pytest.mark.asyncio
     @patch.object(meme_search, "execute_search", new_callable=AsyncMock)
+    @patch.object(meme_search, "activate_chat", return_value=True)
     @patch.object(meme_search, "is_authorized", return_value=True)
     async def test_execute_search_called_with_correct_args(
-        self, mock_auth: MagicMock, mock_exec: AsyncMock
+        self,
+        mock_auth: MagicMock,
+        mock_activate: MagicMock,
+        mock_exec: AsyncMock,
     ) -> None:
         """应将 bot、event、matcher、keyword 传给 execute_search。"""
         bot = _make_bot()
@@ -221,74 +226,120 @@ class TestHandleSearchDelegation:
 class TestGotSelection:
     """got_selection 处理函数测试。"""
 
+    # -----------------------------------------------------------------------
+    # 旁路拦截
+    # -----------------------------------------------------------------------
+
     @pytest.mark.asyncio
-    @patch.object(meme_search, "cancel")
-    @patch.object(meme_search, "is_cancelled", return_value=True)
-    async def test_cancelled_session_exits(
+    @patch.object(meme_search, "activate_chat")
+    @patch.object(meme_search, "got_intercept_bypass", return_value=True)
+    async def test_cancel_intercepted(
         self,
-        mock_cancelled: MagicMock,
-        mock_cancel: MagicMock,
+        mock_bypass: MagicMock,
+        mock_activate: MagicMock,
     ) -> None:
-        """已取消的会话应静默退出。"""
-        candidates = [_make_search_result()]
-        matcher = _make_matcher(state={"candidates": candidates})
-        await got_selection(_make_bot(), _make_event(), matcher, _make_message())
+        """/cancel 应被 intercept。"""
+        matcher = _make_matcher()
+        await got_selection(
+            _make_bot(), _make_event(text="/cancel"), matcher, _make_message("")
+        )
 
-        mock_cancel.assert_not_called()
-        matcher.finish.assert_not_awaited()
+        mock_bypass.assert_called_once()
+        matcher.reject.assert_not_awaited()
 
     @pytest.mark.asyncio
+    @patch.object(meme_search, "activate_chat")
+    @patch.object(meme_search, "got_intercept_bypass", return_value=True)
+    async def test_help_intercepted(
+        self,
+        mock_bypass: MagicMock,
+        mock_activate: MagicMock,
+    ) -> None:
+        """/help 应被 intercept（不调用 deactivate_chat）。"""
+        matcher = _make_matcher()
+        await got_selection(
+            _make_bot(), _make_event(text="/help"), matcher, _make_message("")
+        )
+
+        matcher.finish.assert_not_awaited()
+        matcher.reject.assert_not_awaited()
+
+    # -----------------------------------------------------------------------
+    # 选择会话过期
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    @patch.object(meme_search, "deactivate_chat")
+    @patch.object(meme_search, "activate_chat")
+    @patch.object(meme_search, "get_selection", return_value=None)
+    @patch.object(meme_search, "got_intercept_bypass", return_value=False)
+    async def test_selection_expired(
+        self,
+        mock_bypass: MagicMock,
+        mock_get_sel: MagicMock,
+        mock_activate: MagicMock,
+        mock_deactivate: MagicMock,
+    ) -> None:
+        """选择会话过期时应提示重新搜索。"""
+        matcher = _make_matcher()
+        await got_selection(_make_bot(), _make_event(), matcher, _make_message("1"))
+
+        mock_deactivate.assert_called_once_with("12345")
+        matcher.finish.assert_awaited_once_with("选择已过期，请重新搜索")
+
+    # -----------------------------------------------------------------------
+    # 有效选择
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    @patch.object(meme_search, "MessageSegment")
     @patch.object(meme_search, "handle_selection")
-    @patch.object(meme_search, "cancel")
-    @patch.object(meme_search, "is_cancelled", return_value=False)
+    @patch.object(meme_search, "remove_selection")
+    @patch.object(meme_search, "deactivate_chat")
+    @patch.object(meme_search, "activate_chat")
+    @patch.object(meme_search, "get_selection")
+    @patch.object(meme_search, "got_intercept_bypass", return_value=False)
     async def test_valid_choice_sends_image(
         self,
-        mock_cancelled: MagicMock,
-        mock_cancel: MagicMock,
+        mock_bypass: MagicMock,
+        mock_get_sel: MagicMock,
+        mock_activate: MagicMock,
+        mock_deactivate: MagicMock,
+        mock_remove_sel: MagicMock,
         mock_handle: MagicMock,
+        mock_segment: MagicMock,
     ) -> None:
-        """有效编号应发送对应图片。"""
+        """有效编号选择应发送对应图片并清理会话。"""
         result = _make_search_result(filename="a.jpg")
         mock_handle.return_value = result
+        mock_get_sel.return_value = MagicMock()
         candidates = [result]
         matcher = _make_matcher(state={"candidates": candidates})
 
-        await got_selection(_make_bot(), _make_event(text="1"), matcher, _make_message("1"))
+        await got_selection(
+            _make_bot(), _make_event(text="1"), matcher, _make_message("1")
+        )
 
+        mock_remove_sel.assert_called_once_with("12345")
+        mock_deactivate.assert_called_once_with("12345")
         matcher.finish.assert_awaited_once()
 
     @pytest.mark.asyncio
     @patch.object(meme_search, "handle_selection")
-    @patch.object(meme_search, "cancel")
-    @patch.object(meme_search, "is_cancelled", return_value=False)
-    async def test_valid_choice_cancels_session(
-        self,
-        mock_cancelled: MagicMock,
-        mock_cancel: MagicMock,
-        mock_handle: MagicMock,
-    ) -> None:
-        """有效编号应清理会话。"""
-        result = _make_search_result(filename="a.jpg")
-        mock_handle.return_value = result
-        matcher = _make_matcher(state={"candidates": [result]})
-
-        await got_selection(_make_bot(), _make_event("12345", "1"), matcher, _make_message("1"))
-
-        mock_cancel.assert_called_once_with("12345")
-
-    @pytest.mark.asyncio
-    @patch.object(meme_search, "handle_selection")
-    @patch.object(meme_search, "cancel")
-    @patch.object(meme_search, "is_cancelled", return_value=False)
+    @patch.object(meme_search, "activate_chat")
+    @patch.object(meme_search, "get_selection")
+    @patch.object(meme_search, "got_intercept_bypass", return_value=False)
     async def test_valid_choice_sends_correct_image(
         self,
-        mock_cancelled: MagicMock,
-        mock_cancel: MagicMock,
+        mock_bypass: MagicMock,
+        mock_get_sel: MagicMock,
+        mock_activate: MagicMock,
         mock_handle: MagicMock,
     ) -> None:
         """选择第 2 个结果应发送对应图片路径。"""
         result = _make_search_result(entry_id="2", filename="b.jpg", text="乙")
         mock_handle.return_value = result
+        mock_get_sel.return_value = MagicMock()
         candidates = [
             _make_search_result(entry_id="1", filename="a.jpg", text="甲"),
             result,
@@ -296,86 +347,112 @@ class TestGotSelection:
         matcher = _make_matcher(state={"candidates": candidates})
 
         with patch.object(meme_search, "MessageSegment") as mock_segment:
-            await got_selection(_make_bot(), _make_event(text="2"), matcher, _make_message("2"))
+            await got_selection(
+                _make_bot(), _make_event(text="2"), matcher, _make_message("2")
+            )
 
             call_args = mock_segment.image.call_args[0][0]
             assert "b.jpg" in str(call_args)
 
+    # -----------------------------------------------------------------------
+    # 无效选择
+    # -----------------------------------------------------------------------
+
     @pytest.mark.asyncio
     @patch.object(meme_search, "handle_selection")
-    @patch.object(meme_search, "cancel")
-    @patch.object(meme_search, "is_cancelled", return_value=False)
+    @patch.object(meme_search, "activate_chat")
+    @patch.object(meme_search, "get_selection")
+    @patch.object(meme_search, "got_intercept_bypass", return_value=False)
     async def test_invalid_text_rejects(
         self,
-        mock_cancelled: MagicMock,
-        mock_cancel: MagicMock,
+        mock_bypass: MagicMock,
+        mock_get_sel: MagicMock,
+        mock_activate: MagicMock,
         mock_handle: MagicMock,
     ) -> None:
         """非数字输入应 reject 提示重输。"""
         mock_handle.return_value = "无效编号，请回复 1-1 之间的数字"
+        mock_get_sel.return_value = MagicMock()
         candidates = [_make_search_result()]
         matcher = _make_matcher(state={"candidates": candidates})
 
-        await got_selection(_make_bot(), _make_event(text="abc"), matcher, _make_message("abc"))
+        await got_selection(
+            _make_bot(), _make_event(text="abc"), matcher, _make_message("abc")
+        )
 
         matcher.reject.assert_awaited_once()
         assert "无效编号" in matcher.reject.call_args[0][0]
 
     @pytest.mark.asyncio
     @patch.object(meme_search, "handle_selection")
-    @patch.object(meme_search, "cancel")
-    @patch.object(meme_search, "is_cancelled", return_value=False)
+    @patch.object(meme_search, "activate_chat")
+    @patch.object(meme_search, "get_selection")
+    @patch.object(meme_search, "got_intercept_bypass", return_value=False)
     async def test_out_of_range_low_rejects(
         self,
-        mock_cancelled: MagicMock,
-        mock_cancel: MagicMock,
+        mock_bypass: MagicMock,
+        mock_get_sel: MagicMock,
+        mock_activate: MagicMock,
         mock_handle: MagicMock,
     ) -> None:
         """编号小于 1 时应 reject。"""
         mock_handle.return_value = "无效编号，请回复 1-2 之间的数字"
+        mock_get_sel.return_value = MagicMock()
         candidates = [_make_search_result(), _make_search_result()]
         matcher = _make_matcher(state={"candidates": candidates})
 
-        await got_selection(_make_bot(), _make_event(text="0"), matcher, _make_message("0"))
+        await got_selection(
+            _make_bot(), _make_event(text="0"), matcher, _make_message("0")
+        )
 
         matcher.reject.assert_awaited_once()
         assert "无效编号" in matcher.reject.call_args[0][0]
 
     @pytest.mark.asyncio
     @patch.object(meme_search, "handle_selection")
-    @patch.object(meme_search, "cancel")
-    @patch.object(meme_search, "is_cancelled", return_value=False)
+    @patch.object(meme_search, "activate_chat")
+    @patch.object(meme_search, "get_selection")
+    @patch.object(meme_search, "got_intercept_bypass", return_value=False)
     async def test_out_of_range_high_rejects(
         self,
-        mock_cancelled: MagicMock,
-        mock_cancel: MagicMock,
+        mock_bypass: MagicMock,
+        mock_get_sel: MagicMock,
+        mock_activate: MagicMock,
         mock_handle: MagicMock,
     ) -> None:
         """编号超出范围时应 reject。"""
         mock_handle.return_value = "无效编号，请回复 1-1 之间的数字"
+        mock_get_sel.return_value = MagicMock()
         candidates = [_make_search_result()]
         matcher = _make_matcher(state={"candidates": candidates})
 
-        await got_selection(_make_bot(), _make_event(text="5"), matcher, _make_message("5"))
+        await got_selection(
+            _make_bot(), _make_event(text="5"), matcher, _make_message("5")
+        )
 
         matcher.reject.assert_awaited_once()
         assert "无效编号" in matcher.reject.call_args[0][0]
 
     @pytest.mark.asyncio
     @patch.object(meme_search, "handle_selection")
-    @patch.object(meme_search, "cancel")
-    @patch.object(meme_search, "is_cancelled", return_value=False)
+    @patch.object(meme_search, "activate_chat")
+    @patch.object(meme_search, "get_selection")
+    @patch.object(meme_search, "got_intercept_bypass", return_value=False)
     async def test_empty_candidates_rejects_with_error(
         self,
-        mock_cancelled: MagicMock,
-        mock_cancel: MagicMock,
+        mock_bypass: MagicMock,
+        mock_get_sel: MagicMock,
+        mock_activate: MagicMock,
         mock_handle: MagicMock,
     ) -> None:
         """candidates 为空时 handle_selection 返回错误消息，应 reject。"""
         mock_handle.return_value = "搜索状态异常，请重新搜索"
+        mock_get_sel.return_value = MagicMock()
         matcher = _make_matcher(state={})
 
-        await got_selection(_make_bot(), _make_event(text="1"), matcher, _make_message("1"))
+        await got_selection(
+            _make_bot(), _make_event(text="1"), matcher, _make_message("1")
+        )
 
         mock_handle.assert_called_once()
         matcher.reject.assert_awaited_once()

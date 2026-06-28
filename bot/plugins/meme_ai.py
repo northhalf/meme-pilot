@@ -9,12 +9,14 @@ import logging
 
 from nonebot import on_command
 from nonebot.adapters.onebot.v11 import Bot, MessageEvent, MessageSegment
+from nonebot.matcher import Matcher
 from nonebot.rule import to_me
 
 from bot.app_state import get_ai_matcher, get_index_manager
 from bot.auth import is_authorized, log_unauthorized
 from bot.config import MEMES_DIR
 from bot.engine.ai_matcher import AIMatcher, AIMatchResult
+from bot.session import activate_chat, deactivate_chat
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +51,7 @@ async def _do_match(
 
 
 @ai_cmd.handle()
-async def handle_ai(bot: Bot, event: MessageEvent) -> None:
+async def handle_ai(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
     """/ai 命令处理入口。
 
     流程：授权校验 → 锁检查 → 空索引检查 → 并发发送进度 + AI 匹配 → 发送结果。
@@ -57,6 +59,7 @@ async def handle_ai(bot: Bot, event: MessageEvent) -> None:
     Args:
         bot: OneBot V11 Bot 实例。
         event: 消息事件。
+        matcher: NoneBot2 Matcher 实例。
     """
     user_id = event.get_user_id()
     logger.info("用户 %s 调用 /ai", user_id)
@@ -69,7 +72,12 @@ async def handle_ai(bot: Bot, event: MessageEvent) -> None:
     # 群聊拦截：/ai 仅限私聊使用
     if event.message_type != "private":
         logger.info("用户 %s 在群聊中调用 /ai，已拒绝", user_id)
-        await ai_cmd.finish("此命令仅限私聊使用")
+        await matcher.finish("此命令仅限私聊使用")
+        return
+
+    # 会话激活
+    if not activate_chat(user_id, "ai", matcher):
+        await matcher.finish("已有命令在处理中，请先 /cancel")
         return
 
     # 获取 IndexManager
@@ -77,25 +85,29 @@ async def handle_ai(bot: Bot, event: MessageEvent) -> None:
         index_manager = get_index_manager()
     except RuntimeError:
         logger.error("IndexManager 尚未初始化")
-        await ai_cmd.finish("服务未就绪，请稍后再试")
+        deactivate_chat(user_id)
+        await matcher.finish("服务未就绪，请稍后再试")
         return
 
     # 检查索引锁（只读检查，不持有锁）
     if index_manager.is_locked:
         logger.info("用户 %s 的 /ai 被拒绝：索引正在更新", user_id)
-        await ai_cmd.finish("索引正在更新，请稍后再试")
+        deactivate_chat(user_id)
+        await matcher.finish("索引正在更新，请稍后再试")
         return
 
     # 提取描述
     raw_text = event.get_plaintext().strip()
     description = raw_text.removeprefix("/ai").removeprefix("ai").strip()
     if not description:
-        await ai_cmd.finish("/ai <自然语言描述>")
+        deactivate_chat(user_id)
+        await matcher.finish("/ai <自然语言描述>")
         return
 
     # 检查索引是否为空
     if index_manager.entry_count == 0:
-        await ai_cmd.finish("表情包目录为空，请先添加图片并执行 /refresh")
+        deactivate_chat(user_id)
+        await matcher.finish("表情包目录为空，请先添加图片并执行 /refresh")
         return
 
     # 获取 AIMatcher
@@ -103,20 +115,23 @@ async def handle_ai(bot: Bot, event: MessageEvent) -> None:
         ai_matcher = get_ai_matcher()
     except RuntimeError:
         logger.error("AIMatcher 尚未初始化")
-        await ai_cmd.finish("服务未就绪，请稍后再试")
+        deactivate_chat(user_id)
+        await matcher.finish("服务未就绪，请稍后再试")
         return
 
     # 并发：发送进度提示 + 执行 AI 匹配
     _, match_result = await asyncio.gather(
-        ai_cmd.send("正在根据你的描述搜索表情包，请稍候..."),
+        matcher.send("正在根据你的描述搜索表情包，请稍候..."),
         _do_match(ai_matcher, description),
     )
 
     # 错误提示
     if isinstance(match_result, str):
-        await ai_cmd.finish(match_result)
+        deactivate_chat(user_id)
+        await matcher.finish(match_result)
         return
 
     # 发送匹配图片（本地文件使用 file:/// URI）
     image_path = MEMES_DIR / match_result.filename
-    await ai_cmd.finish(MessageSegment.image("file://" + str(image_path.resolve())))
+    deactivate_chat(user_id)
+    await matcher.finish(MessageSegment.image("file://" + str(image_path.resolve())))

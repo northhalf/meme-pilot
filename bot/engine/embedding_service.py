@@ -87,9 +87,11 @@ class EmbeddingService:
                 input=text,
             )
         except Exception as exc:
+            logger.info("Embedding API 调用失败: %s", exc)
             raise RuntimeError(f"Embedding API 调用失败: {exc}") from exc
 
         if not response.data:
+            logger.info("Embedding API 返回为空")
             raise RuntimeError("Embedding API 返回为空")
 
         embedding = response.data[0].embedding

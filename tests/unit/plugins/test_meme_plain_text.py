@@ -74,13 +74,14 @@ class TestHandleUnknownSlashCommand:
     ) -> None:
         """授权用户发送未知斜杠命令应回复"未知命令"。"""
         _reset_mocks()
+        matcher = _make_matcher()
 
         await handle_plain_text(
-            _make_bot(), _make_event("111", "/foo"), _make_matcher()
+            _make_bot(), _make_event("111", "/foo"), matcher
         )
 
-        _mock_message.finish.assert_awaited_once()
-        call_args = _mock_message.finish.call_args[0][0]
+        matcher.finish.assert_awaited_once()
+        call_args = matcher.finish.call_args[0][0]
         assert "未知命令" in call_args
         assert "/help" in call_args
 
@@ -111,12 +112,12 @@ class TestHandlePlainTextAsSearch:
 
     @pytest.mark.asyncio
     @patch.object(meme_plain_text, "execute_search", new_callable=AsyncMock)
-    @patch.object(meme_plain_text, "check_and_cancel", return_value=None)
+    @patch.object(meme_plain_text, "activate_chat", return_value=True)
     @patch.object(meme_plain_text, "is_authorized", return_value=True)
     async def test_plain_text_calls_execute_search(
         self,
         mock_auth: MagicMock,
-        mock_check: MagicMock,
+        mock_activate: MagicMock,
         mock_exec: MagicMock,
     ) -> None:
         """普通文本应调用 execute_search。"""
@@ -133,19 +134,15 @@ class TestHandlePlainTextAsSearch:
 
     @pytest.mark.asyncio
     @patch.object(meme_plain_text, "execute_search", new_callable=AsyncMock)
-    @patch.object(
-        meme_plain_text,
-        "check_and_cancel",
-        return_value="已取消上一条未完成的操作",
-    )
+    @patch.object(meme_plain_text, "activate_chat", return_value=False)
     @patch.object(meme_plain_text, "is_authorized", return_value=True)
-    async def test_plain_text_with_session_cancel(
+    async def test_plain_text_with_session_busy(
         self,
         mock_auth: MagicMock,
-        mock_check: MagicMock,
+        mock_activate: MagicMock,
         mock_exec: MagicMock,
     ) -> None:
-        """有旧会话时应先取消并提示。"""
+        """有活跃会话时应拒绝并提示。"""
         _reset_mocks()
         matcher = _make_matcher()
 
@@ -153,8 +150,9 @@ class TestHandlePlainTextAsSearch:
             _make_bot(), _make_event("111", "加班"), matcher
         )
 
-        matcher.send.assert_awaited_once()
-        assert "已取消" in matcher.send.call_args[0][0]
+        matcher.finish.assert_awaited_once()
+        assert "已有命令在处理中" in matcher.finish.call_args[0][0]
+        mock_exec.assert_not_awaited()
 
     @pytest.mark.asyncio
     @patch.object(meme_plain_text, "is_authorized", return_value=False)

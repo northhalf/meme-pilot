@@ -86,13 +86,8 @@ def _make_ai_matcher(
     return am
 
 
-def _reset_cmd() -> None:
-    """重置 mock_cmd 的 finish/send 为新的 AsyncMock。"""
-    _mock_cmd.finish = AsyncMock()
-    _mock_cmd.send = AsyncMock()
 
-
-# ---------------------------------------------------------------------------
+# ----------
 # 测试：授权校验
 # ---------------------------------------------------------------------------
 
@@ -108,11 +103,11 @@ class TestHandleAiAuth:
         self, mock_auth: MagicMock, mock_get_im: MagicMock, mock_get_ai: MagicMock
     ) -> None:
         """授权用户应正常执行。"""
-        _reset_cmd()
+        matcher = _make_matcher()
         mock_get_im.return_value = _make_index_manager()
         mock_get_ai.return_value = _make_ai_matcher()
 
-        await handle_ai(_make_bot(), _make_event())
+        await handle_ai(_make_bot(), _make_event(), matcher)
 
         mock_get_ai.assert_called_once()
 
@@ -124,14 +119,14 @@ class TestHandleAiAuth:
         self, mock_auth: MagicMock, mock_get_im: MagicMock, mock_get_ai: MagicMock
     ) -> None:
         """非授权用户应被静默忽略。"""
-        _reset_cmd()
+        matcher = _make_matcher()
         bot = _make_bot()
 
-        await handle_ai(bot, _make_event("999"))
+        await handle_ai(bot, _make_event("999"), matcher)
 
         mock_get_im.assert_not_called()
         mock_get_ai.assert_not_called()
-        _mock_cmd.finish.assert_not_awaited()
+        matcher.finish.assert_not_awaited()
         bot.send.assert_not_awaited()
 
 
@@ -143,16 +138,16 @@ class TestHandleAiAuth:
         self, mock_auth: MagicMock, mock_get_im: MagicMock, mock_get_ai: MagicMock
     ) -> None:
         """群聊中调用 /ai 应回复仅限私聊提示。"""
-        _reset_cmd()
+        matcher = _make_matcher()
         event = MagicMock()
         event.get_user_id.return_value = "111"
         event.get_plaintext.return_value = "/ai 加班心累"
         event.message_type = "group"
 
-        await handle_ai(_make_bot(), event)
+        await handle_ai(_make_bot(), event, matcher)
 
-        _mock_cmd.finish.assert_awaited_once()
-        call_args = _mock_cmd.finish.call_args[0][0]
+        matcher.finish.assert_awaited_once()
+        call_args = matcher.finish.call_args[0][0]
         assert "仅限私聊" in call_args
         mock_get_im.assert_not_called()
         mock_get_ai.assert_not_called()
@@ -174,13 +169,13 @@ class TestHandleAiLock:
         self, mock_auth: MagicMock, mock_get_im: MagicMock, mock_get_ai: MagicMock
     ) -> None:
         """索引锁占用时应回复提示。"""
-        _reset_cmd()
+        matcher = _make_matcher()
         mock_get_im.return_value = _make_index_manager(is_locked=True)
 
-        await handle_ai(_make_bot(), _make_event())
+        await handle_ai(_make_bot(), _make_event(), matcher)
 
-        _mock_cmd.finish.assert_awaited_once()
-        assert "索引正在更新" in _mock_cmd.finish.call_args[0][0]
+        matcher.finish.assert_awaited_once()
+        assert "索引正在更新" in matcher.finish.call_args[0][0]
         mock_get_ai.assert_not_called()
 
 
@@ -200,13 +195,13 @@ class TestHandleAiEmptyDesc:
         self, mock_auth: MagicMock, mock_get_im: MagicMock, mock_get_ai: MagicMock
     ) -> None:
         """/ai 无参数时应回复用法提示。"""
-        _reset_cmd()
+        matcher = _make_matcher()
         mock_get_im.return_value = _make_index_manager()
 
-        await handle_ai(_make_bot(), _make_event(text="/ai"))
+        await handle_ai(_make_bot(), _make_event(text="/ai"), matcher)
 
-        _mock_cmd.finish.assert_awaited_once()
-        assert "/ai" in _mock_cmd.finish.call_args[0][0]
+        matcher.finish.assert_awaited_once()
+        assert "/ai" in matcher.finish.call_args[0][0]
 
 
 # ---------------------------------------------------------------------------
@@ -230,13 +225,13 @@ class TestHandleAiSuccess:
         mock_segment: MagicMock,
     ) -> None:
         """匹配成功时应发送图片。"""
-        _reset_cmd()
+        matcher = _make_matcher()
         mock_get_im.return_value = _make_index_manager()
         mock_get_ai.return_value = _make_ai_matcher()
 
-        await handle_ai(_make_bot(), _make_event("12345", "/ai 加班心累"))
+        await handle_ai(_make_bot(), _make_event("12345", "/ai 加班心累"), matcher)
 
-        _mock_cmd.finish.assert_awaited_once()
+        matcher.finish.assert_awaited_once()
         mock_segment.image.assert_called_once()
 
     @pytest.mark.asyncio
@@ -252,11 +247,11 @@ class TestHandleAiSuccess:
         mock_segment: MagicMock,
     ) -> None:
         """图片路径应为 file:/// URI 格式。"""
-        _reset_cmd()
+        matcher = _make_matcher()
         mock_get_im.return_value = _make_index_manager()
         mock_get_ai.return_value = _make_ai_matcher()
 
-        await handle_ai(_make_bot(), _make_event("12345", "/ai 加班心累"))
+        await handle_ai(_make_bot(), _make_event("12345", "/ai 加班心累"), matcher)
 
         call_args = mock_segment.image.call_args[0][0]
         assert "memes" in str(call_args)
@@ -279,14 +274,14 @@ class TestHandleAiNoMatch:
         self, mock_auth: MagicMock, mock_get_im: MagicMock, mock_get_ai: MagicMock
     ) -> None:
         """AIMatcher 返回 None 时应回复无匹配。"""
-        _reset_cmd()
+        matcher = _make_matcher()
         mock_get_im.return_value = _make_index_manager()
         mock_get_ai.return_value = _make_ai_matcher(result=None)
 
-        await handle_ai(_make_bot(), _make_event())
+        await handle_ai(_make_bot(), _make_event(), matcher)
 
-        _mock_cmd.finish.assert_awaited_once()
-        assert "没有找到" in _mock_cmd.finish.call_args[0][0]
+        matcher.finish.assert_awaited_once()
+        assert "没有找到" in matcher.finish.call_args[0][0]
 
 
 # ---------------------------------------------------------------------------
@@ -305,16 +300,16 @@ class TestHandleAiServiceError:
         self, mock_auth: MagicMock, mock_get_im: MagicMock, mock_get_ai: MagicMock
     ) -> None:
         """ValueError（embedding 无效）时应回复服务不可用。"""
-        _reset_cmd()
+        matcher = _make_matcher()
         mock_get_im.return_value = _make_index_manager()
         mock_get_ai.return_value = _make_ai_matcher(
             side_effect=ValueError("embedding 为空")
         )
 
-        await handle_ai(_make_bot(), _make_event())
+        await handle_ai(_make_bot(), _make_event(), matcher)
 
-        _mock_cmd.finish.assert_awaited_once()
-        assert "AI 服务暂时不可用" in _mock_cmd.finish.call_args[0][0]
+        matcher.finish.assert_awaited_once()
+        assert "AI 服务暂时不可用" in matcher.finish.call_args[0][0]
 
     @pytest.mark.asyncio
     @patch.object(meme_ai, "get_ai_matcher")
@@ -324,16 +319,16 @@ class TestHandleAiServiceError:
         self, mock_auth: MagicMock, mock_get_im: MagicMock, mock_get_ai: MagicMock
     ) -> None:
         """通用异常时应回复服务不可用。"""
-        _reset_cmd()
+        matcher = _make_matcher()
         mock_get_im.return_value = _make_index_manager()
         mock_get_ai.return_value = _make_ai_matcher(
             side_effect=RuntimeError("API 超时")
         )
 
-        await handle_ai(_make_bot(), _make_event())
+        await handle_ai(_make_bot(), _make_event(), matcher)
 
-        _mock_cmd.finish.assert_awaited_once()
-        assert "AI 服务暂时不可用" in _mock_cmd.finish.call_args[0][0]
+        matcher.finish.assert_awaited_once()
+        assert "AI 服务暂时不可用" in matcher.finish.call_args[0][0]
 
 
 # ---------------------------------------------------------------------------
@@ -352,13 +347,13 @@ class TestHandleAiEmptyIndex:
         self, mock_auth: MagicMock, mock_get_im: MagicMock, mock_get_ai: MagicMock
     ) -> None:
         """索引为空时应回复表情包目录为空。"""
-        _reset_cmd()
+        matcher = _make_matcher()
         mock_get_im.return_value = _make_index_manager(entry_count=0)
 
-        await handle_ai(_make_bot(), _make_event())
+        await handle_ai(_make_bot(), _make_event(), matcher)
 
-        _mock_cmd.finish.assert_awaited_once()
-        assert "表情包目录为空" in _mock_cmd.finish.call_args[0][0]
+        matcher.finish.assert_awaited_once()
+        assert "表情包目录为空" in matcher.finish.call_args[0][0]
         mock_get_ai.assert_not_called()
 
 
