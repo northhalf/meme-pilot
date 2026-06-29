@@ -105,12 +105,13 @@ def activate_chat(
 
 
 def deactivate_chat(user_id: str) -> None:
-    """重置聊天会话为空闲状态。
+    """重置聊天会话为空闲状态。同时删除与之相关的选择会话
 
     Args:
         user_id: 用户 ID。
     """
     chat = chat_sessions.get(user_id)
+    remove_selection(user_id)
     if chat is None:
         return
     chat.active = False

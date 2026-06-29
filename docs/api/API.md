@@ -468,7 +468,7 @@ NoneBot2 命令插件，注册 `/cancel` 命令。
 - `selection_sessions: dict[str, SelectionSession]` — 用户选择会话字典
 - `get_or_create_chat(user_id) -> ChatSession` — 获取或创建聊天会话
 - `activate_chat(user_id, command_type, matcher) -> bool` — 激活会话（返回 False 表示已有活跃会话）
-- `deactivate_chat(user_id) -> None` — 重置会话为空闲
+- `deactivate_chat(user_id) -> None` — 重置会话为空闲，同时删除选择会话
 - `create_selection(user_id, selection_id, timeout_task) -> None` — 创建选择会话
 - `remove_selection(user_id) -> SelectionSession | None` — 移除选择会话
 - `get_selection(user_id) -> SelectionSession | None` — 查询选择会话
@@ -480,7 +480,7 @@ NoneBot2 命令插件，注册 `/cancel` 命令。
 
 NoneBot2 命令插件，注册 `/add` 命令。
 
-- 依赖：`app_state.get_index_manager()`、`auth.is_authorized()`、`bot.session`（`activate_chat`/`deactivate_chat`/`got_intercept_bypass`/`create_selection`/`timeout_session`）、`bot.config.read_session_timeout()`
+- 依赖：`app_state.get_index_manager()`、`auth.is_authorized()`、`bot.session`（`activate_chat`/`deactivate_chat`/`got_intercept_bypass`/`create_selection`/`remove_selection`/`timeout_session`）、`bot.config.read_session_timeout()`
 - 锁：只读检查 `IndexManager.is_locked`；管道并发由 `IndexManager._add_sem` 控制
 - 管道：`IndexManager.add_single_file() -> AddResult`
 - 图片下载：`httpx.AsyncClient`，30s 超时

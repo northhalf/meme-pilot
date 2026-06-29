@@ -53,7 +53,7 @@ selection_sessions: dict[str, SelectionSession]  # user_id → SelectionSession
 
 ### `deactivate_chat(user_id) -> None`
 
-重置聊天会话为空闲。`active=False`, `command_type=None`, `matcher=None`, `current_task=None`。
+重置聊天会话为空闲，同时删除与之关联的选择会话。`active=False`, `command_type=None`, `matcher=None`, `current_task=None`，并调用 `remove_selection(user_id)` 清理选择会话。
 
 ### `create_selection(user_id, selection_id, timeout_task) -> None`
 

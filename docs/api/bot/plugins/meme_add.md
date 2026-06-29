@@ -14,7 +14,7 @@
 |--------|------|------|
 | `IndexManager` | `app_state.get_index_manager()` | 索引增删改查、锁检查、单张图片添加 |
 | `is_authorized()` | `bot.auth` | 授权用户校验 |
-| `activate_chat()` / `deactivate_chat()` / `got_intercept_bypass()` / `create_selection()` / `timeout_session()` | `bot.session` | 新会话管理：激活、停用、got 入口拦截、选择会话与超时 |
+| `activate_chat()` / `deactivate_chat()` / `got_intercept_bypass()` / `create_selection()` / `remove_selection()` / `timeout_session()` | `bot.session` | 新会话管理：激活、停用、got 入口拦截、选择会话与超时 |
 | `read_session_timeout()` | `bot.config` | 读取会话超时秒数，用于动态 prompt |
 | `extract_image_urls()` | `nonebot.adapters.onebot.v11.helpers` | 从消息提取图片 URL |
 | `resolve_unique_filename()` | `bot.engine.index_manager` | 文件名冲突自动编号 |
@@ -36,22 +36,25 @@
 
 采用 `activate_chat`（更新 current_task）+ `try/except/else` 结构，`deactivate_chat` 和文件清理统一在异常处理分支和成功分支。
 
-1. 从 `got("image")` 接收的消息提取图片 URL（`extract_image_urls`，异常时清理会话）
-2. 无图片时 `reject` 提示重发（reject 在 `try` 之外，会话保持活跃）
-3. 入口调用 `got_intercept_bypass()` 拦截 `/cancel` 和 `/help`：
+1. **入口重激活会话**：`activate_chat(user_id, "add", matcher)` 更新 current_task
+2. **旁路拦截**：`got_intercept_bypass()` 拦截 `/cancel` 和 `/help`：
    - `/cancel` → `execute_cancel` 取消会话，`return`
    - `/help` → 发送帮助文本，`reject()` 继续等待
-4. 获取 `IndexManager`
-5. 下载图片（httpx，30s 超时）
-6. 确定扩展名（URL 路径 → Content-Type），不支持则回复错误
-7. 构建文件名：有目标命名用 `_sanitize_filename()`，否则 `_auto_filename()`（`meme_<时间戳>_<hash8>`）
-8. `resolve_unique_filename()` 处理文件名冲突
-9. 保存图片到 `memes/`
-10. `try/except/else`：
+3. 从 `got("image")` 接收的消息提取图片 URL（`extract_image_urls`，异常时清理会话）
+4. 无图片时 `reject` 提示重发（reject 在 `try` 之外，会话保持活跃）
+5. **清理选择会话**：收到有效图片后调用 `remove_selection(user_id)` 清除选择会话，允许后续新命令覆盖
+6. 获取 `IndexManager`
+7. 只读检查索引锁（`IndexManager.is_locked`），锁占用则 `deactivate_chat` 后回复"索引正在更新"
+8. 下载图片（httpx，30s 超时）
+9. 确定扩展名（URL 路径 → Content-Type），不支持则回复错误
+10. 构建文件名：有目标命名用 `_sanitize_filename()`，否则 `_auto_filename()`（`meme_<时间戳>_<hash8>`）
+11. `resolve_unique_filename()` 处理文件名冲突
+12. 保存图片到 `memes/`
+13. `try/except/else`：
     - `try`：`IndexManager.add_single_file()` 执行压缩→OCR→Embedding 管道
     - `except CompressionError/OcrError/EmbeddingError`：分别回复对应错误消息，`deactivate_chat`
     - `else`：回复成功（`added`/`replaced` 分支附 OCR 文字，`no_text` 分支不变），`deactivate_chat`
-11. `except` 分支：删除刚下载的图片文件（`filepath.unlink(missing_ok=True)`），`deactivate_chat`
+14. `except` 分支：删除刚下载的图片文件（`filepath.unlink(missing_ok=True)`），`deactivate_chat`
 
 ## 回复格式
 
@@ -85,5 +88,6 @@
 
 - 使用 `bot.session` 模块的 ChatSession + SelectionSession 机制
 - 每用户同一时间仅一个活跃会话（`activate_chat` 互斥检查）
+- 收到有效图片后立即调用 `remove_selection` 清理选择会话，允许后续新命令覆盖
 - 非活跃命令（`/help`、`/cancel`）可旁路触发（`got_intercept_bypass`）
 - 会话超时由 NoneBot2 全局配置 `SESSION_EXPIRE_TIMEOUT` 控制

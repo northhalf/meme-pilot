@@ -37,6 +37,7 @@ from bot.session import (
     deactivate_chat,
     got_intercept_bypass,
     timeout_session,
+    remove_selection,
 )
 
 logger = logging.getLogger(__name__)
@@ -148,6 +149,8 @@ async def got_image(
         if not urls:
             await matcher.reject("请发送一张图片")
             return  # reject 后会话继续等待
+        # 成功发送图片
+        remove_selection(user_id)
 
         # 获取 IndexManager
         try:
