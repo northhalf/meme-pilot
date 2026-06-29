@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from bot.session import activate_chat, chat_sessions, selection_sessions
+from bot.session import session_manager
 
 # ---------------------------------------------------------------------------
 # 在导入插件前 mock nonebot.on_command，避免 NoneBot2 完整初始化。
@@ -22,11 +22,11 @@ with patch("nonebot.on_command", return_value=_mock_cmd):
 
 @pytest.fixture(autouse=True)
 def _clear_sessions() -> Generator[None, Any, None]:
-    chat_sessions.clear()
-    selection_sessions.clear()
+    session_manager._chat_sessions.clear()
+    session_manager._selection_sessions.clear()
     yield
-    chat_sessions.clear()
-    selection_sessions.clear()
+    session_manager._chat_sessions.clear()
+    session_manager._selection_sessions.clear()
 
 
 class TestCancelCommand:
@@ -36,7 +36,7 @@ class TestCancelCommand:
     async def test_cancel_with_active_session(self) -> None:
         """有活跃会话时取消成功。"""
         matcher = AsyncMock()
-        activate_chat("user1", "add", matcher)
+        session_manager.activate_chat("user1", "add", matcher)
 
         bot = AsyncMock()
         event = MagicMock()
@@ -46,7 +46,7 @@ class TestCancelCommand:
             await handle_cancel(bot, event, matcher)
 
         # 验证会话已取消
-        chat = chat_sessions.get("user1")
+        chat = session_manager._chat_sessions.get("user1")
         assert chat is None or chat.active is False
 
     @pytest.mark.asyncio

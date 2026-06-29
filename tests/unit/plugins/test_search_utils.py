@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from nonebot.exception import RejectedException
 
 from bot.engine.keyword_searcher import SearchResult
 
@@ -167,7 +168,7 @@ class TestExecuteSearch:
         assert "表情包目录为空" in _cmd.finish.call_args[0][0]
 
     @pytest.mark.asyncio
-    @patch("bot.plugins._search_utils.deactivate_chat")
+    @patch("bot.plugins._search_utils.session_manager.deactivate_chat")
     @patch("bot.plugins._search_utils.get_keyword_searcher")
     @patch("bot.plugins._search_utils.get_index_manager")
     async def test_no_results_replies(
@@ -188,7 +189,7 @@ class TestExecuteSearch:
         mock_deactivate.assert_called_once_with("12345")
 
     @pytest.mark.asyncio
-    @patch("bot.plugins._search_utils.deactivate_chat")
+    @patch("bot.plugins._search_utils.session_manager.deactivate_chat")
     @patch("bot.plugins._search_utils.MessageSegment")
     @patch("bot.plugins._search_utils.get_keyword_searcher")
     @patch("bot.plugins._search_utils.get_index_manager")
@@ -216,7 +217,7 @@ class TestExecuteSearch:
         mock_deactivate.assert_called_once_with("12345")
 
     @pytest.mark.asyncio
-    @patch("bot.plugins._search_utils.create_selection")
+    @patch("bot.plugins._search_utils.session_manager.create_selection")
     @patch("bot.plugins._search_utils.timeout_session")
     @patch("bot.plugins._search_utils.get_keyword_searcher")
     @patch("bot.plugins._search_utils.get_index_manager")
@@ -275,3 +276,60 @@ class TestExecuteSearch:
 
         _cmd.finish.assert_awaited_once()
         assert "搜索服务暂时不可用" in _cmd.finish.call_args[0][0]
+
+
+class TestGotInterceptBypass:
+    """got_intercept_bypass 测试。"""
+
+    @pytest.mark.asyncio
+    async def test_normal_text_returns_false(self):
+        """普通文本返回 False。"""
+        from bot.plugins._search_utils import got_intercept_bypass
+
+        matcher = AsyncMock()
+        result = await got_intercept_bypass("user1", matcher, "hello", "帮助文本")
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_help_returns_true(self):
+        """/help 拦截后抛出 RejectedException。"""
+        from bot.plugins._search_utils import got_intercept_bypass
+
+        matcher = AsyncMock()
+        with pytest.raises(RejectedException):
+            matcher.reject.side_effect = RejectedException("reject")
+            await got_intercept_bypass("user1", matcher, "/help", "帮助文本")
+        matcher.reject.assert_called_once_with("帮助文本")
+
+    @pytest.mark.asyncio
+    async def test_cancel_returns_true(self):
+        """/cancel 拦截后返回 True。"""
+        from bot.plugins._search_utils import got_intercept_bypass
+        from bot.session import session_manager
+
+        matcher = AsyncMock()
+        session_manager.activate_chat("user1", "add", matcher)
+        result = await got_intercept_bypass("user1", matcher, "/cancel", "帮助文本")
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_help_with_args_matches(self):
+        """/help xxx（带参数）也匹配帮助，抛出 RejectedException。"""
+        from bot.plugins._search_utils import got_intercept_bypass
+
+        matcher = AsyncMock()
+        with pytest.raises(RejectedException):
+            matcher.reject.side_effect = RejectedException("reject")
+            await got_intercept_bypass("user1", matcher, "/help 加班", "帮助文本")
+        matcher.reject.assert_called_once_with("帮助文本")
+
+    @pytest.mark.asyncio
+    async def test_cancel_with_args_matches(self):
+        """/cancel xxx（带参数）也匹配取消。"""
+        from bot.plugins._search_utils import got_intercept_bypass
+        from bot.session import session_manager
+
+        matcher = AsyncMock()
+        session_manager.activate_chat("user1", "add", matcher)
+        result = await got_intercept_bypass("user1", matcher, "/cancel something", "帮助文本")
+        assert result is True

@@ -417,9 +417,16 @@ async def handle_got_selection(
     bot: Bot, event: MessageEvent, matcher: Matcher, selection_msg: Message, error_label: str = "搜索",
 ) -> None
 # got 选择编号共享逻辑（旁路拦截 → 会话检查 → handle_selection → 发送图片）
+
+async def got_intercept_bypass(
+    user_id: str, matcher: Matcher, text: str, HELP_TEXT: str,
+) -> bool
+# Got handler 入口统一拦截 /help 和 /cancel
+# /cancel 委托给 session_manager.execute_cancel()
+# /help 通过 reject(HELP_TEXT) 发送帮助文本并继续等待
 ```
 
-- 依赖：`app_state.get_index_manager()`、`app_state.get_keyword_searcher()`、`bot.session`（`activate_chat`、`create_selection`、`deactivate_chat`、`get_selection`、`got_intercept_bypass`、`remove_selection`、`timeout_session`）、`bot.config.MEMES_DIR`、`bot.plugins._help_text.HELP_TEXT`
+- 依赖：`app_state.get_index_manager()`、`app_state.get_keyword_searcher()`、`bot.session.session_manager`、`bot.plugins._search_utils.got_intercept_bypass`、`bot.config.MEMES_DIR`、`bot.plugins._help_text.HELP_TEXT`
 
 ### `bot/plugins/_help_text.py`
 
@@ -444,7 +451,7 @@ NoneBot2 命令插件，注册 `/help` 命令。
 NoneBot2 命令插件，注册 `/cancel` 命令。
 
 - 注册：`on_command("cancel", rule=to_me(), priority=5, block=True)`
-- 依赖：`auth.is_authorized()`、`bot.session.execute_cancel()`
+- 依赖：`auth.is_authorized()`、`bot.session.session_manager`
 - 行为：授权用户私聊或群聊 @bot 调用 → `execute_cancel()` 取消活跃会话；无活跃会话时回复"当前没有活跃的会话"
 - 旁路：`/cancel` 在 `got` 等待阶段可通过 `got_intercept_bypass` 旁路触发，不受会话互斥影响
 
@@ -456,7 +463,7 @@ NoneBot2 命令插件，注册 `/cancel` 命令。
 - 普通文本：等同执行 `/search`，调用 `_search_utils.execute_search`（支持私聊和群聊 @bot）
 - 未知斜杠命令：回复"未知命令"并附帮助摘要（支持私聊和群聊 @bot）
 - got：`catch_all.got("selection")` 薄包装，委托 `_search_utils.handle_got_selection()` 处理搜索多结果选择
-- 依赖：`auth.is_authorized()`、`_search_utils.execute_search`、`_search_utils.handle_got_selection`、`bot.plugins._help_text.HELP_TEXT`、`bot.session.activate_chat`
+- 依赖：`auth.is_authorized()`、`_search_utils.execute_search`、`_search_utils.handle_got_selection`、`bot.plugins._help_text.HELP_TEXT`、`bot.session.session_manager`
 
 ### `bot/session.py`
 
@@ -464,23 +471,25 @@ NoneBot2 命令插件，注册 `/cancel` 命令。
 
 - `ChatSession(session_id, active=False, command_type=None, matcher=None, current_task=None)` — 聊天会话数据类
 - `SelectionSession(selection_id, timeout_task=None)` — 选择会话数据类
-- `chat_sessions: dict[str, ChatSession]` — 用户聊天会话字典
-- `selection_sessions: dict[str, SelectionSession]` — 用户选择会话字典
-- `get_or_create_chat(user_id) -> ChatSession` — 获取或创建聊天会话
-- `activate_chat(user_id, command_type, matcher) -> bool` — 激活会话（返回 False 表示已有活跃会话）
-- `deactivate_chat(user_id) -> None` — 重置会话为空闲，同时删除选择会话
-- `create_selection(user_id, selection_id, timeout_task) -> None` — 创建选择会话
-- `remove_selection(user_id) -> SelectionSession | None` — 移除选择会话
-- `get_selection(user_id) -> SelectionSession | None` — 查询选择会话
-- `execute_cancel(user_id, message="当前会话已取消") -> bool` — 取消逻辑（自取消保护、跨 task 取消、选择会话清理）
-- `got_intercept_bypass(user_id, matcher, text, HELP_TEXT) -> bool` — got handler 入口拦截 /help 和 /cancel
-- `timeout_session(bot, event, user_id, selection_id, message, *, on_cleanup, timeout)` — 会话超时检查任务
+- `session_manager: SessionManager` — 模块级 SessionManager 单例
+- `SessionManager` 类方法：
+  - `get_or_create_chat(user_id) -> ChatSession` — 获取或创建聊天会话
+  - `activate_chat(user_id, command_type, matcher) -> bool` — 激活会话（返回 False 表示已有活跃会话）
+  - `deactivate_chat(user_id) -> None` — 重置会话为空闲，同时删除选择会话
+  - `create_selection(user_id, selection_id, timeout_task) -> None` — 创建选择会话
+  - `remove_selection(user_id) -> SelectionSession | None` — 移除选择会话
+  - `get_selection(user_id) -> SelectionSession | None` — 查询选择会话
+  - `set_current_task(user_id, task) -> None` — 显式设置用户的 current_task
+  - `reset_current_task(user_id) -> None` — 快速将 current_task 设为 None
+  - `handler_context(user_id, matcher)` — 上下文管理器，got handler 入口使用（with 语句）
+  - `execute_cancel(user_id, message="当前会话已取消") -> bool` — 取消逻辑（自取消保护、跨 task 取消、选择会话清理）
+- `timeout_session(bot, event, user_id, selection_id, message, *, on_cleanup, timeout)` — 会话超时检查任务（模块级函数）
 
 ### `bot/plugins/meme_add.py`
 
 NoneBot2 命令插件，注册 `/add` 命令。
 
-- 依赖：`app_state.get_index_manager()`、`auth.is_authorized()`、`bot.session`（`activate_chat`/`deactivate_chat`/`got_intercept_bypass`/`create_selection`/`remove_selection`/`timeout_session`）、`bot.config.read_session_timeout()`
+- 依赖：`app_state.get_index_manager()`、`auth.is_authorized()`、`bot.session.session_manager`、`bot.session.timeout_session`、`bot.plugins._search_utils.got_intercept_bypass`、`bot.config.read_session_timeout()`
 - 锁：只读检查 `IndexManager.is_locked`；管道并发由 `IndexManager._add_sem` 控制
 - 管道：`IndexManager.add_single_file() -> AddResult`
 - 图片下载：`httpx.AsyncClient`，30s 超时
@@ -505,7 +514,7 @@ NoneBot2 命令插件，注册 `/ai` 命令。
 
 NoneBot2 命令插件，注册 `/search` 命令（薄包装，核心逻辑委托 `_search_utils`）。
 
-- 依赖：`auth.is_authorized()`、`_search_utils.execute_search`、`_search_utils.handle_got_selection`、`bot.session`（`activate_chat`、`deactivate_chat`）
+- 依赖：`auth.is_authorized()`、`_search_utils.execute_search`、`_search_utils.handle_got_selection`、`bot.session.session_manager`
 - 流程：`handle_search` — 授权校验 → 会话检查 → 提取关键词 → `execute_search`
 - 选择：`got_selection` — 薄包装，委托 `_search_utils.handle_got_selection()`
 

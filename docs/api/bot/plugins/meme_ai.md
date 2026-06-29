@@ -27,16 +27,18 @@ async def _do_match(ai_matcher: AIMatcher, description: str) -> AIMatchResult | 
 - `app_state.get_index_manager()` — 检查索引锁和条目数
 - `app_state.get_ai_matcher()` — AI 匹配
 - `auth.is_authorized()` — 授权校验
+- `bot.session.session_manager` — 会话管理（activate_chat / deactivate_chat）
 
 ## 流程
 
 1. 授权校验
-2. 群聊拦截：非 `"private"` 消息类型回复"此命令仅限私聊使用"
-3. 检查索引锁 (`index_manager.is_locked`) — 只读检查
-4. 提取描述（去除 `/ai` 前缀）
-5. 检查索引是否为空
-6. **并发**：`asyncio.gather()` 同时执行发送进度提示和 `_do_match()`
-7. 根据 `_do_match()` 返回值发送结果图片或错误提示
+2. `session_manager.activate_chat()` 激活会话
+3. 群聊拦截：非 `"private"` 消息类型回复"此命令仅限私聊使用"
+4. 检查索引锁 (`index_manager.is_locked`) — 只读检查
+5. 提取描述（去除 `/ai` 前缀）
+6. 检查索引是否为空
+7. **并发**：`asyncio.gather()` 同时执行发送进度提示和 `_do_match()`
+8. 根据 `_do_match()` 返回值发送结果图片或错误提示
 
 ## 错误处理
 

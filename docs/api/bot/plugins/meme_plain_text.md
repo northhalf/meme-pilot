@@ -14,7 +14,7 @@ catch_all = on_message(rule=to_me(), priority=99, block=False)
 
 授权用户私聊或群聊 @bot 发送不以 `/` 开头的普通文本时，等同执行 `/search`：
 1. 授权校验
-2. `activate_chat()` 激活会话，若已有活跃会话则 `matcher.finish("已有命令在处理中，请先 /cancel")`
+2. `session_manager.activate_chat()` 激活会话，若已有活跃会话则 `matcher.finish("已有命令在处理中，请先 /cancel")`
 3. 调用 `_search_utils.execute_search()` 执行搜索
 
 ### 未知斜杠命令
@@ -36,7 +36,7 @@ catch_all = on_message(rule=to_me(), priority=99, block=False)
 | `is_authorized()` / `log_unauthorized()` | `bot.auth` | 授权校验 |
 | `execute_search()` / `handle_got_selection()` | `bot.plugins._search_utils` | 搜索核心逻辑与 got 选择处理 |
 | `HELP_TEXT` | `bot.plugins._help_text` | 帮助文本常量 |
-| `activate_chat()` | `bot.session` | 会话管理 |
+| `session_manager` | `bot.session` | 会话管理（activate_chat） |
 
 ## 匹配器
 

@@ -1,17 +1,18 @@
-"""共享会话管理模块。
+"""共享会话管理模块 — 管理聊天会话和选择会话。
 
-管理用户的聊天会话（ChatSession）和选择会话（SelectionSession），
-支持 /cancel 和 /help 在任何状态下旁路触发。
+提供 SessionManager 类封装所有会话状态操作，
+以及模块级 session_manager 单例和 timeout_session 工具函数。
 """
 
-# TODO: 将会话管理包装为一个类
+from __future__ import annotations
 
 import asyncio
 import logging
-import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Awaitable
+import uuid
 
 from nonebot.adapters.onebot.v11 import Bot, Event
 from nonebot.exception import FinishedException
@@ -54,191 +55,219 @@ class SelectionSession:
     timeout_task: asyncio.Task | None = None
 
 
-# 模块级字典
-chat_sessions: dict[str, ChatSession] = {}
-selection_sessions: dict[str, SelectionSession] = {}
+class SessionManager:
+    """统一的会话管理器，封装 ChatSession 和 SelectionSession 的生命周期。"""
 
+    def __init__(self) -> None:
+        self._chat_sessions: dict[str, ChatSession] = {}
+        self._selection_sessions: dict[str, SelectionSession] = {}
 
-def get_or_create_chat(user_id: str) -> ChatSession:
-    """首次访问时创建并存储 ChatSession，之后复用。
+    # ── 核心会话状态管理 ──
 
-    Args:
-        user_id: 用户 ID。
+    def get_or_create_chat(self, user_id: str) -> ChatSession:
+        """首次访问时创建并存储 ChatSession，之后复用。
 
-    Returns:
-        该用户的 ChatSession 实例。
-    """
-    if user_id not in chat_sessions:
-        chat_sessions[user_id] = ChatSession(session_id=str(uuid.uuid4()))
-    return chat_sessions[user_id]
+        Args:
+            user_id: 用户 ID。
 
+        Returns:
+            该用户的 ChatSession 实例。
+        """
+        if user_id not in self._chat_sessions:
+            self._chat_sessions[user_id] = ChatSession(session_id=str(uuid.uuid4()))
+        return self._chat_sessions[user_id]
 
-def activate_chat(
-    user_id: str,
-    command_type: str,
-    matcher: Matcher,
-) -> bool:
-    """激活聊天会话。
+    def activate_chat(
+        self,
+        user_id: str,
+        command_type: str,
+        matcher: Matcher,
+    ) -> bool:
+        """激活聊天会话。
 
-    - 设置 active=True, matcher, command_type, current_task=asyncio.current_task()
-    - 返回 True=成功, False=已在活跃（调用方应拒绝新命令）
-    - 注意：NoneBot2 的 handle() 和 got() 运行在不同 asyncio task 中，
-      各自的 handler 入口都需要调用 activate_chat 更新 current_task。
-    - handler 的 finally 块中调用 deactivate_chat 清空。
+        - 设置 active=True, matcher, command_type, current_task=asyncio.current_task()
+        - 返回 True=成功, False=已在活跃（调用方应拒绝新命令）
+        - 注意：chat.active 为 True 时直接返回 False，不会更新任何字段。
+          got 入口应使用 handler_context（with 语句）而非 activate_chat。
+        - handler 的 finally 块中调用 deactivate_chat 清空。
 
-    Args:
-        user_id: 用户 ID。
-        command_type: 命令类型。
-        matcher: NoneBot2 Matcher。
+        Args:
+            user_id: 用户 ID。
+            command_type: 命令类型。
+            matcher: NoneBot2 Matcher。
 
-    Returns:
-        True 表示成功激活，False 表示已有活跃会话。
-    """
-    chat = get_or_create_chat(user_id)
-    if chat.active:
-        return False
-    chat.active = True
-    chat.command_type = command_type
-    chat.matcher = matcher
-    chat.current_task = asyncio.current_task()
-    return True
+        Returns:
+            True 表示成功激活，False 表示已有活跃会话。
+        """
+        chat = self.get_or_create_chat(user_id)
+        if chat.active:
+            return False
+        chat.active = True
+        chat.command_type = command_type
+        chat.matcher = matcher
+        chat.current_task = asyncio.current_task()
+        return True
 
+    def deactivate_chat(self, user_id: str) -> None:
+        """重置聊天会话为空闲状态。同时删除与之相关的选择会话。
 
-def deactivate_chat(user_id: str) -> None:
-    """重置聊天会话为空闲状态。同时删除与之相关的选择会话
+        Args:
+            user_id: 用户 ID。
+        """
+        self.remove_selection(user_id)
+        chat = self._chat_sessions.get(user_id)
+        if chat is None:
+            return
+        chat.active = False
+        chat.command_type = None
+        chat.matcher = None
+        chat.current_task = None
 
-    Args:
-        user_id: 用户 ID。
-    """
-    chat = chat_sessions.get(user_id)
-    remove_selection(user_id)
-    if chat is None:
-        return
-    chat.active = False
-    chat.command_type = None
-    chat.matcher = None
-    chat.current_task = None
+    # ── 选择会话管理 ──
 
+    def create_selection(
+        self,
+        user_id: str,
+        selection_id: str,
+        timeout_task: asyncio.Task,
+    ) -> None:
+        """创建选择会话。覆盖同一用户的旧选择会话。
 
-def create_selection(
-    user_id: str,
-    selection_id: str,
-    timeout_task: asyncio.Task,
-) -> None:
-    """创建选择会话。覆盖同一用户的旧选择会话。
+        Args:
+            user_id: 用户 ID。
+            selection_id: 选择会话 ID（UUID 字符串）。
+            timeout_task: 超时监控任务。
+        """
+        self._selection_sessions[user_id] = SelectionSession(
+            selection_id=selection_id,
+            timeout_task=timeout_task,
+        )
 
-    Args:
-        user_id: 用户 ID。
-        selection_id: 选择会话 ID（UUID 字符串）。
-        timeout_task: 超时监控任务。
-    """
-    selection_sessions[user_id] = SelectionSession(
-        selection_id=selection_id,
-        timeout_task=timeout_task,
-    )
+    def remove_selection(self, user_id: str) -> SelectionSession | None:
+        """移除选择会话，返回旧会话（用于取消 timeout_task）。
 
+        Args:
+            user_id: 用户 ID。
 
-def remove_selection(user_id: str) -> SelectionSession | None:
-    """移除选择会话，返回旧会话（用于取消 timeout_task）。
+        Returns:
+            被移除的选择会话，不存在时返回 None。
+        """
+        return self._selection_sessions.pop(user_id, None)
 
-    Args:
-        user_id: 用户 ID。
+    def get_selection(self, user_id: str) -> SelectionSession | None:
+        """查询用户的选择会话。
 
-    Returns:
-        被移除的选择会话，不存在时返回 None。
-    """
-    return selection_sessions.pop(user_id, None)
+        Args:
+            user_id: 用户 ID。
 
+        Returns:
+            该用户的选择会话，不存在时返回 None。
+        """
+        return self._selection_sessions.get(user_id)
 
-def get_selection(user_id: str) -> SelectionSession | None:
-    """查询用户的选择会话。
+    # ── Task 生命周期管理 ──
 
-    Args:
-        user_id: 用户 ID。
+    def set_current_task(self, user_id: str, task: asyncio.Task | None) -> None:
+        """显式设置用户的 current_task。
 
-    Returns:
-        该用户的选择会话，不存在时返回 None。
-    """
-    return selection_sessions.get(user_id)
+        Args:
+            user_id: 用户 ID。
+            task: 要设置的异步任务，或 None。
+        """
+        chat = self.get_or_create_chat(user_id)
+        chat.current_task = task
 
+    def reset_current_task(self, user_id: str) -> None:
+        """快速将 current_task 设为 None。
 
-async def execute_cancel(user_id: str, message: str = "当前会话已取消") -> bool:
-    """执行取消逻辑。
+        Args:
+            user_id: 用户 ID。
+        """
+        chat = self._chat_sessions.get(user_id)
+        if chat:
+            chat.current_task = None
 
-    1. 检查是否有活跃会话，无则返回 False
-    2. current_task.cancel()（非当前 task 且未完成时）
-    3. remove_selection() + 取消 timeout_task（若有）
-    4. 在旧 matcher 上 finish()（发送"会话已取消"到原上下文）
-    5. deactivate_chat(user_id)
+    @contextmanager
+    def handler_context(self, user_id: str, matcher: Matcher):
+        """进入 got handler 时更新 current_task 和 matcher，离开时自动 reset。
 
-    Args:
-        user_id: 用户 ID。
-        message: 结束事件的提示信息
+        用法：
+            with session_manager.handler_context(user_id, matcher):
+                ...
 
-    Returns:
-        bool: 无活跃会话返回False，成功重置对话返回True
-    """
-    chat = chat_sessions.get(user_id)
-    if not (chat and chat.active):
-        return False
-
-    # 防止自取消：同频道 /cancel 时 current_task 等于当前 task，跳过
-    current = asyncio.current_task()
-    if (
-        chat.current_task
-        and not chat.current_task.done()
-        and chat.current_task is not current
-    ):
-        chat.current_task.cancel()
-
-    # 移除选择会话 + 取消超时任务
-    ss = selection_sessions.pop(user_id, None)
-    if ss and ss.timeout_task and not ss.timeout_task.done():
-        ss.timeout_task.cancel()
-
-    # finish 老 matcher（发送取消消息到原上下文）
-    if chat.matcher:
+        Args:
+            user_id: 用户 ID。
+            matcher: 当前 got handler 的 Matcher。
+        """
+        chat = self.get_or_create_chat(user_id)
+        chat.current_task = asyncio.current_task()
+        chat.matcher = matcher
         try:
-            await chat.matcher.finish(message)
-        except FinishedException:
-            pass
+            yield
+        finally:
+            # 只清理没有被 deactivate_chat 重置过的情况
+            if chat.current_task is asyncio.current_task():
+                chat.current_task = None
 
-    deactivate_chat(user_id)
-    return True
+    # ── 取消 ──
 
+    async def execute_cancel(
+        self, user_id: str, message: str = "当前会话已取消"
+    ) -> bool:
+        """执行取消逻辑。
 
-async def got_intercept_bypass(
-    user_id: str,
-    matcher: Matcher,
-    text: str,
-    HELP_TEXT: str,
-) -> bool:
-    """Got handler 入口统一拦截 /help 和 /cancel。
+        1. 检查是否有活跃会话，无则返回 False
+        2. current_task.cancel()（非当前 task 且未完成时）
+        3. remove_selection() + 取消 timeout_task（若有）
+        4. 在旧 matcher 上 finish()（发送取消消息到原上下文）
+        5. deactivate_chat(user_id)
 
-    内部 /cancel 分支委托给 execute_cancel。
+        Note:
+            got 处理器中捕获 CancelledError 后转为 FinishedException，
+            确保 matcher.block=True 且 StopPropagation 正常抛出，
+            防止被取消的事件滑落到兜底处理器。
 
-    Args:
-        user_id: 用户 ID。
-        matcher: 当前 got handler 的 matcher。
-        text: 用户消息文本。
-        HELP_TEXT: 帮助文本常量。
+        Args:
+            user_id: 用户 ID。
+            message: 结束事件的提示信息。
 
-    Returns:
-        True 表示拦截到命令（调用方应 return），
-        False 表示正常流程继续。
-    """
-    if text.startswith("/cancel ") or text == "/cancel":
-        succeed_cancel = await execute_cancel(user_id)
-        if not succeed_cancel:
-            await matcher.finish("当前没有活跃的会话")
+        Returns:
+            bool: 无活跃会话返回 False，成功返回 True。
+        """
+        chat = self._chat_sessions.get(user_id)
+        if not (chat and chat.active):
+            return False
+
+        # 防止自取消：同频道 /cancel 时 current_task 等于当前 task，跳过
+        current = asyncio.current_task()
+        if (
+            chat.current_task
+            and not chat.current_task.done()
+            and chat.current_task is not current
+        ):
+            chat.current_task.cancel()
+
+        # 移除选择会话 + 取消超时任务
+        ss = self._selection_sessions.pop(user_id, None)
+        if ss and ss.timeout_task and not ss.timeout_task.done():
+            ss.timeout_task.cancel()
+
+        # finish 老 matcher（发送取消消息到原上下文）
+        if chat.matcher:
+            try:
+                await chat.matcher.finish(message)
+            except FinishedException:
+                pass
+
+        self.deactivate_chat(user_id)
         return True
 
-    if text.startswith("/help ") or text == "/help":
-        await matcher.send(HELP_TEXT)
-        await matcher.reject(None)
-        return True
 
-    return False
+# 模块级单例
+session_manager = SessionManager()
+
+
+# ── 模块级工具函数 ──
 
 
 async def timeout_session(
@@ -254,7 +283,7 @@ async def timeout_session(
     """会话超时检查任务。
 
     超时后按 user_id + selection_id 双重校验。
-    匹配则发送超时提示 + remove_selection + on_cleanup。
+    匹配则发送超时提示 + remove_selection + deactivate_chat + on_cleanup。
     不匹配（被新选择或 /cancel 覆盖）则静默退出。
 
     Args:
@@ -273,12 +302,12 @@ async def timeout_session(
     except asyncio.CancelledError:
         return  # 被外部取消，静默退出
 
-    # 双重校验：仅当 selection_id 仍然匹配时才发送超时提示
-    ss = selection_sessions.get(user_id)
+    # 通过公共方法 get_selection() 访问选择会话
+    ss = session_manager.get_selection(user_id)
     if ss is not None and ss.selection_id == selection_id:
         logger.info("用户 %s 的选择会话超时（%d 秒）", user_id, timeout)
-        remove_selection(user_id)
-        deactivate_chat(user_id)
+        session_manager.remove_selection(user_id)
+        session_manager.deactivate_chat(user_id)
         if on_cleanup is not None:
             result = on_cleanup()
             if asyncio.iscoroutine(result) or asyncio.isfuture(result):

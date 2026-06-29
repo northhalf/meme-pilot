@@ -96,7 +96,7 @@ class TestHandleSearchAuth:
     """授权校验测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_search, "activate_chat", return_value=True)
+    @patch.object(meme_search.session_manager, "activate_chat", return_value=True)
     @patch.object(meme_search, "execute_search", new_callable=AsyncMock)
     @patch.object(meme_search, "is_authorized", return_value=True)
     async def test_authorized_user_proceeds(
@@ -134,7 +134,7 @@ class TestHandleSearchSessionRejection:
 
     @pytest.mark.asyncio
     @patch.object(meme_search, "execute_search", new_callable=AsyncMock)
-    @patch.object(meme_search, "activate_chat", return_value=False)
+    @patch.object(meme_search.session_manager, "activate_chat", return_value=False)
     @patch.object(meme_search, "is_authorized", return_value=True)
     async def test_active_session_rejected(
         self,
@@ -151,7 +151,7 @@ class TestHandleSearchSessionRejection:
 
     @pytest.mark.asyncio
     @patch.object(meme_search, "execute_search", new_callable=AsyncMock)
-    @patch.object(meme_search, "activate_chat", return_value=True)
+    @patch.object(meme_search.session_manager, "activate_chat", return_value=True)
     @patch.object(meme_search, "is_authorized", return_value=True)
     async def test_inactive_session_proceeds(
         self,
@@ -176,7 +176,7 @@ class TestHandleSearchEmptyKeyword:
     """空关键词测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_search, "activate_chat", return_value=True)
+    @patch.object(meme_search.session_manager, "activate_chat", return_value=True)
     @patch.object(meme_search, "is_authorized", return_value=True)
     async def test_empty_keyword_replies_usage(
         self, mock_auth: MagicMock, mock_activate: MagicMock
@@ -199,7 +199,7 @@ class TestHandleSearchDelegation:
 
     @pytest.mark.asyncio
     @patch.object(meme_search, "execute_search", new_callable=AsyncMock)
-    @patch.object(meme_search, "activate_chat", return_value=True)
+    @patch.object(meme_search.session_manager, "activate_chat", return_value=True)
     @patch.object(meme_search, "is_authorized", return_value=True)
     async def test_execute_search_called_with_correct_args(
         self,
@@ -230,7 +230,7 @@ class TestGotSelection:
     # -----------------------------------------------------------------------
 
     @pytest.mark.asyncio
-    @patch("bot.plugins._search_utils.activate_chat")
+    @patch("bot.plugins._search_utils.session_manager.activate_chat")
     @patch("bot.plugins._search_utils.got_intercept_bypass", return_value=True)
     async def test_cancel_intercepted(
         self,
@@ -247,7 +247,7 @@ class TestGotSelection:
         matcher.reject.assert_not_awaited()
 
     @pytest.mark.asyncio
-    @patch("bot.plugins._search_utils.activate_chat")
+    @patch("bot.plugins._search_utils.session_manager.activate_chat")
     @patch("bot.plugins._search_utils.got_intercept_bypass", return_value=True)
     async def test_help_intercepted(
         self,
@@ -268,9 +268,9 @@ class TestGotSelection:
     # -----------------------------------------------------------------------
 
     @pytest.mark.asyncio
-    @patch("bot.plugins._search_utils.deactivate_chat")
-    @patch("bot.plugins._search_utils.activate_chat")
-    @patch("bot.plugins._search_utils.get_selection", return_value=None)
+    @patch("bot.plugins._search_utils.session_manager.deactivate_chat")
+    @patch("bot.plugins._search_utils.session_manager.activate_chat")
+    @patch("bot.plugins._search_utils.session_manager.get_selection", return_value=None)
     @patch("bot.plugins._search_utils.got_intercept_bypass", return_value=False)
     async def test_selection_expired(
         self,
@@ -293,10 +293,10 @@ class TestGotSelection:
     @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.MessageSegment")
     @patch("bot.plugins._search_utils.handle_selection")
-    @patch("bot.plugins._search_utils.remove_selection")
-    @patch("bot.plugins._search_utils.deactivate_chat")
-    @patch("bot.plugins._search_utils.activate_chat")
-    @patch("bot.plugins._search_utils.get_selection")
+    @patch("bot.plugins._search_utils.session_manager.remove_selection")
+    @patch("bot.plugins._search_utils.session_manager.deactivate_chat")
+    @patch("bot.plugins._search_utils.session_manager.activate_chat")
+    @patch("bot.plugins._search_utils.session_manager.get_selection")
     @patch("bot.plugins._search_utils.got_intercept_bypass", return_value=False)
     async def test_valid_choice_sends_image(
         self,
@@ -325,8 +325,8 @@ class TestGotSelection:
 
     @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.handle_selection")
-    @patch("bot.plugins._search_utils.activate_chat")
-    @patch("bot.plugins._search_utils.get_selection")
+    @patch("bot.plugins._search_utils.session_manager.activate_chat")
+    @patch("bot.plugins._search_utils.session_manager.get_selection")
     @patch("bot.plugins._search_utils.got_intercept_bypass", return_value=False)
     async def test_valid_choice_sends_correct_image(
         self,
@@ -359,8 +359,8 @@ class TestGotSelection:
 
     @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.handle_selection")
-    @patch("bot.plugins._search_utils.activate_chat")
-    @patch("bot.plugins._search_utils.get_selection")
+    @patch("bot.plugins._search_utils.session_manager.activate_chat")
+    @patch("bot.plugins._search_utils.session_manager.get_selection")
     @patch("bot.plugins._search_utils.got_intercept_bypass", return_value=False)
     async def test_invalid_text_rejects(
         self,
@@ -384,8 +384,8 @@ class TestGotSelection:
 
     @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.handle_selection")
-    @patch("bot.plugins._search_utils.activate_chat")
-    @patch("bot.plugins._search_utils.get_selection")
+    @patch("bot.plugins._search_utils.session_manager.activate_chat")
+    @patch("bot.plugins._search_utils.session_manager.get_selection")
     @patch("bot.plugins._search_utils.got_intercept_bypass", return_value=False)
     async def test_out_of_range_low_rejects(
         self,
@@ -409,8 +409,8 @@ class TestGotSelection:
 
     @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.handle_selection")
-    @patch("bot.plugins._search_utils.activate_chat")
-    @patch("bot.plugins._search_utils.get_selection")
+    @patch("bot.plugins._search_utils.session_manager.activate_chat")
+    @patch("bot.plugins._search_utils.session_manager.get_selection")
     @patch("bot.plugins._search_utils.got_intercept_bypass", return_value=False)
     async def test_out_of_range_high_rejects(
         self,
@@ -434,8 +434,8 @@ class TestGotSelection:
 
     @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.handle_selection")
-    @patch("bot.plugins._search_utils.activate_chat")
-    @patch("bot.plugins._search_utils.get_selection")
+    @patch("bot.plugins._search_utils.session_manager.activate_chat")
+    @patch("bot.plugins._search_utils.session_manager.get_selection")
     @patch("bot.plugins._search_utils.got_intercept_bypass", return_value=False)
     async def test_empty_candidates_rejects_with_error(
         self,

@@ -26,14 +26,13 @@ class SelectionSession:
     timeout_task: asyncio.Task | None = None  # 超时监控任务引用
 ```
 
-## 模块级变量
+## Module-Level Singleton
 
 ```python
-chat_sessions: dict[str, ChatSession]          # user_id → ChatSession
-selection_sessions: dict[str, SelectionSession]  # user_id → SelectionSession
+session_manager: SessionManager  # 模块级单例，供外部导入
 ```
 
-## 函数
+## SessionManager 类
 
 ### `get_or_create_chat(user_id) -> ChatSession`
 
@@ -43,13 +42,12 @@ selection_sessions: dict[str, SelectionSession]  # user_id → SelectionSession
 
 ### `activate_chat(user_id, command_type, matcher) -> bool`
 
-激活聊天会话。
+激活聊天会话（handle 入口使用）。
 
 - 设置 `active=True`, `matcher`, `command_type`, `current_task=asyncio.current_task()`
 - 返回 `True` 表示成功激活
 - 返回 `False` 表示已有活跃会话（调用方应拒绝新命令）
-- 注意：NoneBot2 的 `handle()` 和 `got()` 运行在不同 asyncio task 中，
-  各自的 handler 入口都需要调用 `activate_chat` 更新 `current_task`
+- 注意：chat.active 为 True 时直接返回 False，不会更新任何字段。got 入口应使用 `handler_context`（with 语句）而非 `activate_chat`。
 
 ### `deactivate_chat(user_id) -> None`
 
@@ -70,6 +68,25 @@ selection_sessions: dict[str, SelectionSession]  # user_id → SelectionSession
 
 查询用户的选择会话。不存在时返回 None。
 
+### `set_current_task(user_id, task) -> None`
+
+显式设置用户的 current_task。
+
+- `task` — `asyncio.Task | None`，要设置的异步任务
+
+### `reset_current_task(user_id) -> None`
+
+快速将 current_task 设为 None。在 `create_selection` 后调用，表示 handle task 即将结束。
+
+### `handler_context(user_id, matcher)`
+
+上下文管理器，got handler 入口使用（with 语句）。进入时自动更新 current_task 和 matcher，离开时自动 reset。
+
+```python
+with session_manager.handler_context(user_id, matcher):
+    ...
+```
+
 ### `execute_cancel(user_id, message="当前会话已取消") -> bool`
 
 执行取消逻辑。
@@ -84,14 +101,7 @@ selection_sessions: dict[str, SelectionSession]  # user_id → SelectionSession
 
 **自取消保护：** 当 `current_task is asyncio.current_task()`（同频道 /cancel）时跳过 `cancel()` 调用，避免自取消。
 
-### `got_intercept_bypass(user_id, matcher, text, HELP_TEXT) -> bool`
-
-Got handler 入口统一拦截 /help 和 /cancel。
-
-- `/cancel` 分支委托给 `execute_cancel`
-- `/help` 分支执行 `matcher.send(HELP_TEXT)` 后 `reject()` 继续等待
-- 匹配规则：`text.startswith("/cmd ") or text == "/cmd"`
-- 返回 `True` 表示已拦截（调用方应 return），`False` 表示正常流程继续
+## 模块级工具函数
 
 ### `timeout_session(bot, event, user_id, selection_id, message, *, on_cleanup=None, timeout=None) -> None`
 
@@ -101,4 +111,4 @@ Got handler 入口统一拦截 /help 和 /cancel。
 - 匹配 → `remove_selection` + `deactivate_chat` 清理会话 + 可选 `on_cleanup` + 发送超时提示
 - 不匹配（被新选择或 /cancel 覆盖）→ 静默退出
 
-支持 `CancelledError` 捕获，超时任务可被外部取消。
+支持 `CancelledError` 捕获，超时任务可被外部取消。内部通过 `session_manager.get_selection()` 公共方法访问会话状态。

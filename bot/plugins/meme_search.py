@@ -4,6 +4,7 @@
 对索引 OCR 文本做模糊匹配，返回搜索结果。
 """
 
+import asyncio
 import logging
 
 from nonebot import on_command
@@ -12,16 +13,14 @@ from nonebot.adapters.onebot.v11 import (
     Message,
     MessageEvent,
 )
+from nonebot.exception import FinishedException
 from nonebot.matcher import Matcher
 from nonebot.params import Arg
 from nonebot.rule import to_me
 
 from bot.auth import is_authorized, log_unauthorized
 from bot.plugins._search_utils import execute_search, handle_got_selection
-from bot.session import (
-    activate_chat,
-    deactivate_chat,
-)
+from bot.session import session_manager
 
 logger = logging.getLogger(__name__)
 
@@ -42,27 +41,30 @@ async def handle_search(bot: Bot, event: MessageEvent, matcher: Matcher) -> None
     user_id = event.get_user_id()
     logger.info("用户 %s 调用 /search", user_id)
 
-    # 授权校验
-    if not is_authorized(user_id):
-        log_unauthorized(user_id, "search")
-        return
+    try:
+        # 授权校验
+        if not is_authorized(user_id):
+            log_unauthorized(user_id, "search")
+            return
 
-    # 拒绝而非覆盖
-    if not activate_chat(user_id, "search", matcher):
-        await matcher.finish("已有命令在处理中，请先 /cancel")
-        return
+        # 拒绝而非覆盖
+        if not session_manager.activate_chat(user_id, "search", matcher):
+            await matcher.finish("已有命令在处理中，请先 /cancel")
+            return
 
-    # 提取关键词
-    raw_text = event.get_plaintext().strip()
-    keyword = raw_text.removeprefix("/search").removeprefix("search").strip()
-    if not keyword:
-        deactivate_chat(user_id)
-        logger.info("用户 %s 的 /search 缺少关键词", user_id)
-        await matcher.finish("/search <关键词>")
-        return
+        # 提取关键词
+        raw_text = event.get_plaintext().strip()
+        keyword = raw_text.removeprefix("/search").removeprefix("search").strip()
+        if not keyword:
+            session_manager.deactivate_chat(user_id)
+            logger.info("用户 %s 的 /search 缺少关键词", user_id)
+            await matcher.finish("/search <关键词>")
+            return
 
-    logger.info("用户 %s 搜索关键词: %r", user_id, keyword)
-    await execute_search(bot, event, matcher, keyword)
+        logger.info("用户 %s 搜索关键词: %r", user_id, keyword)
+        await execute_search(bot, event, matcher, keyword)
+    except asyncio.CancelledError:
+        raise FinishedException
 
 
 @search_cmd.got("selection")

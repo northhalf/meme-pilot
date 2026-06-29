@@ -23,15 +23,7 @@ from bot.engine.keyword_searcher import SearchResult
 
 from bot.plugins._help_text import HELP_TEXT
 
-from bot.session import (
-    activate_chat,
-    create_selection,
-    deactivate_chat,
-    get_selection,
-    got_intercept_bypass,
-    remove_selection,
-    timeout_session,
-)
+from bot.session import session_manager, timeout_session
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +56,40 @@ def handle_selection(
         return f"无效编号，请回复 1-{len(candidates)} 之间的数字"
 
     return candidates[choice - 1]
+
+
+async def got_intercept_bypass(
+    user_id: str,
+    matcher: Matcher,
+    text: str,
+    HELP_TEXT: str,
+) -> bool:
+    """Got handler 入口统一拦截 /help 和 /cancel。
+
+    /cancel 分支委托给 session_manager.execute_cancel。
+    /help 分支通过 reject(HELP_TEXT) 发送帮助文本并继续等待。
+    将 FinishedException 和 RejectedException 抛出
+
+    Args:
+        user_id: 用户 ID。
+        matcher: 当前 got handler 的 matcher。
+        text: 用户消息文本。
+        HELP_TEXT: 帮助文本常量。
+
+    Returns:
+        True 表示拦截到命令（调用方应 return），
+        False 表示正常流程继续。
+    """
+    if text.startswith("/cancel ") or text == "/cancel":
+        if not await session_manager.execute_cancel(user_id):
+            await matcher.finish("当前没有活跃的会话")  # 抛 FinishedException
+        return True
+
+    if text.startswith("/help ") or text == "/help":
+        await matcher.reject(HELP_TEXT)  # 抛 RejectedException，以下不可达
+        return True
+
+    return False
 
 
 async def execute_search(
@@ -121,12 +147,12 @@ async def execute_search(
         return
 
     if not results:
-        deactivate_chat(user_id)
+        session_manager.deactivate_chat(user_id)
         await cmd_matcher.finish("没有匹配到任何表情包 🙁")
         return
 
     if len(results) == 1:
-        deactivate_chat(user_id)
+        session_manager.deactivate_chat(user_id)
         image_path = MEMES_DIR / results[0].filename
         await cmd_matcher.finish(
             MessageSegment.image("file://" + str(image_path.resolve()))
@@ -150,8 +176,8 @@ async def execute_search(
     task = asyncio.create_task(
         timeout_session(bot, event, user_id, selection_id, "选择已过期，请重新搜索")
     )
-    create_selection(user_id, selection_id, task)
-    # FIXME: 应将chat的asyncio task设置为None
+    session_manager.create_selection(user_id, selection_id, task)
+    session_manager.reset_current_task(user_id)
 
 
 async def handle_got_selection(
@@ -175,46 +201,44 @@ async def handle_got_selection(
     """
     user_id = event.get_user_id()
 
-    # got 入口重新激活 chat session（不同 asyncio task）
-    # FIXME: 重新设置asyncio task，而不是激活chat(这里无法激活，因为chat还是active状态)
-    activate_chat(user_id, "search", matcher)
+    with session_manager.handler_context(user_id, matcher):
+        try:
+            # /help 和 /cancel 旁路拦截
+            text = event.get_plaintext().strip()
+            if await got_intercept_bypass(user_id, matcher, text, HELP_TEXT):
+                return
 
-    try:
-        # /help 和 /cancel 旁路拦截
-        text = event.get_plaintext().strip()
-        if await got_intercept_bypass(user_id, matcher, text, HELP_TEXT):
-            return
+            # 检查选择会话是否仍有效
+            ss = session_manager.get_selection(user_id)
+            if ss is None:
+                session_manager.deactivate_chat(user_id)
+                await matcher.finish("选择已过期，请重新搜索")
+                return
 
-        # 检查选择会话是否仍有效
-        ss = get_selection(user_id)
-        if ss is None:
-            deactivate_chat(user_id)
-            await matcher.finish("选择已过期，请重新搜索")
-            return
+            candidates = matcher.state.get("candidates", [])
+            selection_text = selection_msg.extract_plain_text().strip()
 
-        candidates = matcher.state.get("candidates", [])
-        selection_text = selection_msg.extract_plain_text().strip()
+            result = handle_selection(matcher, candidates, selection_text)
+            if isinstance(result, str):
+                await matcher.reject(result)
+                return
 
-        result = handle_selection(matcher, candidates, selection_text)
-        if isinstance(result, str):
-            await matcher.reject(result)
-            return
+            # 有效选择：清除选择会话
+            session_manager.remove_selection(user_id)
+            image_path = MEMES_DIR / result.filename
+            await matcher.finish(
+                MessageSegment.image("file://" + str(image_path.resolve()))
+            )
+            session_manager.deactivate_chat(user_id)
 
-        # 有效选择：清除选择会话
-        remove_selection(user_id)
-        image_path = MEMES_DIR / result.filename
-        await matcher.finish(
-            MessageSegment.image("file://" + str(image_path.resolve()))
-        )
-        deactivate_chat(user_id)
-
-    except RejectedException:
-        # reject 意味着让用户重新输入，不清理会话状态（选择会话需保留）
-        raise
-    except FinishedException:
-        deactivate_chat(user_id)
-        raise
-    except Exception:
-        logger.exception("用户 %s 的 %s 处理异常", user_id, error_label)
-        deactivate_chat(user_id)
-        raise
+        except RejectedException:
+            raise
+        except asyncio.CancelledError:
+            raise FinishedException
+        except FinishedException:
+            session_manager.deactivate_chat(user_id)
+            raise
+        except Exception:
+            logger.exception("用户 %s 的 %s 处理异常", user_id, error_label)
+            session_manager.deactivate_chat(user_id)
+            raise

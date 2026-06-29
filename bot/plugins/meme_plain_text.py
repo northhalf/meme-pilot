@@ -5,6 +5,7 @@
 非授权用户静默忽略。
 """
 
+import asyncio
 import logging
 
 from nonebot import on_message
@@ -13,6 +14,7 @@ from nonebot.adapters.onebot.v11 import (
     Message,
     MessageEvent,
 )
+from nonebot.exception import FinishedException
 from nonebot.matcher import Matcher
 from nonebot.params import Arg
 from nonebot.rule import to_me
@@ -20,9 +22,7 @@ from nonebot.rule import to_me
 from bot.auth import is_authorized, log_unauthorized
 from bot.plugins._help_text import HELP_TEXT
 from bot.plugins._search_utils import execute_search, handle_got_selection
-from bot.session import (
-    activate_chat,
-)
+from bot.session import session_manager
 
 logger = logging.getLogger(__name__)
 
@@ -47,23 +47,26 @@ async def handle_plain_text(bot: Bot, event: MessageEvent, matcher: Matcher) -> 
     text = event.get_plaintext().strip()
     logger.info("兜底处理用户 %s 消息: %r", user_id, text)
 
-    if not is_authorized(user_id):
-        log_unauthorized(user_id, "plain_text")
-        return
+    try:
+        if not is_authorized(user_id):
+            log_unauthorized(user_id, "plain_text")
+            return
 
-    if text.startswith("/"):
-        logger.info("用户 %s 发送未知命令: %r", user_id, text)
-        await matcher.finish(f"未知命令\n\n{HELP_TEXT}")
-        return
+        if text.startswith("/"):
+            logger.info("用户 %s 发送未知命令: %r", user_id, text)
+            await matcher.finish(f"未知命令\n\n{HELP_TEXT}")
+            return
 
-    # 普通文本当作 /search
-    logger.info("用户 %s 的普通文本当作 /search: %r", user_id, text)
-    # 会话检查：拒绝而非覆盖
-    if not activate_chat(user_id, "search", matcher):
-        await matcher.finish("已有命令在处理中，请先 /cancel")
-        return
+        # 普通文本当作 /search
+        logger.info("用户 %s 的普通文本当作 /search: %r", user_id, text)
+        # 会话检查：拒绝而非覆盖
+        if not session_manager.activate_chat(user_id, "search", matcher):
+            await matcher.finish("已有命令在处理中，请先 /cancel")
+            return
 
-    await execute_search(bot, event, matcher, text)
+        await execute_search(bot, event, matcher, text)
+    except asyncio.CancelledError:
+        raise FinishedException
 
 
 @catch_all.got("selection")

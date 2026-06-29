@@ -1,6 +1,6 @@
 # bot/plugins/_search_utils.py — 搜索核心逻辑模块
 
-> 以下划线开头避免 NoneBot2 自动加载为插件。提供 `execute_search`、`handle_selection` 和 `handle_got_selection` 供 `meme_search.py` 和 `meme_plain_text.py` 复用。
+> 以下划线开头避免 NoneBot2 自动加载为插件。提供 `execute_search`、`handle_selection`、`handle_got_selection` 和 `got_intercept_bypass` 供各插件复用。
 
 ## 函数
 
@@ -18,6 +18,8 @@
 | | 说明 |
 |--|------|
 | **返回** | `None`（通过 `cmd_matcher.finish()` 直接回复） |
+
+多结果分支中，create_selection 后调用 `session_manager.reset_current_task()` 清除已结束的 handle task 引用。
 
 ### `handle_selection(matcher, candidates, text) -> SearchResult | str`
 
@@ -50,7 +52,16 @@
 |------|------|
 | `None` | 通过 `matcher.finish()` 直接回复 |
 
-逻辑：got 入口激活 chat → `/help`/`/cancel` 旁路拦截 → 选择会话检查 → `handle_selection` → 发送图片 → 清理会话。
+逻辑：got 入口通过 `handler_context` 更新 current_task → `/help`/`/cancel` 旁路拦截 → 选择会话检查 → `handle_selection` → 发送图片 → 清理会话。
+
+### `got_intercept_bypass(user_id, matcher, text, HELP_TEXT) -> bool`
+
+Got handler 入口统一拦截 /help 和 /cancel（从 `bot/session.py` 移入）。
+
+- `/cancel` 分支委托给 `session_manager.execute_cancel()`
+- `/help` 分支通过 `matcher.reject(HELP_TEXT)` 发送帮助文本并继续等待
+- 匹配规则：`text.startswith("/cmd ") or text == "/cmd"`
+- 返回 `True` 表示已拦截（调用方应 return），`False` 表示正常流程继续
 
 ## 依赖
 
@@ -58,8 +69,8 @@
 |--------|------|------|
 | `get_index_manager()` | `bot.app_state` | 锁检查和索引空检查 |
 | `get_keyword_searcher()` | `bot.app_state` | 关键词搜索 |
-| `create_selection()` / `deactivate_chat()` / `timeout_session()` | `bot.session` | 会话管理（创建选择、停用聊天、超时检查） |
-| `activate_chat()` / `get_selection()` / `got_intercept_bypass()` / `remove_selection()` | `bot.session` | got 选择编号会话管理 |
+| `session_manager` | `bot.session` | 会话状态管理（activate/deactivate/create_selection 等） |
+| `timeout_session()` | `bot.session` | 会话超时检查任务 |
 | `MEMES_DIR` | `bot.config` | 图片路径 |
 | `HELP_TEXT` | `bot.plugins._help_text` | 帮助文本（旁路拦截） |
 

@@ -14,16 +14,19 @@
 |--------|------|------|
 | `IndexManager` | `app_state.get_index_manager()` | 索引增删改查与文件系统同步 |
 | `is_authorized()` | `bot.auth` | 授权用户校验 |
+| `session_manager` | `bot.session` | 会话管理（activate_chat / deactivate_chat） |
 
 ## 行为
 
 1. 授权校验：非授权用户静默忽略（仅日志）
-2. 群聊拦截：非 `"private"` 消息类型回复"此命令仅限私聊使用"
-3. 获取全局索引更新锁，失败则回复"索引正在更新，请稍后再试"
-4. 回复"正在刷新索引，请稍候..."
-5. 调用 `IndexManager.sync_with_filesystem()` 执行增量同步
-6. 释放锁（`try/finally` 保证）
-7. 回复摘要：新增/删除/去重/无文字移走/失败统计
+2. `session_manager.activate_chat()` 激活会话
+3. 群聊拦截：非 `"private"` 消息类型回复"此命令仅限私聊使用"
+4. 获取全局索引更新锁，失败则回复"索引正在更新，请稍后再试"
+5. 回复"正在刷新索引，请稍候..."
+6. 调用 `IndexManager.sync_with_filesystem()` 执行增量同步
+7. 释放锁（`try/finally` 保证）
+8. `session_manager.deactivate_chat()` 清理会话
+9. 回复摘要：新增/删除/去重/无文字移走/失败统计
 
 ## 回复格式
 

@@ -9,6 +9,7 @@ import logging
 
 from nonebot import on_command
 from nonebot.adapters.onebot.v11 import Bot, MessageEvent, MessageSegment
+from nonebot.exception import FinishedException
 from nonebot.matcher import Matcher
 from nonebot.rule import to_me
 
@@ -16,7 +17,7 @@ from bot.app_state import get_ai_matcher, get_index_manager
 from bot.auth import is_authorized, log_unauthorized
 from bot.config import MEMES_DIR
 from bot.engine.ai_matcher import AIMatcher, AIMatchResult
-from bot.session import activate_chat, deactivate_chat
+from bot.session import session_manager
 
 logger = logging.getLogger(__name__)
 
@@ -64,74 +65,77 @@ async def handle_ai(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
     user_id = event.get_user_id()
     logger.info("用户 %s 调用 /ai", user_id)
 
-    # 授权校验
-    if not is_authorized(user_id):
-        log_unauthorized(user_id, "ai")
-        return
-
-    # 群聊拦截：/ai 仅限私聊使用
-    if event.message_type != "private":
-        logger.info("用户 %s 在群聊中调用 /ai，已拒绝", user_id)
-        await matcher.finish("此命令仅限私聊使用")
-        return
-
-    # 会话激活
-    if not activate_chat(user_id, "ai", matcher):
-        await matcher.finish("已有命令在处理中，请先 /cancel")
-        return
-
-    # 获取 IndexManager
     try:
-        index_manager = get_index_manager()
-    except RuntimeError:
-        logger.error("IndexManager 尚未初始化")
-        deactivate_chat(user_id)
-        await matcher.finish("服务未就绪，请稍后再试")
-        return
+        # 授权校验
+        if not is_authorized(user_id):
+            log_unauthorized(user_id, "ai")
+            return
 
-    # 检查索引锁（只读检查，不持有锁）
-    if index_manager.is_locked:
-        logger.info("用户 %s 的 /ai 被拒绝：索引正在更新", user_id)
-        deactivate_chat(user_id)
-        await matcher.finish("索引正在更新，请稍后再试")
-        return
+        # 群聊拦截：/ai 仅限私聊使用
+        if event.message_type != "private":
+            logger.info("用户 %s 在群聊中调用 /ai，已拒绝", user_id)
+            await matcher.finish("此命令仅限私聊使用")
+            return
 
-    # 提取描述
-    raw_text = event.get_plaintext().strip()
-    description = raw_text.removeprefix("/ai").removeprefix("ai").strip()
-    if not description:
-        deactivate_chat(user_id)
-        await matcher.finish("/ai <自然语言描述>")
-        return
+        # 会话激活
+        if not session_manager.activate_chat(user_id, "ai", matcher):
+            await matcher.finish("已有命令在处理中，请先 /cancel")
+            return
 
-    # 检查索引是否为空
-    if index_manager.entry_count == 0:
-        deactivate_chat(user_id)
-        await matcher.finish("表情包目录为空，请先添加图片并执行 /refresh")
-        return
+        # 获取 IndexManager
+        try:
+            index_manager = get_index_manager()
+        except RuntimeError:
+            logger.error("IndexManager 尚未初始化")
+            session_manager.deactivate_chat(user_id)
+            await matcher.finish("服务未就绪，请稍后再试")
+            return
 
-    # 获取 AIMatcher
-    try:
-        ai_matcher = get_ai_matcher()
-    except RuntimeError:
-        logger.error("AIMatcher 尚未初始化")
-        deactivate_chat(user_id)
-        await matcher.finish("服务未就绪，请稍后再试")
-        return
+        # 检查索引锁（只读检查，不持有锁）
+        if index_manager.is_locked:
+            logger.info("用户 %s 的 /ai 被拒绝：索引正在更新", user_id)
+            session_manager.deactivate_chat(user_id)
+            await matcher.finish("索引正在更新，请稍后再试")
+            return
 
-    # 并发：发送进度提示 + 执行 AI 匹配
-    _, match_result = await asyncio.gather(
-        matcher.send("正在根据你的描述搜索表情包，请稍候..."),
-        _do_match(ai_matcher, description),
-    )
+        # 提取描述
+        raw_text = event.get_plaintext().strip()
+        description = raw_text.removeprefix("/ai").removeprefix("ai").strip()
+        if not description:
+            session_manager.deactivate_chat(user_id)
+            await matcher.finish("/ai <自然语言描述>")
+            return
 
-    # 错误提示
-    if isinstance(match_result, str):
-        deactivate_chat(user_id)
-        await matcher.finish(match_result)
-        return
+        # 检查索引是否为空
+        if index_manager.entry_count == 0:
+            session_manager.deactivate_chat(user_id)
+            await matcher.finish("表情包目录为空，请先添加图片并执行 /refresh")
+            return
 
-    # 发送匹配图片（本地文件使用 file:/// URI）
-    image_path = MEMES_DIR / match_result.filename
-    deactivate_chat(user_id)
-    await matcher.finish(MessageSegment.image("file://" + str(image_path.resolve())))
+        # 获取 AIMatcher
+        try:
+            ai_matcher = get_ai_matcher()
+        except RuntimeError:
+            logger.error("AIMatcher 尚未初始化")
+            session_manager.deactivate_chat(user_id)
+            await matcher.finish("服务未就绪，请稍后再试")
+            return
+
+        # 并发：发送进度提示 + 执行 AI 匹配
+        _, match_result = await asyncio.gather(
+            matcher.send("正在根据你的描述搜索表情包，请稍候..."),
+            _do_match(ai_matcher, description),
+        )
+
+        # 错误提示
+        if isinstance(match_result, str):
+            session_manager.deactivate_chat(user_id)
+            await matcher.finish(match_result)
+            return
+
+        # 发送匹配图片（本地文件使用 file:/// URI）
+        image_path = MEMES_DIR / match_result.filename
+        session_manager.deactivate_chat(user_id)
+        await matcher.finish(MessageSegment.image("file://" + str(image_path.resolve())))
+    except asyncio.CancelledError:
+        raise FinishedException

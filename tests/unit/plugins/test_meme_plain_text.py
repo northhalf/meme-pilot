@@ -112,7 +112,7 @@ class TestHandlePlainTextAsSearch:
 
     @pytest.mark.asyncio
     @patch.object(meme_plain_text, "execute_search", new_callable=AsyncMock)
-    @patch.object(meme_plain_text, "activate_chat", return_value=True)
+    @patch.object(meme_plain_text.session_manager, "activate_chat", return_value=True)
     @patch.object(meme_plain_text, "is_authorized", return_value=True)
     async def test_plain_text_calls_execute_search(
         self,
@@ -134,7 +134,7 @@ class TestHandlePlainTextAsSearch:
 
     @pytest.mark.asyncio
     @patch.object(meme_plain_text, "execute_search", new_callable=AsyncMock)
-    @patch.object(meme_plain_text, "activate_chat", return_value=False)
+    @patch.object(meme_plain_text.session_manager, "activate_chat", return_value=False)
     @patch.object(meme_plain_text, "is_authorized", return_value=True)
     async def test_plain_text_with_session_busy(
         self,

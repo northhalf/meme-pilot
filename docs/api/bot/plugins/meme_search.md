@@ -23,14 +23,14 @@ async def got_selection(bot: Bot, event: MessageEvent, matcher: Matcher, selecti
 - `auth.is_authorized()` — 授权校验
 - `_search_utils.execute_search()` — 核心搜索逻辑（锁、索引空、搜索、结果分支、session 注册和超时）
 - `_search_utils.handle_got_selection()` — got 选择编号共享逻辑（旁路拦截、会话检查、`handle_selection`、发送图片、清理）
-- `bot.session`（`activate_chat`、`deactivate_chat`）— 会话管理
+- `bot.session.session_manager` — 会话管理（activate_chat / deactivate_chat）
 
 ## 流程
 
 ### handle_search
 
 1. 授权校验
-2. 会话覆盖检查 (`check_and_cancel`)
+2. 会话覆盖检查（`session_manager.activate_chat`）
 3. 提取关键词（去除 `/search` 前缀）
 4. 空关键词检查
 5. 调用 `execute_search(bot, event, matcher, keyword)` 委托核心逻辑

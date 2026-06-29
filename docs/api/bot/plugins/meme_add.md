@@ -14,7 +14,9 @@
 |--------|------|------|
 | `IndexManager` | `app_state.get_index_manager()` | 索引增删改查、锁检查、单张图片添加 |
 | `is_authorized()` | `bot.auth` | 授权用户校验 |
-| `activate_chat()` / `deactivate_chat()` / `got_intercept_bypass()` / `create_selection()` / `remove_selection()` / `timeout_session()` | `bot.session` | 新会话管理：激活、停用、got 入口拦截、选择会话与超时 |
+| `session_manager` | `bot.session` | 会话状态管理（activate/deactivate/create_selection/remove_selection/reset_current_task） |
+| `timeout_session()` | `bot.session` | 会话超时检查任务 |
+| `got_intercept_bypass()` | `bot.plugins._search_utils` | Got 入口旁路拦截 /help 和 /cancel |
 | `read_session_timeout()` | `bot.config` | 读取会话超时秒数，用于动态 prompt |
 | `extract_image_urls()` | `nonebot.adapters.onebot.v11.helpers` | 从消息提取图片 URL |
 | `resolve_unique_filename()` | `bot.engine.index_manager` | 文件名冲突自动编号 |
@@ -25,24 +27,25 @@
 
 1. 授权校验：非授权用户静默忽略（仅日志）
 2. 群聊拦截：非 `"private"` 消息类型回复"此命令仅限私聊使用"
-3. 激活聊天会话（`activate_chat`），已有活跃会话则拒绝（回复"已有命令在处理中，请先 /cancel"）
+3. 激活聊天会话（`session_manager.activate_chat`），已有活跃会话则拒绝（回复"已有命令在处理中，请先 /cancel"）
 4. 获取 `IndexManager`，未初始化则回复"服务未就绪"
 5. 检查索引锁（`IndexManager.is_locked`），锁占用则回复"索引正在更新"
 6. 捕获目标命名（`/add` 后的文本）存入 `matcher.state`
-7. 创建选择会话（`selection_id` + `create_selection`）并启动超时任务（`timeout_session`，超时提示"发送图片超时，请重新 /add"）
-8. 回复"请发送图片"并等待用户图片
+7. 创建选择会话（`selection_id` + `session_manager.create_selection`）并启动超时任务（`timeout_session`）
+8. 调用 `session_manager.reset_current_task(user_id)` 清除已结束的 handle task 引用
+9. 回复"请发送图片"并等待用户图片
 
 ### got_image（等待图片）
 
-采用 `activate_chat`（更新 current_task）+ `try/except/else` 结构，`deactivate_chat` 和文件清理统一在异常处理分支和成功分支。
+采用 `handler_context`（with 语句）+ `try/except/else` 结构，`deactivate_chat` 和文件清理统一在异常处理分支和成功分支。
 
-1. **入口重激活会话**：`activate_chat(user_id, "add", matcher)` 更新 current_task
+1. **入口更新 current_task**：`with session_manager.handler_context(user_id, matcher)` 自动更新 current_task 和 matcher
 2. **旁路拦截**：`got_intercept_bypass()` 拦截 `/cancel` 和 `/help`：
-   - `/cancel` → `execute_cancel` 取消会话，`return`
-   - `/help` → 发送帮助文本，`reject()` 继续等待
+   - `/cancel` → `session_manager.execute_cancel()` 取消会话
+   - `/help` → `matcher.reject(HELP_TEXT)` 发送帮助文本，继续等待
 3. 从 `got("image")` 接收的消息提取图片 URL（`extract_image_urls`，异常时清理会话）
-4. 无图片时 `reject` 提示重发（reject 在 `try` 之外，会话保持活跃）
-5. **清理选择会话**：收到有效图片后调用 `remove_selection(user_id)` 清除选择会话，允许后续新命令覆盖
+4. 无图片时 `reject` 提示重发（RejectedException 不清理会话，会话保持活跃）
+5. **清理选择会话**：收到有效图片后调用 `session_manager.remove_selection(user_id)` 清除选择会话
 6. 获取 `IndexManager`
 7. 只读检查索引锁（`IndexManager.is_locked`），锁占用则 `deactivate_chat` 后回复"索引正在更新"
 8. 下载图片（httpx，30s 超时）
@@ -86,8 +89,8 @@
 
 ## 会话管理
 
-- 使用 `bot.session` 模块的 ChatSession + SelectionSession 机制
-- 每用户同一时间仅一个活跃会话（`activate_chat` 互斥检查）
-- 收到有效图片后立即调用 `remove_selection` 清理选择会话，允许后续新命令覆盖
+- 使用 `bot.session` 模块的 SessionManager 管理 ChatSession + SelectionSession
+- 每用户同一时间仅一个活跃会话（`session_manager.activate_chat` 互斥检查）
+- 收到有效图片后立即调用 `session_manager.remove_selection` 清理选择会话，允许后续新命令覆盖
 - 非活跃命令（`/help`、`/cancel`）可旁路触发（`got_intercept_bypass`）
-- 会话超时由 NoneBot2 全局配置 `SESSION_EXPIRE_TIMEOUT` 控制
+- 会话超时由 `SESSION_EXPIRE_TIMEOUT` 环境变量控制
