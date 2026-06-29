@@ -22,8 +22,8 @@ async def got_selection(bot: Bot, event: MessageEvent, matcher: Matcher, selecti
 
 - `auth.is_authorized()` — 授权校验
 - `_search_utils.execute_search()` — 核心搜索逻辑（锁、索引空、搜索、结果分支、session 注册和超时）
-- `_search_utils.handle_selection()` — 处理用户选择编号（返回 `SearchResult` 或错误消息字符串）
-- `bot.session`（`activate_chat`、`deactivate_chat`、`got_intercept_bypass`）— 会话管理
+- `_search_utils.handle_got_selection()` — got 选择编号共享逻辑（旁路拦截、会话检查、`handle_selection`、发送图片、清理）
+- `bot.session`（`activate_chat`、`deactivate_chat`）— 会话管理
 
 ## 流程
 
@@ -37,16 +37,7 @@ async def got_selection(bot: Bot, event: MessageEvent, matcher: Matcher, selecti
 
 ### got_selection
 
-1. 入口调用 `got_intercept_bypass()` 拦截 `/cancel` 和 `/help`：
-   - `/cancel` → `execute_cancel` 取消会话，`return`
-   - `/help` → 发送帮助文本，`reject()` 继续等待选择
-2. 检查选择有效性（`get_selection` 匹配 `matcher.state["selection_id"]`）
-3. 调用 `handle_selection(matcher, candidates, text)`：
-   - 返回 `SearchResult` → 发送对应图片，清理会话（`remove_selection` + `deactivate_chat`）
-   - 返回 `str`（错误消息）→ reject 提示重输
-4. `FinishedException` / `RejectedException` 透传不捕获
-
-核心搜索逻辑（锁检查、索引空检查、KeywordSearcher 调用、结果分支、session 注册、超时任务）全部在 `_search_utils.execute_search()` 中实现。详见 `docs/api/bot/plugins/_search_utils.md`。
+薄包装，委托 `_search_utils.handle_got_selection(bot, event, matcher, selection_msg, "/search")` 处理。详见 `docs/api/bot/plugins/_search_utils.md`。
 
 ## 选择列表格式
 

@@ -27,17 +27,16 @@ catch_all = on_message(rule=to_me(), priority=99, block=False)
 
 ### 多结果选择
 
-`got("selection")` 处理由本 matcher 触发的搜索多结果选择。入口调用 `got_intercept_bypass()` 拦截 `/cancel` 和 `/help`；委托 `_search_utils.handle_selection()` 处理用户输入编号。
+`got("selection")` 薄包装，委托 `_search_utils.handle_got_selection()` 处理由本 matcher 触发的搜索多结果选择（旁路拦截、会话检查、`handle_selection`、发送图片、清理）。
 
 ## 依赖
 
 | 依赖项 | 来源 | 说明 |
 |--------|------|------|
 | `is_authorized()` / `log_unauthorized()` | `bot.auth` | 授权校验 |
-| `execute_search()` / `handle_selection()` | `bot.plugins._search_utils` | 搜索核心逻辑 |
+| `execute_search()` / `handle_got_selection()` | `bot.plugins._search_utils` | 搜索核心逻辑与 got 选择处理 |
 | `HELP_TEXT` | `bot.plugins._help_text` | 帮助文本常量 |
-| `activate_chat()` / `deactivate_chat()` / `got_intercept_bypass()` | `bot.session` | 会话管理 |
-| `MEMES_DIR` | `bot.config` | 图片路径 |
+| `activate_chat()` | `bot.session` | 会话管理 |
 
 ## 匹配器
 

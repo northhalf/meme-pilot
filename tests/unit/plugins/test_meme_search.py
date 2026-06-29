@@ -182,12 +182,11 @@ class TestHandleSearchEmptyKeyword:
         self, mock_auth: MagicMock, mock_activate: MagicMock
     ) -> None:
         """/search 无参数时应回复用法提示。"""
-        _reset_cmd()
+        matcher = _make_matcher()
+        await handle_search(_make_bot(), _make_event(text="/search"), matcher)
 
-        await handle_search(_make_bot(), _make_event(text="/search"), _make_matcher())
-
-        _mock_cmd.finish.assert_awaited_once()
-        assert "/search" in _mock_cmd.finish.call_args[0][0]
+        matcher.finish.assert_awaited_once()
+        assert "/search" in matcher.finish.call_args[0][0]
 
 
 # ---------------------------------------------------------------------------
@@ -231,8 +230,8 @@ class TestGotSelection:
     # -----------------------------------------------------------------------
 
     @pytest.mark.asyncio
-    @patch.object(meme_search, "activate_chat")
-    @patch.object(meme_search, "got_intercept_bypass", return_value=True)
+    @patch("bot.plugins._search_utils.activate_chat")
+    @patch("bot.plugins._search_utils.got_intercept_bypass", return_value=True)
     async def test_cancel_intercepted(
         self,
         mock_bypass: MagicMock,
@@ -248,8 +247,8 @@ class TestGotSelection:
         matcher.reject.assert_not_awaited()
 
     @pytest.mark.asyncio
-    @patch.object(meme_search, "activate_chat")
-    @patch.object(meme_search, "got_intercept_bypass", return_value=True)
+    @patch("bot.plugins._search_utils.activate_chat")
+    @patch("bot.plugins._search_utils.got_intercept_bypass", return_value=True)
     async def test_help_intercepted(
         self,
         mock_bypass: MagicMock,
@@ -269,10 +268,10 @@ class TestGotSelection:
     # -----------------------------------------------------------------------
 
     @pytest.mark.asyncio
-    @patch.object(meme_search, "deactivate_chat")
-    @patch.object(meme_search, "activate_chat")
-    @patch.object(meme_search, "get_selection", return_value=None)
-    @patch.object(meme_search, "got_intercept_bypass", return_value=False)
+    @patch("bot.plugins._search_utils.deactivate_chat")
+    @patch("bot.plugins._search_utils.activate_chat")
+    @patch("bot.plugins._search_utils.get_selection", return_value=None)
+    @patch("bot.plugins._search_utils.got_intercept_bypass", return_value=False)
     async def test_selection_expired(
         self,
         mock_bypass: MagicMock,
@@ -292,13 +291,13 @@ class TestGotSelection:
     # -----------------------------------------------------------------------
 
     @pytest.mark.asyncio
-    @patch.object(meme_search, "MessageSegment")
-    @patch.object(meme_search, "handle_selection")
-    @patch.object(meme_search, "remove_selection")
-    @patch.object(meme_search, "deactivate_chat")
-    @patch.object(meme_search, "activate_chat")
-    @patch.object(meme_search, "get_selection")
-    @patch.object(meme_search, "got_intercept_bypass", return_value=False)
+    @patch("bot.plugins._search_utils.MessageSegment")
+    @patch("bot.plugins._search_utils.handle_selection")
+    @patch("bot.plugins._search_utils.remove_selection")
+    @patch("bot.plugins._search_utils.deactivate_chat")
+    @patch("bot.plugins._search_utils.activate_chat")
+    @patch("bot.plugins._search_utils.get_selection")
+    @patch("bot.plugins._search_utils.got_intercept_bypass", return_value=False)
     async def test_valid_choice_sends_image(
         self,
         mock_bypass: MagicMock,
@@ -325,10 +324,10 @@ class TestGotSelection:
         matcher.finish.assert_awaited_once()
 
     @pytest.mark.asyncio
-    @patch.object(meme_search, "handle_selection")
-    @patch.object(meme_search, "activate_chat")
-    @patch.object(meme_search, "get_selection")
-    @patch.object(meme_search, "got_intercept_bypass", return_value=False)
+    @patch("bot.plugins._search_utils.handle_selection")
+    @patch("bot.plugins._search_utils.activate_chat")
+    @patch("bot.plugins._search_utils.get_selection")
+    @patch("bot.plugins._search_utils.got_intercept_bypass", return_value=False)
     async def test_valid_choice_sends_correct_image(
         self,
         mock_bypass: MagicMock,
@@ -346,7 +345,7 @@ class TestGotSelection:
         ]
         matcher = _make_matcher(state={"candidates": candidates})
 
-        with patch.object(meme_search, "MessageSegment") as mock_segment:
+        with patch("bot.plugins._search_utils.MessageSegment") as mock_segment:
             await got_selection(
                 _make_bot(), _make_event(text="2"), matcher, _make_message("2")
             )
@@ -359,10 +358,10 @@ class TestGotSelection:
     # -----------------------------------------------------------------------
 
     @pytest.mark.asyncio
-    @patch.object(meme_search, "handle_selection")
-    @patch.object(meme_search, "activate_chat")
-    @patch.object(meme_search, "get_selection")
-    @patch.object(meme_search, "got_intercept_bypass", return_value=False)
+    @patch("bot.plugins._search_utils.handle_selection")
+    @patch("bot.plugins._search_utils.activate_chat")
+    @patch("bot.plugins._search_utils.get_selection")
+    @patch("bot.plugins._search_utils.got_intercept_bypass", return_value=False)
     async def test_invalid_text_rejects(
         self,
         mock_bypass: MagicMock,
@@ -384,10 +383,10 @@ class TestGotSelection:
         assert "无效编号" in matcher.reject.call_args[0][0]
 
     @pytest.mark.asyncio
-    @patch.object(meme_search, "handle_selection")
-    @patch.object(meme_search, "activate_chat")
-    @patch.object(meme_search, "get_selection")
-    @patch.object(meme_search, "got_intercept_bypass", return_value=False)
+    @patch("bot.plugins._search_utils.handle_selection")
+    @patch("bot.plugins._search_utils.activate_chat")
+    @patch("bot.plugins._search_utils.get_selection")
+    @patch("bot.plugins._search_utils.got_intercept_bypass", return_value=False)
     async def test_out_of_range_low_rejects(
         self,
         mock_bypass: MagicMock,
@@ -409,10 +408,10 @@ class TestGotSelection:
         assert "无效编号" in matcher.reject.call_args[0][0]
 
     @pytest.mark.asyncio
-    @patch.object(meme_search, "handle_selection")
-    @patch.object(meme_search, "activate_chat")
-    @patch.object(meme_search, "get_selection")
-    @patch.object(meme_search, "got_intercept_bypass", return_value=False)
+    @patch("bot.plugins._search_utils.handle_selection")
+    @patch("bot.plugins._search_utils.activate_chat")
+    @patch("bot.plugins._search_utils.get_selection")
+    @patch("bot.plugins._search_utils.got_intercept_bypass", return_value=False)
     async def test_out_of_range_high_rejects(
         self,
         mock_bypass: MagicMock,
@@ -434,10 +433,10 @@ class TestGotSelection:
         assert "无效编号" in matcher.reject.call_args[0][0]
 
     @pytest.mark.asyncio
-    @patch.object(meme_search, "handle_selection")
-    @patch.object(meme_search, "activate_chat")
-    @patch.object(meme_search, "get_selection")
-    @patch.object(meme_search, "got_intercept_bypass", return_value=False)
+    @patch("bot.plugins._search_utils.handle_selection")
+    @patch("bot.plugins._search_utils.activate_chat")
+    @patch("bot.plugins._search_utils.get_selection")
+    @patch("bot.plugins._search_utils.got_intercept_bypass", return_value=False)
     async def test_empty_candidates_rejects_with_error(
         self,
         mock_bypass: MagicMock,

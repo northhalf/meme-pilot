@@ -1,6 +1,6 @@
 # bot/plugins/_search_utils.py — 搜索核心逻辑模块
 
-> 以下划线开头避免 NoneBot2 自动加载为插件。提供 `execute_search` 和 `handle_selection` 供 `meme_search.py` 和 `meme_plain_text.py` 复用。
+> 以下划线开头避免 NoneBot2 自动加载为插件。提供 `execute_search`、`handle_selection` 和 `handle_got_selection` 供 `meme_search.py` 和 `meme_plain_text.py` 复用。
 
 ## 函数
 
@@ -34,6 +34,24 @@
 | `SearchResult` | 选择成功时返回对应结果 |
 | `str` | 错误消息（无效编号、candidates 为空等） |
 
+### `handle_got_selection(bot, event, matcher, selection_msg, error_label) -> None`
+
+处理 got 选择编号的共享逻辑。供 `meme_search.py` 和 `meme_plain_text.py` 的 `got("selection")` 包装器调用。
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `bot` | `Bot` | OneBot V11 Bot 实例 |
+| `event` | `MessageEvent` | 消息事件 |
+| `matcher` | `Matcher` | NoneBot2 Matcher 实例 |
+| `selection_msg` | `Message` | 用户回复的选择编号消息 |
+| `error_label` | `str` | 异常日志中的操作标签，默认"搜索" |
+
+| 返回 | 说明 |
+|------|------|
+| `None` | 通过 `matcher.finish()` 直接回复 |
+
+逻辑：got 入口激活 chat → `/help`/`/cancel` 旁路拦截 → 选择会话检查 → `handle_selection` → 发送图片 → 清理会话。
+
 ## 依赖
 
 | 依赖项 | 来源 | 说明 |
@@ -41,7 +59,9 @@
 | `get_index_manager()` | `bot.app_state` | 锁检查和索引空检查 |
 | `get_keyword_searcher()` | `bot.app_state` | 关键词搜索 |
 | `create_selection()` / `deactivate_chat()` / `timeout_session()` | `bot.session` | 会话管理（创建选择、停用聊天、超时检查） |
+| `activate_chat()` / `get_selection()` / `got_intercept_bypass()` / `remove_selection()` | `bot.session` | got 选择编号会话管理 |
 | `MEMES_DIR` | `bot.config` | 图片路径 |
+| `HELP_TEXT` | `bot.plugins._help_text` | 帮助文本（旁路拦截） |
 
 ## 错误处理
 
@@ -56,3 +76,4 @@
 | candidates 为空（handle_selection） | "搜索状态异常，请重新搜索" |
 | 无效编号（handle_selection） | "无效编号，请回复 1-{N} 之间的数字" |
 | 会话超时 | `timeout_session()` 自动处理 |
+| 选择会话过期（handle_got_selection） | "选择已过期，请重新搜索" |

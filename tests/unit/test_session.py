@@ -145,17 +145,17 @@ class TestExecuteCancel:
 
     @pytest.mark.asyncio
     async def test_no_active_session(self):
-        """无活跃会话时返回 None。"""
+        """无活跃会话时返回 False。"""
         result = await execute_cancel("user1")
-        assert result is None
+        assert result is False
 
     @pytest.mark.asyncio
     async def test_cancel_active_chat(self):
-        """取消活跃会话返回提示。"""
+        """取消活跃会话返回 True。"""
         matcher = AsyncMock()
         activate_chat("user1", "add", matcher)
         result = await execute_cancel("user1")
-        assert result == "已取消 ✅"
+        assert result is True
         chat = get_or_create_chat("user1")
         assert chat.active is False
 

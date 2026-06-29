@@ -412,9 +412,14 @@ def handle_selection(
     matcher: Matcher, candidates: list[SearchResult], text: str
 ) -> SearchResult | str
 # 处理用户选择编号，返回 SearchResult 或错误消息字符串
+
+async def handle_got_selection(
+    bot: Bot, event: MessageEvent, matcher: Matcher, selection_msg: Message, error_label: str = "搜索",
+) -> None
+# got 选择编号共享逻辑（旁路拦截 → 会话检查 → handle_selection → 发送图片）
 ```
 
-- 依赖：`app_state.get_index_manager()`、`app_state.get_keyword_searcher()`、`bot.session`（`create_selection`、`timeout_session`、`deactivate_chat`）、`bot.config.MEMES_DIR`
+- 依赖：`app_state.get_index_manager()`、`app_state.get_keyword_searcher()`、`bot.session`（`activate_chat`、`create_selection`、`deactivate_chat`、`get_selection`、`got_intercept_bypass`、`remove_selection`、`timeout_session`）、`bot.config.MEMES_DIR`、`bot.plugins._help_text.HELP_TEXT`
 
 ### `bot/plugins/_help_text.py`
 
@@ -450,8 +455,8 @@ NoneBot2 命令插件，注册 `/cancel` 命令。
 - 注册：`on_message(rule=to_me(), priority=99, block=False)`
 - 普通文本：等同执行 `/search`，调用 `_search_utils.execute_search`（支持私聊和群聊 @bot）
 - 未知斜杠命令：回复"未知命令"并附帮助摘要（支持私聊和群聊 @bot）
-- got：`catch_all.got("selection")` 处理搜索多结果选择
-- 依赖：`auth.is_authorized()`、`_search_utils.execute_search`、`_search_utils.handle_selection`、`bot.session`（`activate_chat`、`deactivate_chat`、`got_intercept_bypass`）
+- got：`catch_all.got("selection")` 薄包装，委托 `_search_utils.handle_got_selection()` 处理搜索多结果选择
+- 依赖：`auth.is_authorized()`、`_search_utils.execute_search`、`_search_utils.handle_got_selection`、`bot.plugins._help_text.HELP_TEXT`、`bot.session.activate_chat`
 
 ### `bot/session.py`
 
@@ -500,9 +505,9 @@ NoneBot2 命令插件，注册 `/ai` 命令。
 
 NoneBot2 命令插件，注册 `/search` 命令（薄包装，核心逻辑委托 `_search_utils`）。
 
-- 依赖：`auth.is_authorized()`、`_search_utils.execute_search`、`_search_utils.handle_selection`、`bot.session`（`activate_chat`、`deactivate_chat`、`got_intercept_bypass`）
+- 依赖：`auth.is_authorized()`、`_search_utils.execute_search`、`_search_utils.handle_got_selection`、`bot.session`（`activate_chat`、`deactivate_chat`）
 - 流程：`handle_search` — 授权校验 → 会话检查 → 提取关键词 → `execute_search`
-- 选择：`got_selection` — `got_intercept_bypass` 拦截 → 会话检查 → `handle_selection` → 发送图片/reject
+- 选择：`got_selection` — 薄包装，委托 `_search_utils.handle_got_selection()`
 
 ### `bot/config.py`
 
