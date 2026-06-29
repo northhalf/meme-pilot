@@ -23,6 +23,10 @@ services:
   bot:
     build:
       context: .
+      network: host
+      args:
+        - http_proxy=http://127.0.0.1:10808
+        - https_proxy=http://127.0.0.1:10808
       dockerfile: bot/Dockerfile
     container_name: qq-meme-bot
     restart: always

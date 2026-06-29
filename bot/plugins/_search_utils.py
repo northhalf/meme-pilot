@@ -151,6 +151,7 @@ async def execute_search(
         timeout_session(bot, event, user_id, selection_id, "选择已过期，请重新搜索")
     )
     create_selection(user_id, selection_id, task)
+    # FIXME: 应将chat的asyncio task设置为None
 
 
 async def handle_got_selection(
@@ -175,6 +176,7 @@ async def handle_got_selection(
     user_id = event.get_user_id()
 
     # got 入口重新激活 chat session（不同 asyncio task）
+    # FIXME: 重新设置asyncio task，而不是激活chat(这里无法激活，因为chat还是active状态)
     activate_chat(user_id, "search", matcher)
 
     try:
@@ -206,7 +208,10 @@ async def handle_got_selection(
         )
         deactivate_chat(user_id)
 
-    except (FinishedException, RejectedException):
+    except RejectedException:
+        # reject 意味着让用户重新输入，不清理会话状态（选择会话需保留）
+        raise
+    except FinishedException:
         deactivate_chat(user_id)
         raise
     except Exception:

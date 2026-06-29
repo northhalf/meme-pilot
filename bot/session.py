@@ -4,7 +4,7 @@
 支持 /cancel 和 /help 在任何状态下旁路触发。
 """
 
-from __future__ import annotations
+# TODO: 将会话管理包装为一个类
 
 import asyncio
 import logging

@@ -5,6 +5,12 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app
 
+RUN printf 'Acquire::Retries "10";\n\
+Acquire::http::Pipeline-Depth "0";\n\
+Acquire::http::No-Cache "true";\n\
+Acquire::https::No-Cache "true";\n' \
+> /etc/apt/apt.conf.d/99proxy
+
 # 安装 C++ 编译器（pylcs 等包需要 C++11 编译）以及 OpenCV 所需的图形库
 RUN apt-get update && apt-get install -y --no-install-recommends \
     g++ \
