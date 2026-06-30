@@ -61,15 +61,15 @@ class SearchResult:
 |--|------|------|
 | **返回** | `list[SearchResult]` | 按 `similarity` 降序排列，最多 `limit` 条；无匹配或关键词为空时返回 `[]` |
 
-对每条 OCR 文本使用 LCS（最长公共子序列）计算相似度，过滤 `score < threshold` 的结果。如果存在分数为 100 的结果，只返回分数为 100 的结果。
+先对 keyword 做分词 + 助词过滤，再用过滤后的文本做 LCS 匹配。
+如果存在分数为 100 的结果，只返回分数为 100 的结果。
 
 **搜索逻辑：**
-- 对每条 OCR 文本使用 LCS（最长公共子序列）计算相似度，过滤 `score < threshold` 的结果。
-- 关键词 ≤ 2 字时，有效阈值降为 50（而非 `threshold` 参数的值），使短关键词更易模糊匹配。
-- 如果存在分数为 100 的结果，只返回分数为 100 的结果。
+1. 对 `keyword` 做 `jieba.posseg` 分词 + 词性标注，过滤助词类标签（`uj`/`ul`/`uz`/`us`/`y`/`e`）。
+2. 去助词后若为空字符串，直接返回空列表。
+3. 使用去助词后的文本与每条 OCR 文本做 LCS 匹配，过滤 `score < threshold` 的结果（全程统一使用 `threshold` 参数值，无特殊降阈逻辑）。
+4. 若 `keyword`（去助词后）是 `text` 的子串，直接返回 100（精确命中）。
+5. 否则使用 `pylcs.lcs_sequence_length(cleaned, text)` 计算最长公共子序列长度，相似度 = `(lcs_len / len(cleaned)) * 100`。
+6. 如果存在分数为 100 的结果，过滤掉低于 100 的结果。
 
-1. 若 `keyword` 是 `text` 的子串，直接返回 100（精确命中）。
-2. 否则使用 `pylcs.lcs_sequence_length(keyword, text)` 计算最长公共子序列长度，相似度 = `(lcs_len / len(keyword)) * 100`。
-3. 如果存在分数为 100 的结果，过滤掉低于 100 的结果。
-
-**依赖：** `pylcs`（替代早期版本使用的 `rapidfuzz`）。
+**依赖：** `jieba`（分词 + 词性标注）、`pylcs`（LCS 算法）。

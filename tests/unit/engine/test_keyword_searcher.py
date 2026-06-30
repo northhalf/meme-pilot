@@ -154,28 +154,8 @@ class TestSearchFuzzy:
         assert all(60.0 <= r.similarity < 100.0 for r in results)
 
 
-class TestSearchFuzzyWithShortKeyword:
-    """短关键词（≤2 字）使用更低阈值（50）的测试。"""
-
-    def test_two_char_keyword_fuzzy_score_50_is_included(self) -> None:
-        """2 字关键词模糊匹配分数=50 时应命中。
-
-        因为 2 字关键词使用阈值 50，而非默认的 60。
-        """
-        entries: dict[str, dict[str, str]] = {
-            "1": {
-                "filename": "x.jpg",
-                "text": "加班到凌晨",
-                "text_hash": "a",
-            },
-        }
-        s = KeywordSearcher(MockIndex(entries), threshold=60.0)
-        # "加a": 2 字，LCS vs "加班到凌晨" = 1（"加"），score = 1/2*100 = 50
-        # 默认阈值 60 本会排除，但 2 字关键词使用 50 → 命中
-        results = s.search("加a")
-        assert len(results) == 1
-        assert results[0].similarity == 50.0
-        assert results[0].entry_id == "1"
+class TestSearchFuzzyEdgeCases:
+    """短关键词模糊匹配边界情况测试。"""
 
     def test_two_char_keyword_fuzzy_score_below_50_still_excluded(
         self,
@@ -208,6 +188,44 @@ class TestSearchFuzzyWithShortKeyword:
         # "2AXY": 4 字，LCS vs "AB12" = 2（"A" 和 "2"），score = 2/4*100 = 50
         # 50 < 60 → 排除
         results = s.search("2AXY")
+        assert len(results) == 0
+
+
+class TestSearchWithParticleRemoval:
+    """去助词后的搜索行为测试。"""
+
+    def test_search_drops_particles_from_keyword(
+        self, sample_entries: dict[str, dict[str, str]],
+    ) -> None:
+        searcher = KeywordSearcher(MockIndex(sample_entries))
+        results = searcher.search("了加班吗")
+        assert len(results) == 3
+        assert all(r.similarity == 100.0 for r in results)
+        ids = {r.entry_id for r in results}
+        assert ids == {"2", "5", "6"}
+
+    def test_search_all_particles_returns_empty(
+        self, sample_entries: dict[str, dict[str, str]],
+    ) -> None:
+        searcher = KeywordSearcher(MockIndex(sample_entries))
+        results = searcher.search("的呢吗")
+        assert len(results) == 0
+
+    def test_search_content_word_with_embedded_particle_char(self) -> None:
+        entries = {
+            "1": {"filename": "a.jpg", "text": "了解详情请咨询", "text_hash": "x"},
+        }
+        searcher = KeywordSearcher(MockIndex(entries))
+        results = searcher.search("了解")
+        assert len(results) == 1
+        assert results[0].similarity == 100.0
+
+    def test_two_char_fuzzy_below_60_filtered(self) -> None:
+        entries = {
+            "1": {"filename": "x.jpg", "text": "加班到凌晨", "text_hash": "a"},
+        }
+        searcher = KeywordSearcher(MockIndex(entries))
+        results = searcher.search("加a")
         assert len(results) == 0
 
 
@@ -264,17 +282,15 @@ class TestSearchEdgeCases:
     def test_keyword_longer_than_text(
         self, searcher: KeywordSearcher
     ) -> None:
-        """关键词比 OCR 文本长时，LCS 以 keyword 长度为分母计算相似度。
+        """关键词比 OCR 文本长且含助词时，去助词后 LCS 分数可能降低。
 
-        "当你的老板说今天要加班而且不给加班费"(15字) vs "当你的老板说今天要加班"(11字)
-        text 是 keyword 的子串 → LCS = 11，score = 11/15 * 100 ≈ 73.3。
-        高于默认阈值 60，应命中但非 100 分。
+        "当你的老板说今天要加班而且不给加班费"(18字) 含助词"的"，
+        去助词后变为 "当你老板说今天要加班而且不给加班费"(17字)。
+        与 OCR 文本 "当你的老板说今天要加班"(11字) 的 LCS = 10（缺"的"），
+        score = 10/17 * 100 ≈ 58.8，低于默认阈值 60，不命中。
         """
         results = searcher.search("当你的老板说今天要加班而且不给加班费")
-        assert len(results) == 1
-        assert results[0].entry_id == "5"
-        assert results[0].similarity < 100.0
-        assert results[0].similarity >= 60.0
+        assert len(results) == 0
 
 
 class TestSearchResultOrder:
@@ -343,3 +359,28 @@ class TestSearchResultsFormat:
             assert 0.0 <= r.similarity <= 100.0
             assert r.entry_id  # 非空
             assert r.filename  # 非空
+
+
+class TestParticleRemoval:
+    """_remove_particles 函数行为测试。"""
+
+    def test_removes_structural_particle(self) -> None:
+        from bot.engine.keyword_searcher import _remove_particles
+        assert _remove_particles("的加班") == "加班"
+
+    def test_removes_modal_particle(self) -> None:
+        from bot.engine.keyword_searcher import _remove_particles
+        assert _remove_particles("加班了吗") == "加班"
+
+    def test_keeps_content_word_with_particle_char(self) -> None:
+        from bot.engine.keyword_searcher import _remove_particles
+        assert _remove_particles("了解") == "了解"
+
+    def test_all_particles_returns_empty(self) -> None:
+        from bot.engine.keyword_searcher import _remove_particles
+        result = _remove_particles("的呢吗")
+        assert "".join(result.split()) == ""
+
+    def test_no_particles_unchanged(self) -> None:
+        from bot.engine.keyword_searcher import _remove_particles
+        assert _remove_particles("加班") == "加班"

@@ -8,8 +8,14 @@ from dataclasses import dataclass
 from typing import Protocol
 
 import pylcs
+import jieba.posseg as pseg
 
 logger = logging.getLogger(__name__)
+
+# jieba 词性标注中与助词相关的标签
+# uj=助词(的/地/得), ul=语气词(了), uz=时态助词(着/了/过)
+# us=结构助词(所/得以), y=语气词(吗/呢/吧), e=叹词(嗯/哦)
+_PARTICLE_POS_TAGS: frozenset[str] = frozenset({"uj", "ul", "uz", "us", "y", "e"})
 
 
 class IndexProvider(Protocol):
@@ -43,6 +49,23 @@ class SearchResult:
     filename: str
     text: str
     similarity: float
+
+
+def _remove_particles(text: str) -> str:
+    """使用 jieba.posseg 过滤助词，返回纯文本。
+
+    对 text 做分词 + 词性标注，移除助词类标签（uj/ul/uz/us/e）的词位，
+    保留非助词部分的原始字符和顺序。
+
+    Args:
+        text: 待处理的文本（搜索关键词）。
+
+    Returns:
+        移除助词后的纯文本；如果全部为助词则返回空字符串。
+    """
+    return "".join(
+        word for word, flag in pseg.cut(text) if flag not in _PARTICLE_POS_TAGS
+    )
 
 
 class KeywordSearcher:
@@ -95,9 +118,7 @@ class KeywordSearcher:
     def search(self, keyword: str) -> list[SearchResult]:
         """根据关键词搜索表情包。
 
-        对每条 OCR 文本使用 LCS 计算相似度，
-        过滤低于阈值的结果后按分数降序排列。
-        如果存在分数为 100 的结果，只返回分数为 100 的结果。
+        先对 keyword 做分词 + 助词过滤，再用过滤后的文本做 LCS 匹配。
 
         Args:
             keyword: 用户输入的搜索关键词。
@@ -111,8 +132,12 @@ class KeywordSearcher:
             logger.debug("关键词为空，返回空结果")
             return []
 
-        # 关键词 ≤ 2 字时降低阈值至 50（如"加班""心累"等常见短词更容易匹配）
-        effective_threshold = 50.0 if len(keyword) <= 2 else self._threshold
+        # 去助词后搜索
+        cleaned = _remove_particles(keyword)
+        cleaned = "".join(cleaned.split())  # 删除所有空白字符
+        if not cleaned:
+            logger.debug("关键词去助词后为空，返回空结果")
+            return []
 
         entries = self._index_provider.get_entries()
         if not entries:
@@ -126,8 +151,8 @@ class KeywordSearcher:
             if not text:
                 continue
 
-            score = self._compute_similarity(keyword, text)
-            if score >= effective_threshold:
+            score = self._compute_similarity(cleaned, text)
+            if score >= self._threshold:
                 results.append(
                     SearchResult(
                         entry_id=entry_id,
