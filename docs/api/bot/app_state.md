@@ -4,11 +4,13 @@
 
 ## 模块级函数
 
-### `init_app(index_manager, ocr_service, embedding_service, image_optimizer=None, ai_matcher=None, keyword_searcher=None) -> None`
+### `init_app(index_manager, metadata_store, vector_store, ocr_service, embedding_service, image_optimizer=None, ai_matcher=None, keyword_searcher=None) -> None`
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
 | `index_manager` | `IndexManager` | 索引管理器实例 |
+| `metadata_store` | `MetadataStore` | 元数据存储实例 |
+| `vector_store` | `VectorStore` | 向量存储实例 |
 | `ocr_service` | `DeepSeekOcrService \| PaddleOcrClientService` | OCR 服务实例 |
 | `embedding_service` | `EmbeddingService` | Embedding 服务实例 |
 | `image_optimizer` | `ImageOptimizer \| None` | 图片压缩器实例，可选 |
@@ -29,6 +31,24 @@
 | | 类型 | 说明 |
 |--|------|------|
 | **返回** | `IndexManager` | 已初始化的索引管理器实例 |
+| **异常** | `RuntimeError` | 尚未调用 `init_app()` 初始化 |
+
+---
+
+### `get_metadata_store() -> MetadataStore`
+
+| | 类型 | 说明 |
+|--|------|------|
+| **返回** | `MetadataStore` | 已初始化的元数据存储实例 |
+| **异常** | `RuntimeError` | 尚未调用 `init_app()` 初始化 |
+
+---
+
+### `get_vector_store() -> VectorStore`
+
+| | 类型 | 说明 |
+|--|------|------|
+| **返回** | `VectorStore` | 已初始化的向量存储实例 |
 | **异常** | `RuntimeError` | 尚未调用 `init_app()` 初始化 |
 
 ---

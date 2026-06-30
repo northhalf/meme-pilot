@@ -1,6 +1,7 @@
 """共享实例管理模块。
 
-模块级单例模式，供插件获取 IndexManager、OcrService、EmbeddingService、AIMatcher、KeywordSearcher。
+模块级单例模式，供插件获取 IndexManager、MetadataStore、VectorStore、
+OcrService、EmbeddingService、AIMatcher、KeywordSearcher。
 bot.py 启动时调用 init_app() 初始化，插件通过 get_*() 函数获取实例。
 """
 
@@ -11,10 +12,14 @@ from .engine import (
     ImageOptimizer,
     IndexManager,
     KeywordSearcher,
+    MetadataStore,
     PaddleOcrClientService,
+    VectorStore,
 )
 
 _index_manager: IndexManager | None = None
+_metadata_store: MetadataStore | None = None
+_vector_store: VectorStore | None = None
 _ocr_service: DeepSeekOcrService | PaddleOcrClientService | None = None
 _embedding_service: EmbeddingService | None = None
 _image_optimizer: ImageOptimizer | None = None
@@ -24,6 +29,8 @@ _keyword_searcher: KeywordSearcher | None = None
 
 def init_app(
     index_manager: IndexManager,
+    metadata_store: MetadataStore,
+    vector_store: VectorStore,
     ocr_service: DeepSeekOcrService | PaddleOcrClientService,
     embedding_service: EmbeddingService,
     image_optimizer: ImageOptimizer | None = None,
@@ -37,14 +44,19 @@ def init_app(
 
     Args:
         index_manager: 索引管理器实例。
+        metadata_store: 元数据存储实例。
+        vector_store: 向量存储实例。
         ocr_service: OCR 服务实例。
         embedding_service: Embedding 服务实例。
         image_optimizer: 图片压缩器实例，可选。
         ai_matcher: AI 匹配器实例，可选。
         keyword_searcher: 关键词搜索器实例，可选。
     """
-    global _index_manager, _ocr_service, _embedding_service, _image_optimizer, _ai_matcher, _keyword_searcher
+    global _index_manager, _metadata_store, _vector_store, _ocr_service
+    global _embedding_service, _image_optimizer, _ai_matcher, _keyword_searcher
     _index_manager = index_manager
+    _metadata_store = metadata_store
+    _vector_store = vector_store
     _ocr_service = ocr_service
     _embedding_service = embedding_service
     _image_optimizer = image_optimizer
@@ -64,6 +76,34 @@ def get_index_manager() -> IndexManager:
     if _index_manager is None:
         raise RuntimeError("IndexManager 尚未初始化，请先调用 init_app()")
     return _index_manager
+
+
+def get_metadata_store() -> MetadataStore:
+    """获取 MetadataStore 单例。
+
+    Returns:
+        已初始化的 MetadataStore 实例。
+
+    Raises:
+        RuntimeError: 尚未调用 init_app() 初始化。
+    """
+    if _metadata_store is None:
+        raise RuntimeError("MetadataStore 尚未初始化，请先调用 init_app()")
+    return _metadata_store
+
+
+def get_vector_store() -> VectorStore:
+    """获取 VectorStore 单例。
+
+    Returns:
+        已初始化的 VectorStore 实例。
+
+    Raises:
+        RuntimeError: 尚未调用 init_app() 初始化。
+    """
+    if _vector_store is None:
+        raise RuntimeError("VectorStore 尚未初始化，请先调用 init_app()")
+    return _vector_store
 
 
 def get_ocr_service() -> DeepSeekOcrService | PaddleOcrClientService:

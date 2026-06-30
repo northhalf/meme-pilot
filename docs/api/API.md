@@ -15,9 +15,11 @@ api
     │   ├── image_optimizer.md
     │   ├── index_manager.md
     │   ├── keyword_searcher.md
+    │   ├── metadata_store.md
     │   ├── paddle_ocr.md
     │   ├── protocols.md
     │   ├── rerank_service.md
+    │   ├── vector_store.md
     ├── bot.md
     ├── config.md
     ├── logging_config.md
@@ -48,15 +50,11 @@ class EmbeddingProvider(Protocol):  # 无 @runtime_checkable
 ### `docs/api/bot/engine/ai_matcher.md`
 
 ```python
-class AIIndexProvider(Protocol):
-    def get_entries(self) -> dict[str, dict[str, str]]
-    def get_embeddings(self) -> dict[str, dict[str, object]]
-
 @dataclass(frozen=True)
 class AIMatchCandidate:
     rank: int
-    entry_id: str
-    filename: str
+    entry_id: int
+    image_path: str
     text: str
     similarity: float
 
@@ -69,8 +67,8 @@ class RerankProvider(Protocol):
 
 @dataclass(frozen=True)
 class AIMatchResult:
-    entry_id: str
-    filename: str
+    entry_id: int
+    image_path: str
     text: str
     similarity: float
     source: str
@@ -78,30 +76,30 @@ class AIMatchResult:
 class AIMatcher:
     def __init__(
         self,
-        index_provider: AIIndexProvider,
+        metadata_store: MetadataStore,
+        vector_store: VectorStore,
         embedding_provider: EmbeddingProvider,
         rerank_provider: RerankProvider | None = None,
         limit: int = 10,
     ) -> None
 
     async def match(self, description: str) -> AIMatchResult | None
+    # Raises: ValueError（用户描述 embedding 为空/非数字/零向量）
 ```
 
 ### `docs/api/bot/engine/index_manager.md`
 
 ```python
-def normalize_text(text: str) -> str
-
-def compute_text_hash(text: str) -> str
-
-def dedup_key(text: str) -> str
-
-def is_blank_text(text: str) -> bool
+def resolve_unique_filename(target_dir: Path, filename: str) -> Path
 
 class IndexCorruptedError(Exception)
+class CompressionError(RuntimeError)
+class OcrError(RuntimeError)
+class EmbeddingError(RuntimeError)
 
 class OcrProvider(Protocol):
     async def ocr(self, image_path: str) -> str
+    # 返回去除所有空白后的文本
 
 @dataclass
 class SyncResult:
@@ -113,10 +111,10 @@ class SyncResult:
 
 @dataclass
 class AddResult:
-    entry_id: str | None
+    entry_id: int | None
     reason: str
     text: str = ""
-    replaced_filename: str | None = None
+    replaced_image_path: str | None = None
     moved_to: str | None = None
 
 class IndexManager:
@@ -125,44 +123,17 @@ class IndexManager:
 
     def __init__(
         self,
-        data_dir: str = "data",
-        memes_dir: str = "memes",
+        metadata_store: MetadataStore,
+        vector_store: VectorStore,
+        memes_dir: str,
+        no_text_dir: str | None = None,
         ocr_provider: OcrProvider | None = None,
         embedding_provider: EmbeddingProvider | None = None,
-        sync_concurrency: int | None = None,
-        no_text_dir: str | None = None,
         optimizer: ImageOptimizer | None = None,
+        sync_concurrency: int | None = None,
     ) -> None
 
-    def load(self) -> None
-
-    @staticmethod
-    def validate_index(data: object) -> None
-
-    def get_entries(self) -> dict[str, dict[str, str]]
-
-    def get_embeddings(self) -> dict[str, dict[str, object]]
-
-    def get_entry(self, entry_id: str) -> dict[str, str] | None
-
-    def get_by_filename(self, filename: str) -> dict[str, str] | None
-
-    @property
-    def entry_count(self) -> int
-
-    def save_index(self) -> None
-
-    def save_embeddings(self) -> None
-    # 输出 version 2 格式，embedding 自动编码为 base64
-
-    def add_entry(
-        self,
-        filename: str,
-        text: str,
-        embedding: list[float],
-    ) -> AddResult
-
-    def remove_entry(self, entry_id: str) -> bool
+    def load(self) -> None  # 委托两个 Store.load()
 
     async def acquire_lock(self) -> bool
 
@@ -171,72 +142,120 @@ class IndexManager:
     @property
     def is_locked(self) -> bool
 
+    @property
+    def entry_count(self) -> int
+
     async def sync_with_filesystem(self) -> SyncResult
+    # 四阶段：阶段0 跨库一致性修复 + 阶段1 删除 + 阶段2 新增
 
     async def add_single_file(self, filename: str) -> AddResult
     # Raises: CompressionError, OcrError, EmbeddingError
-
-    async def _process_image_pipeline(self, filename: str) -> tuple[str, list[float]]
-    # Raises: CompressionError, OcrError, EmbeddingError
 ```
 
-**embeddings.json 格式变更（v2）：**
+薄编排层：不直接写 SQL/Chroma，全部委托 `MetadataStore` + `VectorStore`。写入顺序统一「先 sqlite 后 chroma」，`upsert` 失败回滚 sqlite。去重键 = 去空白后的 `text`（经 `MetadataStore.get_id_by_text` 判定）。
 
-version=1（旧格式，自动清空重建）：
-```json
-{
-  "1": {"text_hash": "sha256:...", "embedding": [0.1, 0.2, ...]}
-}
-```
-
-version=2（新格式）：
-```json
-{
-  "version": 2,
-  "entries": {
-    "1": {"text_hash": "sha256:...", "embedding": "AAAAAEA/4D8..."}
-  }
-}
-```
-
-**新增异常：**
+### `docs/api/bot/engine/metadata_store.md`
 
 ```python
-class CompressionError(RuntimeError)   # 图片压缩失败
-class OcrError(RuntimeError)           # OCR 识别失败
-class EmbeddingError(RuntimeError)     # Embedding 生成失败
+@dataclass
+class MemeEntry:
+    id: int
+    image_path: str
+    text: str
+    speaker: str | None = None
+    tags: list[str] = field(default_factory=list)
+
+class MetadataStore:
+    def __init__(self, db_path: str) -> None
+
+    def load(self) -> None
+    def close(self) -> None
+
+    def get_all_entries(self) -> dict[int, MemeEntry]  # 实现 MetadataStoreProvider
+    def get_entry(self, entry_id: int) -> MemeEntry | None
+    def get_by_filename(self, image_path: str) -> MemeEntry | None
+    def get_id_by_text(self, text: str) -> int | None
+    def find_next_id(self) -> int
+    def entry_count(self) -> int
+    def get_all_text(self) -> list[tuple[int, str]]
+
+    def add(
+        self,
+        image_path: str,
+        text: str,
+        speaker: str | None = None,
+        tags: list[str] | None = None,
+    ) -> int  # 自动分配最小空洞 id
+
+    def add_with_id(
+        self,
+        entry_id: int,
+        image_path: str,
+        text: str,
+        speaker: str | None = None,
+        tags: list[str] | None = None,
+    ) -> int  # 迁移专用：保留旧 id
+
+    def update(
+        self,
+        entry_id: int,
+        *,
+        image_path: str | None = None,
+        text: str | None = None,
+        speaker: str | None = None,
+        tags: list[str] | None = None,
+    ) -> bool
+
+    def remove(self, entry_id: int) -> bool
 ```
 
-**新增模块级函数：**
+基于 sqlite3。schema：`meme(id INTEGER PRIMARY KEY, image_path, text, speaker)` + `UNIQUE INDEX` on `image_path` + `meme_tag(meme_id, tag, FK ON DELETE CASCADE)`。`PRAGMA foreign_keys = ON`。`text` 假定唯一（无 UNIQUE 约束，调用方需用 `get_id_by_text` 去重）。
+
+### `docs/api/bot/engine/vector_store.md`
 
 ```python
-def encode_embedding(embedding: list[float]) -> str
-    # struct.pack + base64，big-endian，float32 roundtrip 零误差
+@dataclass
+class VectorHit:
+    entry_id: int
+    similarity: float  # = 1 - distance
 
-def decode_embedding(data: str) -> list[float]
-    # base64 解码为 float32 向量
+class VectorStore:
+    def __init__(self, chroma_path: str, collection_name: str = "memes") -> None
 
-def resolve_unique_filename(target_dir: Path, filename: str) -> Path
-    # 原 _resolve_unique_filename，已公共化
+    def load(self) -> None
+    def close(self) -> None
+
+    async def upsert(self, entry_id: int, embedding: list[float]) -> None
+    async def remove(self, entry_id: int) -> None              # 不存在静默
+    async def remove_many(self, entry_ids: list[int]) -> None  # 不存在静默
+    async def query(
+        self,
+        query_embedding: list[float],
+        n_results: int = 10,
+    ) -> list[VectorHit]
+    async def rebuild_all(self, items: list[tuple[int, list[float]]]) -> None
+    def count(self) -> int
 ```
+
+基于 chromadb `PersistentClient`，HNSW cosine collection（默认 `memes`）。`id` 内部转 `str`，对外保持 `int`，与 sqlite 一一对应。`load/close/count` 同步，其余 async（内部 `asyncio.to_thread`）。
 
 ### `docs/api/bot/engine/keyword_searcher.md`
 
 ```python
-class IndexProvider(Protocol):
-    def get_entries(self) -> dict[str, dict[str, str]]
+class MetadataStoreProvider(Protocol):
+    def get_all_entries(self) -> dict[int, MemeEntry]
 
 @dataclass
 class SearchResult:
-    entry_id: str
-    filename: str
+    entry_id: int
+    image_path: str
     text: str
     similarity: float
 
 class KeywordSearcher:
     def __init__(
         self,
-        index_provider: IndexProvider,
+        metadata_store: MetadataStoreProvider,
         threshold: float = 60.0,
         limit: int = 10,
     ) -> None
@@ -297,7 +316,7 @@ class PaddleOcrClientService:
 - `base_url` 默认从 `PADDLEOCR_BASE_URL` 环境变量读取
 - `model` 默认 `Model.PP_OCRV6`
 - `text_rec_score_thresh` 置信度阈值（0~1），低于此值的文本行被过滤；设为 0 关闭过滤
-- `ocr()` 返回识别文本（空字符串表示无结果）；支持新版 API dict 格式（`rec_texts`）与旧版格式自动适配
+- `ocr()` 返回识别文本（已去除所有空白字符，空字符串表示无结果）；支持新版 API dict 格式（`rec_texts`）与旧版格式自动适配
 - `close()` 释放 HTTP 会话
 - 异常：`RuntimeError`（API 调用失败）
 
@@ -348,8 +367,8 @@ class ImageOptimizer:
 NoneBot2 应用入口，详见 `docs/api/bot/bot.md`。
 
 - 启动：`main()` — 初始化 NoneBot2（`driver="~fastapi"`），注册 OneBot V11 适配器，加载插件，启动驱动器
-- Startup hook：`_on_startup()` — 创建 engine 服务、注册到 `app_state`、后台执行索引同步；根据 `OCR_PROVIDER` 环境变量选择 OCR 引擎（`paddle`/`deepseek`）
-- Shutdown hook：`_on_shutdown()` — 释放 OCR 服务的 HTTP 会话（如适用）
+- Startup hook：`_on_startup()` — 创建 OCR/Embedding/Rerank/ImageOptimizer 服务，创建 `MetadataStore(INDEX_DB_PATH)` + `VectorStore(CHROMA_DIR)` 并注入 `IndexManager`，`load()` 后注册到 `app_state`、后台执行索引同步；根据 `OCR_PROVIDER` 环境变量选择 OCR 引擎（`paddle`/`deepseek`）
+- Shutdown hook：`_on_shutdown()` — 关闭 OCR 服务 HTTP 会话，并 `close()` 两个 Store（sqlite 连接 + chroma PersistentClient）
 - `_background_sync()` — 后台同步任务，`acquire_lock()` 获取锁，同步完成/失败后释放
 - 同步期间 `is_locked = True`，插件层自动回复"索引正在更新"；同步失败时记录日志，Bot 继续运行
 - 环境变量：`BOT_HOST`（默认 `0.0.0.0`）、`BOT_PORT`（默认 `8080`，无效值回退 8080）、`SYNC_CONCURRENCY`（默认 5）
@@ -365,6 +384,8 @@ def setup_logging(log_dir: str = "log") -> None
 ```python
 def init_app(
     index_manager: IndexManager,
+    metadata_store: MetadataStore,
+    vector_store: VectorStore,
     ocr_service: DeepSeekOcrService | PaddleOcrClientService,
     embedding_service: EmbeddingService,
     image_optimizer: ImageOptimizer | None = None,
@@ -373,6 +394,8 @@ def init_app(
 ) -> None
 
 def get_index_manager() -> IndexManager
+def get_metadata_store() -> MetadataStore
+def get_vector_store() -> VectorStore
 def get_ocr_service() -> DeepSeekOcrService | PaddleOcrClientService
 def get_embedding_service() -> EmbeddingService
 def get_image_optimizer() -> ImageOptimizer | None
@@ -524,5 +547,8 @@ NoneBot2 命令插件，注册 `/search` 命令（薄包装，核心逻辑委托
 
 - `PROJECT_ROOT: Path` — 项目根目录，绝对路径
 - `MEMES_DIR: Path` — 表情包图片目录，绝对路径 `<项目根>/memes`
+- `DATA_DIR: Path` — 索引数据目录，绝对路径 `<项目根>/data`
+- `INDEX_DB_PATH: Path` — sqlite 元数据数据库文件，绝对路径 `<项目根>/data/index.db`
+- `CHROMA_DIR: Path` — chroma 向量库数据目录，绝对路径 `<项目根>/data/chroma`
 - `read_session_timeout() -> int` — 从 `SESSION_EXPIRE_TIMEOUT` 环境变量读取会话超时秒数，支持纯数字和 `HH:MM:SS` 格式（pydantic 解析），默认 60
 - `read_ocr_provider() -> str` — 从 `OCR_PROVIDER` 环境变量读取 OCR 引擎类型，默认 `"paddle"`，有效值：`"deepseek"`、`"paddle"`

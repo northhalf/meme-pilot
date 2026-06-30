@@ -101,7 +101,7 @@ class DeepSeekOcrService:
             image_path: 图片文件路径。
 
         Returns:
-            识别到的文本字符串（已清洗定位标记，仅保留纯文本）。
+            识别到的文本字符串（已清洗定位标记并去除所有空白字符）。
 
         Raises:
             FileNotFoundError: 图片文件不存在。
@@ -147,7 +147,7 @@ class DeepSeekOcrService:
             raise RuntimeError(f"DeepSeek-OCR API 调用失败: {exc}") from exc
 
         raw = response.choices[0].message.content or ""
-        text = _clean_ocr_result(raw)
+        text = "".join(_clean_ocr_result(raw).split())
         logger.debug("OCR 完成: %s → %d 字符", path.name, len(text))
         return text
 

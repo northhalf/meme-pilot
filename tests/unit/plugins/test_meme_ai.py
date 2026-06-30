@@ -1,7 +1,5 @@
 """/ai 命令插件单元测试。"""
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -76,8 +74,8 @@ def _make_ai_matcher(
     else:
         am.match = AsyncMock(
             return_value=AIMatchResult(
-                entry_id="1",
-                filename="加班心累.jpg",
+                entry_id=1,
+                image_path="加班心累.jpg",
                 text="加班到心累",
                 similarity=0.95,
                 source="rerank",
@@ -371,8 +369,8 @@ class TestDoMatch:
         from bot.engine.ai_matcher import AIMatchResult
 
         expected = AIMatchResult(
-            entry_id="1",
-            filename="test.jpg",
+            entry_id=1,
+            image_path="test.jpg",
             text="测试",
             similarity=0.9,
             source="embedding",

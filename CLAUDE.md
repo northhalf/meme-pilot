@@ -62,11 +62,11 @@ uv run python -m compileall bot tests   # 语法检查
 - Docker Compose 部署：`napcat`（QQ协议）+ `bot`（NoneBot2 + 插件）。
 - v1.0 使用反向 WebSocket，NapCat 连接 NoneBot2（端口仅内网）。
 - NapCat WebUI 通过宿主机 `6099` 端口访问。
-- 数据目录：`memes/`（图片）、`data/index.json`（主索引）、`data/embeddings.json`（向量索引）、`log/bot.log`（滚动日志）。
+- 数据目录：`memes/`（图片）、`data/index.db`（sqlite 元数据）、`data/chroma/`（chroma 向量库）、`log/bot.log`（滚动日志）。
 - 隐私：图片本地存储；OCR 文本可能发送至 SiliconFlow / DeepSeek。
 
 ## 当前实现注意事项
 
-已完成：engine 全部模块（index_manager、keyword_searcher、ai_matcher、deepseek_ocr、paddle_ocr、embedding_service、rerank_service、image_optimizer、protocols）、app_state 共享实例（含 get_ai_matcher 和 get_keyword_searcher）、config 全局路径常量（含 PROJECT_ROOT、read_session_timeout）、auth 授权校验、bot.session 会话管理（含 timeout_session）、bot.py（NoneBot2 入口，fastapi 驱动器）、/help、/refresh、/search、/add、/ai 和 /cancel 插件及其测试、bot/Dockerfile、napcat/entrypoint.sh。
+已完成：engine 全部模块（metadata_store、vector_store、index_manager、keyword_searcher、ai_matcher、deepseek_ocr、paddle_ocr、embedding_service、rerank_service、image_optimizer、protocols）、`scripts/migrate_json_to_db.py` 旧 JSON 索引迁移脚本、app_state 共享实例（含 get_ai_matcher、get_keyword_searcher、get_metadata_store、get_vector_store）、config 全局路径常量（含 PROJECT_ROOT、DATA_DIR、INDEX_DB_PATH、CHROMA_DIR、read_session_timeout、read_ocr_provider）、auth 授权校验、bot.session 会话管理（含 timeout_session）、bot.py（NoneBot2 入口，fastapi 驱动器，startup 创建并注入 MetadataStore+VectorStore，shutdown 关闭两个 Store）、/help、/refresh、/search、/add、/ai 和 /cancel 插件及其测试、bot/Dockerfile、napcat/entrypoint.sh。
 
 尚未实现：无。实现或重构前，以 `docs/PRD.md` 和 `CONTEXT.md` 为准，并同步更新 README、`.env.example`、`docker-compose.yml`。

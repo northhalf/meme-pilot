@@ -1,7 +1,5 @@
 """/search 命令插件单元测试。"""
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -54,8 +52,8 @@ def _make_matcher(*, state: dict | None = None) -> MagicMock:
 
 
 def _make_search_result(
-    entry_id: str = "1",
-    filename: str = "test.jpg",
+    entry_id: int = 1,
+    image_path: str = "test.jpg",
     text: str = "测试文本",
     similarity: float = 90.0,
 ) -> SearchResult:
@@ -63,7 +61,7 @@ def _make_search_result(
 
     return SearchResult(
         entry_id=entry_id,
-        filename=filename,
+        image_path=image_path,
         text=text,
         similarity=similarity,
     )
@@ -309,7 +307,7 @@ class TestGotSelection:
         mock_segment: MagicMock,
     ) -> None:
         """有效编号选择应发送对应图片并清理会话。"""
-        result = _make_search_result(filename="a.jpg")
+        result = _make_search_result(image_path="a.jpg")
         mock_handle.return_value = result
         mock_get_sel.return_value = MagicMock()
         candidates = [result]
@@ -336,11 +334,11 @@ class TestGotSelection:
         mock_handle: MagicMock,
     ) -> None:
         """选择第 2 个结果应发送对应图片路径。"""
-        result = _make_search_result(entry_id="2", filename="b.jpg", text="乙")
+        result = _make_search_result(entry_id=2, image_path="b.jpg", text="乙")
         mock_handle.return_value = result
         mock_get_sel.return_value = MagicMock()
         candidates = [
-            _make_search_result(entry_id="1", filename="a.jpg", text="甲"),
+            _make_search_result(entry_id=1, image_path="a.jpg", text="甲"),
             result,
         ]
         matcher = _make_matcher(state={"candidates": candidates})

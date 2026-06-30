@@ -28,7 +28,9 @@ from bot.engine.ai_matcher import AIMatcher
 from bot.engine.embedding_service import EmbeddingService
 from bot.engine.index_manager import IndexManager
 from bot.engine.deepseek_ocr import DeepSeekOcrService
+from bot.engine.metadata_store import MetadataStore
 from bot.engine.rerank_service import RerankService
+from bot.engine.vector_store import VectorStore
 
 # fixture 图片目录
 FIXTURE_IMAGES_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "images"
@@ -48,9 +50,17 @@ def work_dirs(tmp_path: Path) -> dict[str, Path]:
     data_dir = tmp_path / "data"
     memes_dir = tmp_path / "memes"
     no_text_dir = tmp_path / "meme_no_text"
+    index_db = data_dir / "index.db"
+    chroma_dir = data_dir / "chroma"
     data_dir.mkdir()
     memes_dir.mkdir()
-    return {"data_dir": data_dir, "memes_dir": memes_dir, "no_text_dir": no_text_dir}
+    return {
+        "data_dir": data_dir,
+        "memes_dir": memes_dir,
+        "no_text_dir": no_text_dir,
+        "index_db": index_db,
+        "chroma_dir": chroma_dir,
+    }
 
 
 @pytest_asyncio.fixture
@@ -88,12 +98,15 @@ async def _build_index(
     ocr_service: DeepSeekOcrService,
     embedding_service: EmbeddingService,
     image_names: list[str],
-) -> IndexManager:
-    """同步索引并返回就绪的 IndexManager。"""
+) -> tuple[IndexManager, MetadataStore, VectorStore]:
+    """同步索引并返回就绪的 IndexManager 及其底层存储。"""
     _copy_fixture_images(work_dirs["memes_dir"], image_names)
 
+    metadata_store = MetadataStore(str(work_dirs["index_db"]))
+    vector_store = VectorStore(str(work_dirs["chroma_dir"]))
     manager = IndexManager(
-        data_dir=str(work_dirs["data_dir"]),
+        metadata_store=metadata_store,
+        vector_store=vector_store,
         memes_dir=str(work_dirs["memes_dir"]),
         ocr_provider=ocr_service,
         embedding_provider=embedding_service,
@@ -101,7 +114,7 @@ async def _build_index(
     )
     manager.load()
     await manager.sync_with_filesystem()
-    return manager
+    return manager, metadata_store, vector_store
 
 
 @pytest.mark.asyncio
@@ -115,10 +128,13 @@ async def test_match_embedding_only(
         "听天由命吧.png",
         "不能用就弃之.png",
     ]
-    manager = await _build_index(work_dirs, ocr_service, embedding_service, images)
+    manager, metadata_store, vector_store = await _build_index(
+        work_dirs, ocr_service, embedding_service, images
+    )
 
     matcher = AIMatcher(
-        index_provider=manager,
+        metadata_store=metadata_store,
+        vector_store=vector_store,
         embedding_provider=embedding_service,
     )
 
@@ -145,10 +161,13 @@ async def test_match_with_rerank(
         "听天由命吧.png",
         "不能用就弃之.png",
     ]
-    manager = await _build_index(work_dirs, ocr_service, embedding_service, images)
+    manager, metadata_store, vector_store = await _build_index(
+        work_dirs, ocr_service, embedding_service, images
+    )
 
     matcher = AIMatcher(
-        index_provider=manager,
+        metadata_store=metadata_store,
+        vector_store=vector_store,
         embedding_provider=embedding_service,
         rerank_provider=rerank_service,
     )
@@ -171,10 +190,13 @@ async def test_match_empty_description_returns_none(
 ) -> None:
     """测试：空描述返回 None。"""
     images = ["听天由命吧.png"]
-    manager = await _build_index(work_dirs, ocr_service, embedding_service, images)
+    manager, metadata_store, vector_store = await _build_index(
+        work_dirs, ocr_service, embedding_service, images
+    )
 
     matcher = AIMatcher(
-        index_provider=manager,
+        metadata_store=metadata_store,
+        vector_store=vector_store,
         embedding_provider=embedding_service,
     )
 
@@ -195,10 +217,13 @@ async def test_match_returns_correct_filename(
         "听天由命吧.png",
         "不能用就弃之.png",
     ]
-    manager = await _build_index(work_dirs, ocr_service, embedding_service, images)
+    manager, metadata_store, vector_store = await _build_index(
+        work_dirs, ocr_service, embedding_service, images
+    )
 
     matcher = AIMatcher(
-        index_provider=manager,
+        metadata_store=metadata_store,
+        vector_store=vector_store,
         embedding_provider=embedding_service,
     )
 
@@ -208,4 +233,4 @@ async def test_match_returns_correct_filename(
     print(f"结果: {result}")
 
     assert result is not None
-    assert result.filename in images
+    assert result.image_path in images

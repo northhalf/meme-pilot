@@ -100,7 +100,9 @@ async def handle_add(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
 
         selection_id = str(uuid.uuid4())
         task = asyncio.create_task(
-            timeout_session(bot, event, user_id, selection_id, "发送图片超时，请重新 /add")
+            timeout_session(
+                bot, event, user_id, selection_id, "发送图片超时，请重新 /add"
+            )
         )
         session_manager.create_selection(user_id, selection_id, task)
         session_manager.reset_current_task(user_id)
@@ -218,7 +220,9 @@ async def got_image(
                     await matcher.finish("未识别到文字，已移至 meme_no_text/")
                 elif result.reason == "replaced":
                     ocr_display = _format_ocr_text(result.text)
-                    await matcher.finish(f"替换旧图✅，识别到的文字为：\n「{ocr_display}」")
+                    await matcher.finish(
+                        f"替换旧图✅，识别到的文字为：\n「{ocr_display}」"
+                    )
                 else:
                     ocr_display = _format_ocr_text(result.text)
                     await matcher.finish(

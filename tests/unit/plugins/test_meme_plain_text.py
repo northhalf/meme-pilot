@@ -1,7 +1,5 @@
 """兜底消息插件单元测试。"""
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

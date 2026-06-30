@@ -6,8 +6,6 @@ PaddleOCR 官方云 API 进行图片文字识别。
 实现 index_manager.OcrProvider 协议。
 """
 
-from __future__ import annotations
-
 import logging
 import os
 
@@ -159,7 +157,7 @@ class PaddleOcrClientService:
             image_path: 图片文件路径。
 
         Returns:
-            识别到的文本字符串（可能为空字符串）。
+            识别到的文本字符串（已去除所有空白字符，可能为空字符串）。
 
         Raises:
             RuntimeError: API 调用失败。
@@ -187,7 +185,7 @@ class PaddleOcrClientService:
             if text:
                 texts.append(text)
 
-        full_text = " ".join(texts)
+        full_text = "".join(" ".join(texts).split())
         logger.debug("PaddleOCR 完成: %s → %s", image_path, full_text)
         return full_text
 

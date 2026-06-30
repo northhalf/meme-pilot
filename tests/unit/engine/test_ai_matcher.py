@@ -1,35 +1,47 @@
 """AIMatcher 单元测试。"""
 
-from __future__ import annotations
-
 from typing import Any
 
 import pytest
 
 from bot.engine.ai_matcher import AIMatchCandidate, AIMatchResult, AIMatcher
+from bot.engine.metadata_store import MemeEntry
+from bot.engine.vector_store import VectorHit
 
 
-class MockIndex:
-    """模拟 AIIndexProvider。"""
+class MockVectorStore:
+    """模拟 VectorStore。"""
 
     def __init__(
         self,
-        entries: dict[str, dict[str, str]] | None = None,
-        embeddings: dict[str, dict[str, object]] | None = None,
+        hits: list[VectorHit] | None = None,
+        count: int = 0,
+        error: Exception | None = None,
     ) -> None:
+        self._hits = hits or []
+        self._count = count
+        self._error = error
+
+    async def query(self, query_embedding: list[float], n_results: int = 10) -> list[VectorHit]:
+        if self._error is not None:
+            raise self._error
+        return self._hits[:n_results]
+
+    def count(self) -> int:
+        return self._count
+
+
+class MockMetadataStore:
+    """模拟 MetadataStore，按 id 返回 MemeEntry。"""
+
+    def __init__(self, entries: dict[int, MemeEntry] | None = None) -> None:
         self._entries = entries or {}
-        self._embeddings = embeddings or {}
 
-    def get_entries(self) -> dict[str, dict[str, str]]:
-        return self._entries
-
-    def get_embeddings(self) -> dict[str, dict[str, object]]:
-        return self._embeddings
+    def get_entry(self, entry_id: int) -> MemeEntry | None:
+        return self._entries.get(entry_id)
 
 
 class MockEmbeddingProvider:
-    """模拟 EmbeddingProvider，并记录调用。"""
-
     def __init__(
         self,
         embedding: list[float] | None = None,
@@ -47,25 +59,13 @@ class MockEmbeddingProvider:
 
 
 class MockReranker:
-    """模拟 RerankProvider，并记录调用。
-
-    result 可传入非整数（如 "2"、99）以测试 fallback 分支；
-    exc 不为 None 时抛出该异常以测试精排失败回退。
-    """
-
-    def __init__(
-        self,
-        result: Any = 0,
-        exc: Exception | None = None,
-    ) -> None:
+    def __init__(self, result: Any = 0, exc: Exception | None = None) -> None:
         self._result = result
         self._exc = exc
         self.calls: list[tuple[str, list[AIMatchCandidate]]] = []
 
     async def rerank(
-        self,
-        description: str,
-        candidates: list[AIMatchCandidate],
+        self, description: str, candidates: list[AIMatchCandidate]
     ) -> int:
         self.calls.append((description, candidates))
         if self._exc is not None:
@@ -73,385 +73,203 @@ class MockReranker:
         return self._result
 
 
-def test_ai_match_candidate_create() -> None:
-    """验证 AIMatchCandidate 可正确创建。"""
-    candidate = AIMatchCandidate(
-        rank=1,
-        entry_id="1",
-        filename="cat.jpg",
-        text="一只猫",
-        similarity=0.95,
+def _make_entries() -> dict[int, MemeEntry]:
+    return {
+        1: MemeEntry(id=1, image_path="cat.jpg", text="猫猫开心"),
+        2: MemeEntry(id=2, image_path="work.jpg", text="加班心累"),
+    }
+
+
+def test_candidate_create() -> None:
+    c = AIMatchCandidate(
+        rank=1, entry_id=1, image_path="cat.jpg", text="一只猫", similarity=0.95
     )
-
-    assert candidate.rank == 1
-    assert candidate.entry_id == "1"
-    assert candidate.filename == "cat.jpg"
-    assert candidate.text == "一只猫"
-    assert candidate.similarity == 0.95
+    assert c.entry_id == 1
+    assert c.image_path == "cat.jpg"
 
 
-def test_ai_match_result_create() -> None:
-    """验证 AIMatchResult 可正确创建。"""
-    result = AIMatchResult(
-        entry_id="1",
-        filename="cat.jpg",
-        text="一只猫",
-        similarity=0.95,
-        source="vector",
+def test_result_create() -> None:
+    r = AIMatchResult(
+        entry_id=1, image_path="cat.jpg", text="一只猫", similarity=0.95, source="embedding"
     )
-
-    assert result.entry_id == "1"
-    assert result.filename == "cat.jpg"
-    assert result.text == "一只猫"
-    assert result.similarity == 0.95
-    assert result.source == "vector"
+    assert r.entry_id == 1
+    assert r.image_path == "cat.jpg"
+    assert r.source == "embedding"
 
 
 @pytest.mark.anyio
-async def test_match_empty_description_returns_none_without_embedding_call() -> None:
-    """空描述应直接返回 None，且不调用 embedding。"""
+async def test_empty_description_returns_none_without_embedding_call() -> None:
     provider = MockEmbeddingProvider()
-    matcher = AIMatcher(MockIndex(), provider, MockReranker())
-
+    matcher = AIMatcher(
+        MockMetadataStore(), MockVectorStore(count=0), provider, MockReranker()
+    )
     result = await matcher.match("   ")
-
     assert result is None
     assert provider.calls == []
 
 
 @pytest.mark.anyio
-async def test_match_returns_none_when_no_entries() -> None:
-    """索引 entries 为空时应返回 None。"""
+async def test_empty_vector_store_returns_none() -> None:
+    """VectorStore.count()==0 时返回 None，不调用 embed。"""
     provider = MockEmbeddingProvider()
     matcher = AIMatcher(
-        MockIndex(
-            entries={},
-            embeddings={"1": {"text_hash": "sha256:abc", "embedding": [0.1, 0.2]}},
-        ),
-        provider,
-        MockReranker(),
+        MockMetadataStore(_make_entries()), MockVectorStore(count=0), provider
     )
-
-    result = await matcher.match("找一只猫")
-
+    result = await matcher.match("找猫")
     assert result is None
     assert provider.calls == []
 
 
-@pytest.mark.anyio
-async def test_match_returns_none_when_no_embeddings() -> None:
-    """索引 embeddings 为空时应返回 None。"""
-    provider = MockEmbeddingProvider()
-    matcher = AIMatcher(
-        MockIndex(
-            entries={
-                "1": {
-                    "filename": "cat.jpg",
-                    "text": "一只猫",
-                    "text_hash": "sha256:abc",
-                }
-            },
-            embeddings={},
-        ),
-        provider,
-        MockReranker(),
-    )
-
-    result = await matcher.match("找一只猫")
-
-    assert result is None
-    assert provider.calls == []
-
-
-class TestAIMatcherEmbeddingRecall:
-    """Embedding 语义召回测试。"""
-
+class TestEmbeddingRecall:
     @pytest.mark.anyio
-    async def test_returns_highest_cosine_similarity(self) -> None:
-        """返回余弦相似度最高的候选。"""
-        entries = {
-            "1": {"filename": "cat.jpg", "text": "猫猫开心", "text_hash": "x"},
-            "2": {"filename": "work.jpg", "text": "加班心累", "text_hash": "y"},
-        }
-        embeddings = {
-            "1": {"text_hash": "x", "embedding": [0.0, 1.0]},
-            "2": {"text_hash": "y", "embedding": [1.0, 0.0]},
-        }
+    async def test_returns_top_hit(self) -> None:
+        hits = [VectorHit(entry_id=2, similarity=0.9), VectorHit(entry_id=1, similarity=0.8)]
         matcher = AIMatcher(
-            MockIndex(entries=entries, embeddings=embeddings),
-            MockEmbeddingProvider([1.0, 0.0]),
+            MockMetadataStore(_make_entries()),
+            MockVectorStore(hits=hits, count=2),
+            MockEmbeddingProvider(),
         )
-
         result = await matcher.match("心累加班")
-
         assert result == AIMatchResult(
-            entry_id="2",
-            filename="work.jpg",
-            text="加班心累",
-            similarity=1.0,
-            source="embedding",
+            entry_id=2, image_path="work.jpg", text="加班心累",
+            similarity=0.9, source="embedding",
         )
 
     @pytest.mark.anyio
-    async def test_tie_breaks_by_numeric_entry_id(self) -> None:
-        """相似度相同时按数字 id 升序返回。"""
-        entries = {
-            "10": {"filename": "b.jpg", "text": "同分 B", "text_hash": "b"},
-            "2": {"filename": "a.jpg", "text": "同分 A", "text_hash": "a"},
-        }
-        embeddings = {
-            "10": {"text_hash": "b", "embedding": [1.0, 0.0]},
-            "2": {"text_hash": "a", "embedding": [1.0, 0.0]},
-        }
+    async def test_skip_hit_with_missing_metadata(self) -> None:
+        """VectorHit 对应的 metadata 不存在时跳过该候选。"""
+        hits = [VectorHit(entry_id=999, similarity=0.9), VectorHit(entry_id=1, similarity=0.8)]
         matcher = AIMatcher(
-            MockIndex(entries=entries, embeddings=embeddings),
-            MockEmbeddingProvider([1.0, 0.0]),
+            MockMetadataStore(_make_entries()),
+            MockVectorStore(hits=hits, count=2),
+            MockEmbeddingProvider(),
         )
-
-        result = await matcher.match("同分")
-
+        result = await matcher.match("找猫")
         assert result is not None
-        assert result.entry_id == "2"
+        assert result.entry_id == 1
 
     @pytest.mark.anyio
-    async def test_skips_missing_embedding(self) -> None:
-        """缺少 embedding 的条目会被跳过。"""
-        entries = {
-            "1": {"filename": "missing.jpg", "text": "缺向量", "text_hash": "x"},
-            "2": {"filename": "ok.jpg", "text": "有向量", "text_hash": "y"},
-        }
-        embeddings = {
-            "2": {"text_hash": "y", "embedding": [1.0, 0.0]},
-        }
+    async def test_all_hits_missing_metadata_returns_none(self) -> None:
+        hits = [VectorHit(entry_id=999, similarity=0.9)]
         matcher = AIMatcher(
-            MockIndex(entries=entries, embeddings=embeddings),
-            MockEmbeddingProvider([1.0, 0.0]),
+            MockMetadataStore({}),
+            MockVectorStore(hits=hits, count=1),
+            MockEmbeddingProvider(),
         )
-
-        result = await matcher.match("有向量")
-
-        assert result is not None
-        assert result.entry_id == "2"
-
-    @pytest.mark.anyio
-    async def test_skips_bad_index_vectors(self) -> None:
-        """坏索引向量被跳过，不影响好候选。"""
-        entries = {
-            "1": {"filename": "bad.jpg", "text": "坏向量", "text_hash": "x"},
-            "2": {"filename": "ok.jpg", "text": "好向量", "text_hash": "y"},
-        }
-        embeddings = {
-            "1": {"text_hash": "x", "embedding": ["bad"]},
-            "2": {"text_hash": "y", "embedding": [1.0, 0.0]},
-        }
-        matcher = AIMatcher(
-            MockIndex(entries=entries, embeddings=embeddings),
-            MockEmbeddingProvider([1.0, 0.0]),
-        )
-
-        result = await matcher.match("好向量")
-
-        assert result is not None
-        assert result.entry_id == "2"
-
-    @pytest.mark.anyio
-    async def test_skips_dimension_mismatch(self) -> None:
-        """维度不一致的索引向量被跳过。"""
-        entries = {
-            "1": {"filename": "bad.jpg", "text": "维度错", "text_hash": "x"},
-            "2": {"filename": "ok.jpg", "text": "维度对", "text_hash": "y"},
-        }
-        embeddings = {
-            "1": {"text_hash": "x", "embedding": [1.0, 0.0, 0.0]},
-            "2": {"text_hash": "y", "embedding": [1.0, 0.0]},
-        }
-        matcher = AIMatcher(
-            MockIndex(entries=entries, embeddings=embeddings),
-            MockEmbeddingProvider([1.0, 0.0]),
-        )
-
-        result = await matcher.match("维度对")
-
-        assert result is not None
-        assert result.entry_id == "2"
-
-    @pytest.mark.anyio
-    async def test_skips_zero_index_vector(self) -> None:
-        """零向量索引条目被跳过。"""
-        entries = {
-            "1": {"filename": "zero.jpg", "text": "零向量", "text_hash": "x"},
-            "2": {"filename": "ok.jpg", "text": "好向量", "text_hash": "y"},
-        }
-        embeddings = {
-            "1": {"text_hash": "x", "embedding": [0.0, 0.0]},
-            "2": {"text_hash": "y", "embedding": [1.0, 0.0]},
-        }
-        matcher = AIMatcher(
-            MockIndex(entries=entries, embeddings=embeddings),
-            MockEmbeddingProvider([1.0, 0.0]),
-        )
-
-        result = await matcher.match("好向量")
-
-        assert result is not None
-        assert result.entry_id == "2"
-
-    @pytest.mark.anyio
-    async def test_all_invalid_candidates_returns_none(self) -> None:
-        """所有候选都无效时返回 None。"""
-        entries = {
-            "1": {"filename": "zero.jpg", "text": "零向量", "text_hash": "x"},
-        }
-        embeddings = {
-            "1": {"text_hash": "x", "embedding": [0.0, 0.0]},
-        }
-        matcher = AIMatcher(
-            MockIndex(entries=entries, embeddings=embeddings),
-            MockEmbeddingProvider([1.0, 0.0]),
-        )
-
-        result = await matcher.match("零向量")
-
+        result = await matcher.match("找猫")
         assert result is None
 
-
-class TestAIMatcherEmbeddingProviderErrors:
-    """用户描述 embedding 异常测试。
-
-    这些用例使用非空索引，确保 match() 越过空索引短路、真正调用 embed，
-    从而验证 embedding 阶段的错误处理。
-    """
-
-    def _index(self) -> MockIndex:
-        """返回非空索引，供 embedding 异常用例触发 embed 调用。"""
-        return MockIndex(
-            entries={
-                "1": {"filename": "cat.jpg", "text": "一只猫", "text_hash": "x"},
-            },
-            embeddings={
-                "1": {"text_hash": "x", "embedding": [1.0, 0.0]},
-            },
-        )
-
     @pytest.mark.anyio
-    async def test_embedding_provider_error_bubbles_up(self) -> None:
-        """用户描述 embedding 生成失败时向外抛。"""
+    async def test_limit_passed_to_query(self) -> None:
+        class CountingVectorStore(MockVectorStore):
+            def __init__(self) -> None:
+                super().__init__(hits=[VectorHit(1, 0.9)], count=1)
+                self.last_n: int = 0
+
+            async def query(self, query_embedding, n_results=10):
+                self.last_n = n_results
+                return await super().query(query_embedding, n_results)
+
+        vs = CountingVectorStore()
         matcher = AIMatcher(
-            self._index(),
+            MockMetadataStore(_make_entries()), vs, MockEmbeddingProvider(), limit=5
+        )
+        await matcher.match("找猫")
+        assert vs.last_n == 5
+
+
+class TestEmbeddingProviderErrors:
+    @pytest.mark.anyio
+    async def test_provider_error_bubbles_up(self) -> None:
+        matcher = AIMatcher(
+            MockMetadataStore(_make_entries()),
+            MockVectorStore(count=2),
             MockEmbeddingProvider(error=RuntimeError("embedding down")),
         )
-
         with pytest.raises(RuntimeError, match="embedding down"):
             await matcher.match("心累加班")
 
     @pytest.mark.anyio
     async def test_empty_query_vector_raises_value_error(self) -> None:
-        """用户描述 embedding 为空列表时抛出 ValueError。"""
         provider = MockEmbeddingProvider()
         provider._embedding = []
-        matcher = AIMatcher(self._index(), provider)
-
+        matcher = AIMatcher(
+            MockMetadataStore(_make_entries()), MockVectorStore(count=2), provider
+        )
         with pytest.raises(ValueError, match="非空列表"):
             await matcher.match("心累加班")
 
     @pytest.mark.anyio
     async def test_zero_query_vector_raises_value_error(self) -> None:
-        """用户描述 embedding 为零向量时抛出 ValueError。"""
         matcher = AIMatcher(
-            self._index(),
+            MockMetadataStore(_make_entries()),
+            MockVectorStore(count=2),
             MockEmbeddingProvider([0.0, 0.0]),
         )
-
         with pytest.raises(ValueError, match="零向量"):
             await matcher.match("心累加班")
 
 
-class TestAIMatcherRerank:
-    """候选精排测试。"""
-
+class TestRerank:
     def _matcher(self, reranker: MockReranker, limit: int = 10) -> AIMatcher:
+        hits = [
+            VectorHit(entry_id=1, similarity=0.9),
+            VectorHit(entry_id=2, similarity=0.8),
+            VectorHit(entry_id=3, similarity=0.7),
+        ]
         entries = {
-            "1": {"filename": "first.jpg", "text": "第一张", "text_hash": "x"},
-            "2": {"filename": "second.jpg", "text": "第二张", "text_hash": "y"},
-            "3": {"filename": "third.jpg", "text": "第三张", "text_hash": "z"},
-        }
-        embeddings = {
-            "1": {"text_hash": "x", "embedding": [1.0, 0.0]},
-            "2": {"text_hash": "y", "embedding": [0.8, 0.2]},
-            "3": {"text_hash": "z", "embedding": [0.0, 1.0]},
+            1: MemeEntry(id=1, image_path="first.jpg", text="第一张"),
+            2: MemeEntry(id=2, image_path="second.jpg", text="第二张"),
+            3: MemeEntry(id=3, image_path="third.jpg", text="第三张"),
         }
         return AIMatcher(
-            MockIndex(entries=entries, embeddings=embeddings),
-            MockEmbeddingProvider([1.0, 0.0]),
+            MockMetadataStore(entries),
+            MockVectorStore(hits=hits, count=3),
+            MockEmbeddingProvider(),
             rerank_provider=reranker,
             limit=limit,
         )
 
     @pytest.mark.anyio
-    async def test_reranker_valid_rank_selects_candidate(self) -> None:
-        """reranker 返回有效序号时使用精排结果。"""
+    async def test_valid_rank_selects_candidate(self) -> None:
         reranker = MockReranker(result=2)
-        matcher = self._matcher(reranker)
-
-        result = await matcher.match("选第二张")
-
+        result = await self._matcher(reranker).match("选第二张")
         assert result is not None
-        assert result.entry_id == "2"
+        assert result.entry_id == 2
         assert result.source == "rerank"
-        assert reranker.calls[0][0] == "选第二张"
-        assert [candidate.rank for candidate in reranker.calls[0][1]] == [1, 2, 3]
+        assert [c.rank for c in reranker.calls[0][1]] == [1, 2, 3]
 
     @pytest.mark.anyio
-    async def test_limit_controls_rerank_candidates(self) -> None:
-        """limit 控制传给 reranker 的候选数量。"""
+    async def test_limit_controls_candidates(self) -> None:
         reranker = MockReranker(result=1)
-        matcher = self._matcher(reranker, limit=2)
-
-        result = await matcher.match("只看两个")
-
-        assert result is not None
+        m = self._matcher(reranker, limit=2)
+        await m.match("只看两个")
         assert len(reranker.calls[0][1]) == 2
 
     @pytest.mark.anyio
-    async def test_reranker_returns_zero_fallbacks_to_top1(self) -> None:
-        """reranker 返回 0 时 fallback 到 embedding Top 1。"""
-        matcher = self._matcher(MockReranker(result=0))
-
-        result = await matcher.match("放弃精排")
-
+    async def test_zero_fallbacks_top1(self) -> None:
+        result = await self._matcher(MockReranker(result=0)).match("放弃精排")
         assert result is not None
-        assert result.entry_id == "1"
+        assert result.entry_id == 1
         assert result.source == "embedding"
 
     @pytest.mark.anyio
-    async def test_reranker_out_of_range_fallbacks_to_top1(self) -> None:
-        """reranker 返回越界序号时 fallback 到 embedding Top 1。"""
-        matcher = self._matcher(MockReranker(result=99))
-
-        result = await matcher.match("越界")
-
+    async def test_out_of_range_fallbacks_top1(self) -> None:
+        result = await self._matcher(MockReranker(result=99)).match("越界")
         assert result is not None
-        assert result.entry_id == "1"
+        assert result.entry_id == 1
         assert result.source == "embedding"
 
     @pytest.mark.anyio
-    async def test_reranker_non_integer_fallbacks_to_top1(self) -> None:
-        """reranker 返回非整数时 fallback 到 embedding Top 1。"""
-        matcher = self._matcher(MockReranker(result="2"))
-
-        result = await matcher.match("非整数")
-
+    async def test_non_integer_fallbacks_top1(self) -> None:
+        result = await self._matcher(MockReranker(result="2")).match("非整数")
         assert result is not None
-        assert result.entry_id == "1"
+        assert result.entry_id == 1
         assert result.source == "embedding"
 
     @pytest.mark.anyio
-    async def test_reranker_exception_fallbacks_to_top1(self) -> None:
-        """reranker 抛异常时 fallback 到 embedding Top 1。"""
-        matcher = self._matcher(MockReranker(exc=RuntimeError("rerank down")))
-
-        result = await matcher.match("精排失败")
-
+    async def test_exception_fallbacks_top1(self) -> None:
+        result = await self._matcher(MockReranker(exc=RuntimeError("down"))).match("失败")
         assert result is not None
-        assert result.entry_id == "1"
+        assert result.entry_id == 1
         assert result.source == "embedding"

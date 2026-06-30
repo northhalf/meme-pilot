@@ -1,7 +1,5 @@
 """PaddleOcrClientService 单元测试。"""
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -98,7 +96,7 @@ class TestOcr:
         service._client = mock_client
 
         result = await service.ocr("/path/to/image.png")
-        assert result == "第一行 第二行"
+        assert result == "第一行第二行"
 
     @pytest.mark.asyncio
     async def test_pruned_result_is_none(self) -> None:
@@ -144,7 +142,7 @@ class TestOcr:
         service._client = mock_client
 
         result = await service.ocr("/path/to/image.png")
-        assert result == "hello world"
+        assert result == "helloworld"
 
     @pytest.mark.asyncio
     async def test_pruned_result_unexpected_type_fallback(self) -> None:
@@ -218,7 +216,7 @@ class TestOcr:
 
         result = await service.ocr("/path/to/image.png")
         # "模糊不清" 得分 0.85 < 0.9 应被过滤
-        assert result == "皇叔入住的话 能使我东吴人丁兴旺"
+        assert result == "皇叔入住的话能使我东吴人丁兴旺"
 
     @pytest.mark.asyncio
     async def test_rec_texts_without_scores_all_included(self) -> None:
@@ -236,7 +234,7 @@ class TestOcr:
         service._client = mock_client
 
         result = await service.ocr("/path/to/image.png")
-        assert result == "第一行 第二行"
+        assert result == "第一行第二行"
 
     @pytest.mark.asyncio
     async def test_all_texts_below_threshold_returns_empty(self) -> None:
@@ -282,3 +280,19 @@ class TestOcr:
 
         await service.close()
         mock_client.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_ocr_strips_all_whitespace(self) -> None:
+        """OCR 返回去除所有空白字符。"""
+        mock_client = MagicMock()
+        mock_ocr_result = MagicMock()
+        mock_page = MagicMock()
+        mock_page.pruned_result = "加 班\t心\n累"
+        mock_ocr_result.pages = [mock_page]
+        mock_client.ocr = AsyncMock(return_value=mock_ocr_result)
+
+        service = PaddleOcrClientService(access_token="test-token")
+        service._client = mock_client
+
+        result = await service.ocr("/path/to/image.png")
+        assert result == "加班心累"

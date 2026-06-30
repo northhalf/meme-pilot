@@ -1,7 +1,5 @@
 """_search_utils 模块单元测试。"""
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -11,13 +9,13 @@ from bot.engine.keyword_searcher import SearchResult
 
 
 def _make_search_result(
-    entry_id: str = "1",
-    filename: str = "test.jpg",
+    entry_id: int = 1,
+    image_path: str = "test.jpg",
     text: str = "测试文本",
     similarity: float = 90.0,
 ) -> SearchResult:
     return SearchResult(
-        entry_id=entry_id, filename=filename, text=text, similarity=similarity
+        entry_id=entry_id, image_path=image_path, text=text, similarity=similarity
     )
 
 
@@ -38,16 +36,16 @@ class TestHandleSelection:
         from bot.plugins._search_utils import handle_selection
 
         candidates = [
-            _make_search_result(entry_id="1", filename="a.jpg", text="甲"),
-            _make_search_result(entry_id="2", filename="b.jpg", text="乙"),
+            _make_search_result(entry_id=1, image_path="a.jpg", text="甲"),
+            _make_search_result(entry_id=2, image_path="b.jpg", text="乙"),
         ]
         matcher = _make_matcher()
 
         result = handle_selection(matcher, candidates, "2")
 
         assert isinstance(result, SearchResult)
-        assert result.entry_id == "2"
-        assert result.filename == "b.jpg"
+        assert result.entry_id == 2
+        assert result.image_path == "b.jpg"
 
     def test_invalid_text_returns_error(self) -> None:
         """非数字输入应返回错误消息字符串。"""
@@ -205,7 +203,7 @@ class TestExecuteSearch:
 
         mock_get_im.return_value = _make_index_manager()
         mock_get_ks.return_value = _make_keyword_searcher(
-            results=[_make_search_result(filename="加班心累.jpg")]
+            results=[_make_search_result(image_path="加班心累.jpg")]
         )
         _cmd = MagicMock()
         _cmd.finish = AsyncMock()
@@ -232,8 +230,8 @@ class TestExecuteSearch:
         from bot.plugins._search_utils import execute_search
 
         results = [
-            _make_search_result(entry_id="1", text="甲"),
-            _make_search_result(entry_id="2", text="乙"),
+            _make_search_result(entry_id=1, text="甲"),
+            _make_search_result(entry_id=2, text="乙"),
         ]
         mock_get_im.return_value = _make_index_manager()
         mock_get_ks.return_value = _make_keyword_searcher(results=results)

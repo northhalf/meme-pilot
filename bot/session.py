@@ -4,8 +4,6 @@
 以及模块级 session_manager 单例和 timeout_session 工具函数。
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from collections.abc import Callable

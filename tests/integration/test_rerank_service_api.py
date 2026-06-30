@@ -42,37 +42,37 @@ def meme_candidates() -> list[AIMatchCandidate]:
     return [
         AIMatchCandidate(
             rank=1,
-            entry_id="1",
-            filename="tired.jpg",
-            text="加班到凌晨 好累啊",
+            entry_id=1,
+            image_path="tired.jpg",
+            text="加班到凌晨好累啊",
             similarity=0.85,
         ),
         AIMatchCandidate(
             rank=2,
-            entry_id="2",
-            filename="happy.jpg",
-            text="今天心情真好 开心",
+            entry_id=2,
+            image_path="happy.jpg",
+            text="今天心情真好开心",
             similarity=0.82,
         ),
         AIMatchCandidate(
             rank=3,
-            entry_id="3",
-            filename="angry.jpg",
-            text="气死我了 这什么鬼",
+            entry_id=3,
+            image_path="angry.jpg",
+            text="气死我了这什么鬼",
             similarity=0.78,
         ),
         AIMatchCandidate(
             rank=4,
-            entry_id="4",
-            filename="sad.jpg",
-            text="好难过 想哭",
+            entry_id=4,
+            image_path="sad.jpg",
+            text="好难过想哭",
             similarity=0.75,
         ),
         AIMatchCandidate(
             rank=5,
-            entry_id="5",
-            filename="laugh.jpg",
-            text="笑死我了 哈哈哈",
+            entry_id=5,
+            image_path="laugh.jpg",
+            text="笑死我了哈哈哈",
             similarity=0.72,
         ),
     ]
@@ -91,7 +91,7 @@ async def test_rerank_tired_expression(
     print(f"返回 rank: {rank}")
     if rank > 0:
         selected = meme_candidates[rank - 1]
-        print(f"选中: [{selected.rank}] {selected.text} ({selected.filename})")
+        print(f"选中: [{selected.rank}] {selected.text} ({selected.image_path})")
 
     # rank 应该是有效的 1-based 序号
     assert 1 <= rank <= len(meme_candidates)
@@ -110,7 +110,7 @@ async def test_rerank_happy_expression(
     print(f"返回 rank: {rank}")
     if rank > 0:
         selected = meme_candidates[rank - 1]
-        print(f"选中: [{selected.rank}] {selected.text} ({selected.filename})")
+        print(f"选中: [{selected.rank}] {selected.text} ({selected.image_path})")
 
     assert 1 <= rank <= len(meme_candidates)
 
@@ -128,7 +128,7 @@ async def test_rerank_angry_expression(
     print(f"返回 rank: {rank}")
     if rank > 0:
         selected = meme_candidates[rank - 1]
-        print(f"选中: [{selected.rank}] {selected.text} ({selected.filename})")
+        print(f"选中: [{selected.rank}] {selected.text} ({selected.image_path})")
 
     assert 1 <= rank <= len(meme_candidates)
 
@@ -146,7 +146,7 @@ async def test_rerank_laugh_expression(
     print(f"返回 rank: {rank}")
     if rank > 0:
         selected = meme_candidates[rank - 1]
-        print(f"选中: [{selected.rank}] {selected.text} ({selected.filename})")
+        print(f"选中: [{selected.rank}] {selected.text} ({selected.image_path})")
 
     assert 1 <= rank <= len(meme_candidates)
 
@@ -164,6 +164,6 @@ async def test_rerank_sad_expression(
     print(f"返回 rank: {rank}")
     if rank > 0:
         selected = meme_candidates[rank - 1]
-        print(f"选中: [{selected.rank}] {selected.text} ({selected.filename})")
+        print(f"选中: [{selected.rank}] {selected.text} ({selected.image_path})")
 
     assert 1 <= rank <= len(meme_candidates)

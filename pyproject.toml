@@ -5,6 +5,7 @@ description = "QQ 私聊表情包机器人"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "chromadb>=1.5.9",
     "httpx>=0.28.1",
     "jieba>=0.42.1",
     "nonebot-adapter-onebot>=2.4.6",
@@ -15,7 +16,6 @@ dependencies = [
     "pydantic>=2.13.4",
     "pylcs>=0.1.1",
     "python-dotenv>=1.2.2",
-    "ujson>=5.13.0",
 ]
 
 [dependency-groups]

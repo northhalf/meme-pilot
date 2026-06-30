@@ -1,7 +1,5 @@
 """OCR_PROVIDER 环境变量读取测试。"""
 
-from __future__ import annotations
-
 from unittest.mock import patch
 
 from bot.config import read_ocr_provider

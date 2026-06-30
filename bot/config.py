@@ -8,6 +8,11 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 MEMES_DIR = PROJECT_ROOT / "memes"
 
+# 索引数据目录与文件
+DATA_DIR = PROJECT_ROOT / "data"
+INDEX_DB_PATH = DATA_DIR / "index.db"
+CHROMA_DIR = DATA_DIR / "chroma"
+
 
 def read_session_timeout() -> int:
     """从环境变量读取会话超时秒数。
@@ -56,4 +61,12 @@ def read_ocr_provider() -> str:
     return raw if raw in _VALID_OCR_PROVIDERS else "paddle"
 
 
-__all__ = ["PROJECT_ROOT", "MEMES_DIR", "read_session_timeout", "read_ocr_provider"]
+__all__ = [
+    "PROJECT_ROOT",
+    "MEMES_DIR",
+    "DATA_DIR",
+    "INDEX_DB_PATH",
+    "CHROMA_DIR",
+    "read_session_timeout",
+    "read_ocr_provider",
+]

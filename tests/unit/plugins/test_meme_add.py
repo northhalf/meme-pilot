@@ -1,7 +1,5 @@
 """/add 命令插件单元测试。"""
 
-from __future__ import annotations
-
 import re
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -446,7 +444,7 @@ class TestGotImage:
 
         im = _make_index_manager()
         im.add_single_file = AsyncMock(
-            return_value=AddResult(entry_id="1", reason="added", text="加班心好累")
+            return_value=AddResult(entry_id=1, reason="added", text="加班心好累")
         )
         mock_get_im.return_value = im
 
@@ -489,7 +487,7 @@ class TestGotImage:
 
         im = _make_index_manager()
         im.add_single_file = AsyncMock(
-            return_value=AddResult(entry_id="1", reason="added", text="加班心好累")
+            return_value=AddResult(entry_id=1, reason="added", text="加班心好累")
         )
         mock_get_im.return_value = im
 

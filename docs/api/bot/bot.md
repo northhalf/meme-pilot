@@ -48,9 +48,9 @@ NoneBot2 启动钩子，按顺序执行：
 
 1. `setup_logging("log")` — 配置日志
 2. 根据 `OCR_PROVIDER` 环境变量创建 OCR 引擎（`paddle` → `PaddleOcrClientService`，`deepseek` → `DeepSeekOcrService`），以及 `EmbeddingService`、`RerankService`、`ImageOptimizer`
-3. 创建 `IndexManager` 并调用 `load()`
-4. 创建 `AIMatcher`、`KeywordSearcher`
-5. `app_state.init_app(...)` — 注册全局单例（Bot 立即可用）
+3. 创建 `MetadataStore(str(INDEX_DB_PATH))` 与 `VectorStore(str(CHROMA_DIR))`，再创建 `IndexManager(metadata_store, vector_store, memes_dir, ocr_provider, embedding_provider, optimizer, sync_concurrency)` 并调用 `load()`（注入两个 Store）
+4. 创建 `AIMatcher(metadata_store, vector_store, embedding_provider, rerank_provider)`、`KeywordSearcher(metadata_store)`
+5. `app_state.init_app(...)` — 注册全局单例（含两个 Store，Bot 立即可用）
 6. `asyncio.create_task(_background_sync(index_manager))` — 后台索引同步
 
 | | 类型 | 说明 |
@@ -61,12 +61,12 @@ NoneBot2 启动钩子，按顺序执行：
 
 ### `_on_shutdown() -> None`
 
-NoneBot2 关闭钩子，释放 OCR 服务的 HTTP 会话。
+NoneBot2 关闭钩子，释放 OCR 服务的 HTTP 会话与两个 Store 的连接。
 
 | | 类型 | 说明 |
 |--|------|------|
-| **行为** | — | 调用 `get_ocr_service()` 获取 OCR 实例，若存在 `close()` 方法则调用 |
-| **未初始化** | — | 跳过（不抛出异常） |
+| **行为** | — | 调用 `get_ocr_service().close()` 释放 OCR HTTP 会话；调用 `get_metadata_store().close()` 与 `get_vector_store().close()` 关闭 sqlite 连接与 chroma PersistentClient |
+| **未初始化** | — | 任一实例未初始化时跳过（不抛出异常） |
 
 ## 环境变量
 

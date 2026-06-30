@@ -4,26 +4,29 @@
 """
 
 from .ai_matcher import (
-    AIIndexProvider,
     AIMatcher,
     AIMatchCandidate,
     AIMatchResult,
+    MetadataEntryProvider,
     RerankProvider,
+    VectorQueryProvider,
 )
 from .embedding_service import EmbeddingService
 from .image_optimizer import ImageOptimizer, OptimizeResult
 from .index_manager import (
     AddResult,
+    IndexCorruptedError,
     IndexManager,
     OcrProvider,
     SyncResult,
     resolve_unique_filename,
 )
 from .keyword_searcher import (
-    IndexProvider,
     KeywordSearcher,
     SearchResult,
 )
+from .metadata_store import MemeEntry, MetadataStore
+from .vector_store import VectorHit, VectorStore
 from .deepseek_ocr import DeepSeekOcrService
 from .paddle_ocr import PaddleOcrClientService
 from .protocols import EmbeddingProvider
@@ -33,11 +36,12 @@ __all__ = [
     # protocols
     "EmbeddingProvider",
     # ai_matcher
-    "AIIndexProvider",
     "AIMatcher",
     "AIMatchCandidate",
     "AIMatchResult",
+    "MetadataEntryProvider",
     "RerankProvider",
+    "VectorQueryProvider",
     # embedding_service
     "EmbeddingService",
     # image_optimizer
@@ -45,18 +49,23 @@ __all__ = [
     "OptimizeResult",
     # index_manager
     "AddResult",
+    "IndexCorruptedError",
     "IndexManager",
     "OcrProvider",
     "SyncResult",
     "resolve_unique_filename",
     # keyword_searcher
-    "IndexProvider",
     "KeywordSearcher",
     "SearchResult",
-    # ocr_service
+    # metadata_store
+    "MemeEntry",
+    "MetadataStore",
+    # vector_store
+    "VectorHit",
+    "VectorStore",
+    # ocr
     "DeepSeekOcrService",
-    # paddle_ocr
     "PaddleOcrClientService",
-    # rerank_service
+    # rerank
     "RerankService",
 ]

@@ -1,6 +1,6 @@
 """AI 语义匹配模块。
 
-先用 embedding 做语义召回，再可选调用精排 provider 选出最终表情包。
+先用 embedding 做语义召回（ChromaDB），再可选调用精排 provider 选出最终表情包。
 """
 
 import logging
@@ -8,29 +8,11 @@ import math
 from dataclasses import dataclass, replace
 from typing import Protocol
 
+from bot.engine.metadata_store import MemeEntry
 from bot.engine.protocols import EmbeddingProvider
+from bot.engine.vector_store import VectorHit
 
 logger = logging.getLogger(__name__)
-
-
-class AIIndexProvider(Protocol):
-    """AI 匹配所需的索引数据提供者协议。"""
-
-    def get_entries(self) -> dict[str, dict[str, str]]:
-        """返回全部索引条目。
-
-        Returns:
-            key 为索引 id，value 为包含 filename、text、text_hash 的字典。
-        """
-        ...
-
-    def get_embeddings(self) -> dict[str, dict[str, object]]:
-        """返回全部 embedding 条目。
-
-        Returns:
-            key 为索引 id，value 为包含 text_hash、embedding 的字典。
-        """
-        ...
 
 
 @dataclass(frozen=True)
@@ -39,27 +21,70 @@ class AIMatchCandidate:
 
     Attributes:
         rank: 临时候选序号，1-based。
-        entry_id: 索引 id。
-        filename: 表情包文件名。
+        entry_id: 索引 id（int）。
+        image_path: memes/ 目录下相对路径。
         text: OCR 文本。
         similarity: 余弦相似度。
     """
 
     rank: int
-    entry_id: str
-    filename: str
+    entry_id: int
+    image_path: str
     text: str
     similarity: float
+
+
+class MetadataEntryProvider(Protocol):
+    """元数据条目提供者协议。
+
+    AIMatcher 依赖此协议按 id 取 MemeEntry 构建候选，
+    而非直接依赖具体的 MetadataStore 实现，便于测试用 mock 替换。
+    与 keyword_searcher.MetadataStoreProvider（get_all_entries）接口不同，
+    此协议只暴露 AIMatcher 实际使用的 get_entry。
+    """
+
+    def get_entry(self, entry_id: int) -> MemeEntry | None:
+        """按 id 取条目。
+
+        Args:
+            entry_id: 索引 id。
+
+        Returns:
+            匹配的 MemeEntry；不存在时返回 None。
+        """
+        ...
+
+
+class VectorQueryProvider(Protocol):
+    """向量查询提供者协议。
+
+    AIMatcher 依赖此协议做向量召回与空库判断，
+    而非直接依赖具体的 VectorStore 实现，便于测试用 mock 替换。
+    """
+
+    def count(self) -> int:
+        """返回当前向量数。"""
+        ...
+
+    async def query(
+        self, query_embedding: list[float], n_results: int = 10
+    ) -> list[VectorHit]:
+        """召回 Top-N。
+
+        Args:
+            query_embedding: 查询向量。
+            n_results: 召回数量上限。
+
+        Returns:
+            按 similarity 降序排列的 VectorHit 列表。
+        """
+        ...
 
 
 class RerankProvider(Protocol):
     """候选精排服务协议。"""
 
-    async def rerank(
-        self,
-        description: str,
-        candidates: list[AIMatchCandidate],
-    ) -> int:
+    async def rerank(self, description: str, candidates: list[AIMatchCandidate]) -> int:
         """从候选中选出最匹配的临时序号。
 
         Args:
@@ -77,15 +102,15 @@ class AIMatchResult:
     """AI 匹配最终结果。
 
     Attributes:
-        entry_id: 索引 id。
-        filename: 表情包文件名。
+        entry_id: 索引 id（int）。
+        image_path: memes/ 目录下相对路径。
         text: OCR 文本。
         similarity: embedding 余弦相似度。
         source: 结果来源，取值为 "embedding" 或 "rerank"。
     """
 
-    entry_id: str
-    filename: str
+    entry_id: int
+    image_path: str
     text: str
     similarity: float
     source: str
@@ -94,13 +119,14 @@ class AIMatchResult:
 class AIMatcher:
     """AI 表情包匹配器。
 
-    先对用户描述生成 embedding，再与本地 embeddings.json 中的向量计算
-    余弦相似度。可选 reranker 用于从 Top N 候选中精排出最终结果。
+    先对用户描述生成 embedding，再用 VectorStore.query 从 ChromaDB 召回 Top N，
+    从 MetadataStore 取 metadata 构候选。可选 reranker 精排。
     """
 
     def __init__(
         self,
-        index_provider: AIIndexProvider,
+        metadata_store: MetadataEntryProvider,
+        vector_store: VectorQueryProvider,
         embedding_provider: EmbeddingProvider,
         rerank_provider: RerankProvider | None = None,
         limit: int = 10,
@@ -108,12 +134,14 @@ class AIMatcher:
         """初始化 AI 匹配器。
 
         Args:
-            index_provider: 提供索引条目与 embedding 的对象。
+            metadata_store: 元数据提供者，按 id 取 MemeEntry。
+            vector_store: 向量提供者，query 召回 Top-N。
             embedding_provider: 文本向量化服务提供者。
             rerank_provider: 可选的精排服务提供者。
             limit: 候选召回上限。
         """
-        self._index_provider = index_provider
+        self._metadata_store = metadata_store
+        self._vector_store = vector_store
         self._embedding_provider = embedding_provider
         self._rerank_provider = rerank_provider
         self._limit = limit
@@ -125,7 +153,7 @@ class AIMatcher:
             description: 用户输入的自然语言描述。
 
         Returns:
-            匹配结果；空描述、索引为空或无有效候选时返回 None。
+            匹配结果；空描述、向量库为空或无有效候选时返回 None。
 
         Raises:
             ValueError: 用户描述 embedding 为空、非数字或为零向量。
@@ -135,12 +163,8 @@ class AIMatcher:
             logger.debug("AI 匹配描述为空，返回空结果")
             return None
 
-        entries = self._index_provider.get_entries()
-        embeddings = self._index_provider.get_embeddings()
-        if not entries or not embeddings:
-            logger.debug(
-                "索引文件条目 entries 或向量库 embedding 无法从 index_provider 获取"
-            )
+        if self._vector_store.count() == 0:
+            logger.debug("向量库为空，返回空结果")
             return None
 
         query_vector = _coerce_vector(
@@ -150,9 +174,10 @@ class AIMatcher:
         if _vector_norm(query_vector) == 0:
             raise ValueError("用户描述 embedding 不能是零向量")
 
-        candidates = self._build_candidates(entries, embeddings, query_vector)
+        hits = await self._vector_store.query(query_vector, n_results=self._limit)
+        candidates = self._build_candidates(hits)
         if not candidates:
-            logger.info("AI embedding 召回无候选：description=%r", description)
+            logger.info("AI 召回无候选：description=%r", description)
             return None
 
         if self._rerank_provider is None:
@@ -165,20 +190,9 @@ class AIMatcher:
         return _candidate_to_result(candidates[rank - 1], source="rerank")
 
     async def _rerank(
-        self,
-        description: str,
-        candidates: list[AIMatchCandidate],
+        self, description: str, candidates: list[AIMatchCandidate]
     ) -> int | None:
-        """调用 reranker 精排，失败或返回不可用时返回 None。
-
-        Args:
-            description: 用户自然语言描述。
-            candidates: embedding 阶段 Top N 候选。
-
-        Returns:
-            有效的 1-based 候选序号；reranker 失败、返回 0、非整数或越界
-            时返回 None，由调用方回退到 embedding Top 1。
-        """
+        """调用 reranker 精排，失败或返回不可用时返回 None。"""
         try:
             rank = await self._rerank_provider.rerank(description, candidates)  # type: ignore[union-attr]
         except Exception:
@@ -203,88 +217,43 @@ class AIMatcher:
 
         return rank
 
-    def _build_candidates(
-        self,
-        entries: dict[str, dict[str, str]],
-        embeddings: dict[str, dict[str, object]],
-        query_vector: list[float],
-    ) -> list[AIMatchCandidate]:
-        """构建 embedding Top N 候选。
+    def _build_candidates(self, hits: list[VectorHit]) -> list[AIMatchCandidate]:
+        """将 VectorHit 转为候选，跳过 metadata 缺失的 hit。
 
         Args:
-            entries: 索引条目字典。
-            embeddings: 向量索引字典。
-            query_vector: 用户描述向量。
+            hits: VectorStore.query 返回的召回结果（已按相似度降序）。
 
         Returns:
-            按相似度降序、entry_id 升序稳定排序后的 Top N 候选列表。
+            带 rank 的候选列表（1-based，顺序与 hits 一致）。
         """
         candidates: list[AIMatchCandidate] = []
-
-        for entry_id, entry in entries.items():
-            text = entry.get("text", "").strip()
-            if not text:
-                continue
-
-            embedding_record = embeddings.get(entry_id)
-            if not isinstance(embedding_record, dict):
-                continue
-
-            try:
-                entry_vector = _coerce_vector(
-                    embedding_record.get("embedding"),
-                    context=f"索引 {entry_id} embedding",
-                )
-            except ValueError as exc:
+        for hit in hits:
+            entry: MemeEntry | None = self._metadata_store.get_entry(hit.entry_id)
+            if entry is None:
                 logger.warning(
-                    "跳过异常 embedding：entry_id=%s, reason=%s", entry_id, exc
+                    "召回 hit 的 metadata 缺失，跳过：entry_id=%s", hit.entry_id
                 )
                 continue
-
-            if len(entry_vector) != len(query_vector):
-                logger.warning(
-                    "跳过维度不一致的 embedding：entry_id=%s, expected=%d, actual=%d",
-                    entry_id,
-                    len(query_vector),
-                    len(entry_vector),
-                )
-                continue
-
-            similarity = _cosine_similarity(query_vector, entry_vector)
-            if similarity is None:
-                logger.warning("跳过零向量 embedding：entry_id=%s", entry_id)
-                continue
-
             candidates.append(
                 AIMatchCandidate(
                     rank=0,
-                    entry_id=entry_id,
-                    filename=entry.get("filename", ""),
-                    text=text,
-                    similarity=similarity,
+                    entry_id=entry.id,
+                    image_path=entry.image_path,
+                    text=entry.text,
+                    similarity=hit.similarity,
                 )
             )
-
-        candidates.sort(key=lambda c: (-c.similarity, _entry_id_sort_key(c.entry_id)))
         return [
             replace(candidate, rank=rank)
-            for rank, candidate in enumerate(candidates[: self._limit], start=1)
+            for rank, candidate in enumerate(candidates, start=1)
         ]
 
 
 def _candidate_to_result(candidate: AIMatchCandidate, source: str) -> AIMatchResult:
-    """将候选转换为最终结果。
-
-    Args:
-        candidate: 候选条目。
-        source: 结果来源标记。
-
-    Returns:
-        最终匹配结果。
-    """
+    """将候选转换为最终结果。"""
     return AIMatchResult(
         entry_id=candidate.entry_id,
-        filename=candidate.filename,
+        image_path=candidate.image_path,
         text=candidate.text,
         similarity=candidate.similarity,
         source=source,
@@ -322,50 +291,6 @@ def _coerce_vector(vector: object, *, context: str) -> list[float]:
     return values
 
 
-def _cosine_similarity(left: list[float], right: list[float]) -> float | None:
-    """计算两个等长向量的余弦相似度。
-
-    Args:
-        left: 左侧向量。
-        right: 右侧向量（与 left 等长）。
-
-    Returns:
-        余弦相似度；任一向量为零向量时返回 None。
-    """
-    left_norm = _vector_norm(left)
-    right_norm = _vector_norm(right)
-    if left_norm == 0 or right_norm == 0:
-        return None
-
-    dot = sum(a * b for a, b in zip(left, right, strict=True))
-    return dot / (left_norm * right_norm)
-
-
 def _vector_norm(vector: list[float]) -> float:
-    """计算向量 L2 范数。
-
-    Args:
-        vector: 浮点数向量。
-
-    Returns:
-        向量的欧几里得范数。
-    """
+    """计算向量 L2 范数。"""
     return math.sqrt(sum(value * value for value in vector))
-
-
-def _entry_id_sort_key(entry_id: str) -> tuple[int, int, str]:
-    """生成稳定的 entry_id 排序键。
-
-    可转为整数的 entry_id 优先按数值升序；不可转整数的按字符串排序，
-    且排在所有数字 id 之后，保证两类 id 互不干扰且各自稳定。
-
-    Args:
-        entry_id: 索引 id 字符串。
-
-    Returns:
-        用于排序的元组键。
-    """
-    try:
-        return (0, int(entry_id), "")
-    except ValueError:
-        return (1, 0, entry_id)

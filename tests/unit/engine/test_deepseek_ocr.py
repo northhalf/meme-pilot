@@ -1,7 +1,5 @@
 """DeepSeekOcrService 单元测试。"""
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -80,7 +78,7 @@ class TestOcr:
         service._client.chat.completions.create = AsyncMock(return_value=mock_response)
 
         result = await service.ocr(str(img))
-        assert result == "不可惊扰 先生真乃奇人也"
+        assert result == "不可惊扰先生真乃奇人也"
 
     @pytest.mark.asyncio
     async def test_ocr_without_ref_tags(self, tmp_path) -> None:
@@ -146,3 +144,20 @@ class TestOcr:
 
         with pytest.raises(RuntimeError, match="DeepSeek-OCR API 调用失败"):
             await service.ocr(str(img))
+
+    @pytest.mark.asyncio
+    async def test_ocr_strips_all_whitespace(self, tmp_path) -> None:
+        """OCR 返回去除所有空白字符。"""
+        img = tmp_path / "test.png"
+        img.write_text("fake-png-data")
+
+        mock_response = MagicMock()
+        mock_choice = MagicMock()
+        mock_choice.message.content = "<|ref|>加 班\t心 累<|/ref|><|det|>[[1,2]]<|/det|>"
+        mock_response.choices = [mock_choice]
+
+        service = DeepSeekOcrService(api_key="test-key")
+        service._client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+        result = await service.ocr(str(img))
+        assert result == "加班心累"

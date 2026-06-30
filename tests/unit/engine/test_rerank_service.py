@@ -1,7 +1,5 @@
 """rerank_service 单元测试。"""
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -14,9 +12,9 @@ from bot.engine.rerank_service import RerankService, _build_candidates_text, _pa
 def sample_candidates() -> list[AIMatchCandidate]:
     """创建测试用候选列表。"""
     return [
-        AIMatchCandidate(rank=1, entry_id="1", filename="a.jpg", text="开心", similarity=0.9),
-        AIMatchCandidate(rank=2, entry_id="2", filename="b.jpg", text="难过", similarity=0.8),
-        AIMatchCandidate(rank=3, entry_id="3", filename="c.jpg", text="生气", similarity=0.7),
+        AIMatchCandidate(rank=1, entry_id=1, image_path="a.jpg", text="开心", similarity=0.9),
+        AIMatchCandidate(rank=2, entry_id=2, image_path="b.jpg", text="难过", similarity=0.8),
+        AIMatchCandidate(rank=3, entry_id=3, image_path="c.jpg", text="生气", similarity=0.7),
     ]
 
 

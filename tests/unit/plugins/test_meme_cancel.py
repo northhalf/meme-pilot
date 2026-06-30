@@ -1,7 +1,5 @@
 """meme_cancel 插件测试。"""
 
-from __future__ import annotations
-
 from typing import Any, Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 

@@ -153,7 +153,7 @@ async def execute_search(
 
     if len(results) == 1:
         session_manager.deactivate_chat(user_id)
-        image_path = MEMES_DIR / results[0].filename
+        image_path = MEMES_DIR / results[0].image_path
         await cmd_matcher.finish(
             MessageSegment.image("file://" + str(image_path.resolve()))
         )
@@ -225,7 +225,7 @@ async def handle_got_selection(
 
             # 有效选择：清除选择会话
             session_manager.remove_selection(user_id)
-            image_path = MEMES_DIR / result.filename
+            image_path = MEMES_DIR / result.image_path
             await matcher.finish(
                 MessageSegment.image("file://" + str(image_path.resolve()))
             )

@@ -15,7 +15,13 @@ import nonebot
 from nonebot.adapters.onebot.v11 import Adapter as OneBotV11Adapter
 
 from bot.app_state import init_app
-from bot.config import MEMES_DIR, PROJECT_ROOT, read_ocr_provider
+from bot.config import (
+    CHROMA_DIR,
+    INDEX_DB_PATH,
+    MEMES_DIR,
+    PROJECT_ROOT,
+    read_ocr_provider,
+)
 from bot.engine import (
     AIMatcher,
     DeepSeekOcrService,
@@ -23,8 +29,10 @@ from bot.engine import (
     ImageOptimizer,
     IndexManager,
     KeywordSearcher,
+    MetadataStore,
     PaddleOcrClientService,
     RerankService,
+    VectorStore,
 )
 from bot.logging_config import setup_logging
 
@@ -98,7 +106,7 @@ async def _on_startup() -> None:
     流程：
     1. 配置日志
     2. 创建 OCR / Embedding / Rerank / ImageOptimizer 服务
-    3. 创建 IndexManager 并加载现有索引
+    3. 创建 MetadataStore + VectorStore + IndexManager 并加载索引
     4. 创建 AIMatcher / KeywordSearcher
     5. 注册到 app_state 供插件获取（Bot 立即可用）
     6. 后台执行 sync_with_filesystem()（不阻塞启动）
@@ -122,32 +130,37 @@ async def _on_startup() -> None:
     rerank_service = RerankService()
     image_optimizer = ImageOptimizer()
 
-    # 3. 创建 IndexManager 并加载索引
-    data_dir = str(PROJECT_ROOT / "data")
+    # 3. 创建存储与 IndexManager 并加载索引
     memes_dir = str(MEMES_DIR)
     sync_concurrency = _read_sync_concurrency()
 
+    metadata_store = MetadataStore(str(INDEX_DB_PATH))
+    vector_store = VectorStore(str(CHROMA_DIR))
     index_manager = IndexManager(
-        data_dir=data_dir,
+        metadata_store=metadata_store,
+        vector_store=vector_store,
         memes_dir=memes_dir,
         ocr_provider=ocr_service,
         embedding_provider=embedding_service,
-        sync_concurrency=sync_concurrency,
         optimizer=image_optimizer,
+        sync_concurrency=sync_concurrency,
     )
     index_manager.load()
 
     # 4. 创建搜索和匹配服务（可立即使用已有索引）
     ai_matcher = AIMatcher(
-        index_provider=index_manager,
+        metadata_store=metadata_store,
+        vector_store=vector_store,
         embedding_provider=embedding_service,
         rerank_provider=rerank_service,
     )
-    keyword_searcher = KeywordSearcher(index_provider=index_manager)
+    keyword_searcher = KeywordSearcher(metadata_store)
 
     # 5. 注册到 app_state（Bot 立即可用）
     init_app(
         index_manager=index_manager,
+        metadata_store=metadata_store,
+        vector_store=vector_store,
         ocr_service=ocr_service,
         embedding_service=embedding_service,
         image_optimizer=image_optimizer,
@@ -161,15 +174,21 @@ async def _on_startup() -> None:
 
 
 async def _on_shutdown() -> None:
-    """NoneBot2 关闭钩子 — 释放 OCR 服务的 HTTP 会话。"""
-    from bot.app_state import get_ocr_service
+    """NoneBot2 关闭钩子 — 释放 OCR 服务与存储的会话/连接。"""
+    from bot.app_state import get_metadata_store, get_ocr_service, get_vector_store
 
     try:
         ocr_service = get_ocr_service()
+        await ocr_service.close()
+        logger.info("OCR 服务 HTTP 会话已关闭")
     except RuntimeError:
-        return  # 未初始化，跳过
-    await ocr_service.close()
-    logger.info("OCR 服务 HTTP 会话已关闭")
+        pass
+    try:
+        get_metadata_store().close()
+        get_vector_store().close()
+        logger.info("存储已关闭")
+    except RuntimeError:
+        pass
 
 
 def main() -> None:

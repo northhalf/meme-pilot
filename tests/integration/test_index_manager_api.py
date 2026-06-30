@@ -26,6 +26,8 @@ load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 from bot.engine.embedding_service import EmbeddingService
 from bot.engine.index_manager import IndexManager
 from bot.engine.deepseek_ocr import DeepSeekOcrService
+from bot.engine.metadata_store import MetadataStore
+from bot.engine.vector_store import VectorStore
 
 # fixture 图片目录
 FIXTURE_IMAGES_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "images"
@@ -48,9 +50,17 @@ def work_dirs(tmp_path: Path) -> dict[str, Path]:
     data_dir = tmp_path / "data"
     memes_dir = tmp_path / "memes"
     no_text_dir = tmp_path / "meme_no_text"
+    index_db = data_dir / "index.db"
+    chroma_dir = data_dir / "chroma"
     data_dir.mkdir()
     memes_dir.mkdir()
-    return {"data_dir": data_dir, "memes_dir": memes_dir, "no_text_dir": no_text_dir}
+    return {
+        "data_dir": data_dir,
+        "memes_dir": memes_dir,
+        "no_text_dir": no_text_dir,
+        "index_db": index_db,
+        "chroma_dir": chroma_dir,
+    }
 
 
 @pytest_asyncio.fixture
@@ -85,8 +95,11 @@ async def test_sync_single_image(
     """测试：同步单张图片，验证 OCR 文本和 embedding 写入索引。"""
     _copy_fixture_images(work_dirs["memes_dir"], ["听天由命吧.png"])
 
+    metadata_store = MetadataStore(str(work_dirs["index_db"]))
+    vector_store = VectorStore(str(work_dirs["chroma_dir"]))
     manager = IndexManager(
-        data_dir=str(work_dirs["data_dir"]),
+        metadata_store=metadata_store,
+        vector_store=vector_store,
         memes_dir=str(work_dirs["memes_dir"]),
         ocr_provider=ocr_service,
         embedding_provider=embedding_service,
@@ -106,18 +119,13 @@ async def test_sync_single_image(
     assert manager.entry_count == 1
 
     # 验证索引内容
-    entries = manager.get_entries()
+    entries = metadata_store.get_all_entries()
     entry = list(entries.values())[0]
-    assert "听天由命吧" in entry["text"]
-    assert entry["filename"] == "听天由命吧.png"
+    assert "听天由命吧" in entry.text
+    assert entry.image_path == "听天由命吧.png"
 
-    # 验证 embedding 存在且维度正确
-    embeddings = manager.get_embeddings()
-    assert len(embeddings) == 1
-    emb = list(embeddings.values())[0]
-    vector = emb["embedding"]
-    assert isinstance(vector, list)
-    assert len(vector) == 1024
+    # 验证向量已写入
+    assert vector_store.count() == 1
 
 
 @pytest.mark.asyncio
@@ -133,8 +141,11 @@ async def test_sync_multiple_images(
     ]
     _copy_fixture_images(work_dirs["memes_dir"], images)
 
+    metadata_store = MetadataStore(str(work_dirs["index_db"]))
+    vector_store = VectorStore(str(work_dirs["chroma_dir"]))
     manager = IndexManager(
-        data_dir=str(work_dirs["data_dir"]),
+        metadata_store=metadata_store,
+        vector_store=vector_store,
         memes_dir=str(work_dirs["memes_dir"]),
         ocr_provider=ocr_service,
         embedding_provider=embedding_service,
@@ -145,8 +156,8 @@ async def test_sync_multiple_images(
     result = await manager.sync_with_filesystem()
 
     print(f"\n新增: {result.added}, 失败: {result.failed}")
-    for eid, entry in manager.get_entries().items():
-        print(f"  [{eid}] {entry['filename']}: {entry['text'][:40]}...")
+    for eid, entry in metadata_store.get_all_entries().items():
+        print(f"  [{eid}] {entry.image_path}: {entry.text[:40]}...")
 
     assert result.added == 2
     assert result.failed == []
@@ -163,8 +174,11 @@ async def test_sync_delete_removed_image(
     images = ["听天由命吧.png", "不能用就弃之.png"]
     _copy_fixture_images(work_dirs["memes_dir"], images)
 
+    metadata_store = MetadataStore(str(work_dirs["index_db"]))
+    vector_store = VectorStore(str(work_dirs["chroma_dir"]))
     manager = IndexManager(
-        data_dir=str(work_dirs["data_dir"]),
+        metadata_store=metadata_store,
+        vector_store=vector_store,
         memes_dir=str(work_dirs["memes_dir"]),
         ocr_provider=ocr_service,
         embedding_provider=embedding_service,
@@ -187,9 +201,9 @@ async def test_sync_delete_removed_image(
     assert manager.entry_count == 1
 
     # 剩余的应该是听天由命吧
-    entries = manager.get_entries()
+    entries = metadata_store.get_all_entries()
     remaining = list(entries.values())[0]
-    assert remaining["filename"] == "听天由命吧.png"
+    assert remaining.image_path == "听天由命吧.png"
 
 
 @pytest.mark.asyncio
@@ -201,8 +215,11 @@ async def test_sync_idempotent(
     """测试：重复同步不会重复添加已有记录。"""
     _copy_fixture_images(work_dirs["memes_dir"], ["听天由命吧.png"])
 
+    metadata_store = MetadataStore(str(work_dirs["index_db"]))
+    vector_store = VectorStore(str(work_dirs["chroma_dir"]))
     manager = IndexManager(
-        data_dir=str(work_dirs["data_dir"]),
+        metadata_store=metadata_store,
+        vector_store=vector_store,
         memes_dir=str(work_dirs["memes_dir"]),
         ocr_provider=ocr_service,
         embedding_provider=embedding_service,

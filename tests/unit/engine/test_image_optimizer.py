@@ -1,7 +1,5 @@
 """ImageOptimizer 单元测试。"""
 
-from __future__ import annotations
-
 import asyncio
 from pathlib import Path
 

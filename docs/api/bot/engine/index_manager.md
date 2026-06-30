@@ -2,79 +2,15 @@
 
 > 本文档只记录模块对外接口。模块内部 `_` 前缀函数和方法不在此列出。
 
+索引管理薄编排层。持有 `MetadataStore` + `VectorStore` + providers，负责压缩→OCR→Embed 管道编排、sync 四阶段（含阶段0跨库一致性修复）、跨库写入一致性、全局锁、并发上限、去重/无文字移图。**不直接写 SQL/Chroma，全部委托两个 Store。**
+
+写入顺序统一「先 sqlite 后 chroma」，`VectorStore.upsert` 失败时回滚 sqlite 写入。OCR 文本在管道内统一去除所有空白字符。去重键 = 去空白后的 `text`，通过 `MetadataStore.get_id_by_text` 判定。
+
 ## 模块级函数
-
-### `normalize_text(text: str) -> str`
-
-规范化 OCR 文本。
-
-| | 类型 | 说明 |
-|--|------|------|
-| **参数** `text` | `str` | 原始 OCR 文本，可能含多余空白 |
-| **返回** | `str` | 去除首尾空白、合并连续空白为单个空格后的文本 |
-| **异常** | 无 | |
-
-```python
-normalize_text("  一只猫  抓蝴蝶  ")  # → "一只猫 抓蝴蝶"
-normalize_text("a\t\tb\n\nc")         # → "a b c"
-normalize_text("")                    # → ""
-```
-
----
-
-### `compute_text_hash(text: str) -> str`
-
-计算规范化文本的 SHA-256 哈希。
-
-| | 类型 | 说明 |
-|--|------|------|
-| **参数** `text` | `str` | 待哈希的文本，内部先调用 `normalize_text` |
-| **返回** | `str` | 格式 `"sha256:<64位十六进制>"` |
-| **异常** | 无 | |
-
-```python
-compute_text_hash("hello")  # → "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
-```
-
----
-
-### `dedup_key(text: str) -> str`
-
-计算 OCR 文本的去重键。
-
-| | 类型 | 说明 |
-|--|------|------|
-| **参数** `text` | `str` | 原始 OCR 文本 |
-| **返回** | `str` | 去除所有空白字符后的文本，可能为空字符串 |
-| **异常** | 无 | |
-
-比 `normalize_text` 更严格：`normalize_text` 保留单词间单空格，`dedup_key` 完全去除空格，用于判定「是否完全相同的图片」。实时计算，不落盘。
-
-```python
-dedup_key("加班 好累")   # → "加班好累"
-dedup_key("加班好累")    # → "加班好累"
-dedup_key("   ")         # → ""
-```
-
----
-
-### `is_blank_text(text: str) -> bool`
-
-判断 OCR 文本是否为「无文字」。
-
-| | 类型 | 说明 |
-|--|------|------|
-| **参数** `text` | `str` | OCR 文本 |
-| **返回** | `bool` | `True` 表示去除所有空白后为空，需移到 `meme_no_text/` 且不进索引 |
-| **异常** | 无 | |
-
-等价于 `dedup_key(text) == ""`。
-
----
 
 ### `resolve_unique_filename(target_dir: Path, filename: str) -> Path`
 
-在目标目录中生成不冲突的文件名。若文件已存在则追加数字后缀（如 `cat(1).jpg`）。
+在目标目录中生成不冲突的文件名。若文件已存在则追加数字后缀（如 `cat_2.jpg`）。
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
@@ -84,37 +20,6 @@ dedup_key("   ")         # → ""
 | | 类型 | 说明 |
 |--|------|------|
 | **返回** | `Path` | 不冲突的完整文件路径 |
-| **异常** | 无 | |
-
----
-
-### `encode_embedding(embedding: list[float]) -> str`
-
-将 float32 向量编码为 base64 字符串（big-endian），用于 embeddings.json 压缩存储。
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `embedding` | `list[float]` | float32 向量值列表 |
-
-| | 类型 | 说明 |
-|--|------|------|
-| **返回** | `str` | base64 编码字符串（5464 字符/1024 维）|
-| **异常** | `struct.error` | 空列表 |
-
----
-
-### `decode_embedding(data: str) -> list[float]`
-
-将 base64 字符串解码为 float32 向量。
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `data` | `str` | base64 编码的 float32 二进制数据 |
-
-| | 类型 | 说明 |
-|--|------|------|
-| **返回** | `list[float]` | float32 值列表 |
-| **异常** | `binascii.Error` | base64 格式错误 |
 
 ---
 
@@ -122,9 +27,7 @@ dedup_key("   ")         # → ""
 
 ### `IndexCorruptedError(Exception)`
 
-`index.json` 结构损坏或缺少必要字段时抛出。
-
-无额外属性，使用 `str(exc)` 获取错误消息。
+索引数据库结构损坏时抛出。
 
 ### `CompressionError(RuntimeError)`
 
@@ -151,7 +54,57 @@ class OcrProvider(Protocol):
 
 | 方法 | 参数 | 返回 | 说明 |
 |------|------|------|------|
-| `ocr` | `image_path: str` — 图片文件路径 | `str` — 识别到的文字 | 异步，对图片执行 OCR 文字识别 |
+| `ocr` | `image_path: str` — 图片文件路径 | `str` — 识别到的文字 | 异步，对图片执行 OCR 文字识别；返回去除所有空白后的文本 |
+
+---
+
+### `MetadataStoreProtocol`
+
+```python
+class MetadataStoreProtocol(Protocol):
+    def load(self) -> None: ...
+    def entry_count(self) -> int: ...
+    def get_all_entries(self) -> dict[int, MemeEntry]: ...
+    def get_entry(self, entry_id: int) -> MemeEntry | None: ...
+    def get_id_by_text(self, text: str) -> int | None: ...
+    def add(self, image_path: str, text: str, speaker: str | None = None, tags: list[str] | None = None) -> int: ...
+    def update(self, entry_id: int, *, image_path: str | None = None, text: str | None = None, speaker: str | None = None, tags: list[str] | None = None) -> bool: ...
+    def remove(self, entry_id: int) -> bool: ...
+```
+
+`IndexManager` 依赖此协议而非具体 `MetadataStore` 实现，便于测试用 Fake 替换。仅声明 `IndexManager` 实际调用的方法子集（load/entry_count/get_all_entries/get_entry/get_id_by_text/add/update/remove）。
+
+---
+
+### `VectorStoreProtocol`
+
+```python
+class VectorStoreProtocol(Protocol):
+    def load(self) -> None: ...
+    def count(self) -> int: ...
+    async def upsert(self, entry_id: int, embedding: list[float]) -> None: ...
+    async def remove(self, entry_id: int) -> None: ...
+    async def remove_many(self, entry_ids: list[int]) -> None: ...
+    async def query(self, query_embedding: list[float], n_results: int = 10) -> list[VectorHit]: ...
+    async def rebuild_all(self, items: list[tuple[int, list[float]]]) -> None: ...
+```
+
+`IndexManager` 依赖此协议而非具体 `VectorStore` 实现，便于测试用 Fake 替换。仅声明 `IndexManager` 实际调用的方法子集。
+
+---
+
+### `ImageOptimizerProtocol`
+
+```python
+class ImageOptimizerProtocol(Protocol):
+    async def optimize(self, image_path: str) -> OptimizeResult: ...
+```
+
+| 方法 | 参数 | 返回 | 说明 |
+|------|------|------|------|
+| `optimize` | `image_path: str` — 图片文件路径 | `OptimizeResult` | 异步无损压缩，成功后覆盖原文件 |
+
+`IndexManager` 仅调用 `optimize`，依赖此协议而非具体 `ImageOptimizer` 实现。
 
 ---
 
@@ -175,7 +128,7 @@ class SyncResult:
 | `deleted` | `int` | `0` | 本次同步删除的图片数量，指 `memes/` 已不存在的旧图 |
 | `deduped` | `int` | `0` | 新图因去重键命中已有条目或其他新图而被删除的数量 |
 | `no_text_moved` | `int` | `0` | OCR 无文字被移到 `meme_no_text/` 的数量 |
-| `failed` | `list[str]` | `[]` | 处理失败的文件名列表，含新增失败与 embedding 重建失败 |
+| `failed` | `list[str]` | `[]` | 处理失败的文件名列表，含新增失败与阶段0重 embed 失败 |
 
 ---
 
@@ -184,19 +137,19 @@ class SyncResult:
 ```python
 @dataclass
 class AddResult:
-    entry_id: str | None
+    entry_id: int | None
     reason: str
     text: str = ""
-    replaced_filename: str | None = None
+    replaced_image_path: str | None = None
     moved_to: str | None = None
 ```
 
 | 字段 | 类型 | 默认 | 说明 |
 |------|------|------|------|
-| `entry_id` | `str \| None` | 必填 | 分配或复用的索引 ID；无文字移图场景为 `None` |
+| `entry_id` | `int \| None` | 必填 | 分配或复用的索引 id；无文字移图场景为 `None` |
 | `reason` | `str` | 必填 | 结果类别：`"added"`、`"replaced"`、`"no_text"` |
-| `text` | `str` | `""` | OCR 识别文本；无文字时为空字符串 |
-| `replaced_filename` | `str \| None` | `None` | `reason="replaced"` 时为被删旧图文件名，否则为 `None` |
+| `text` | `str` | `""` | OCR 识别文本（无空格）；无文字时为空字符串 |
+| `replaced_image_path` | `str \| None` | `None` | `reason="replaced"` 时为被删旧图路径，否则为 `None` |
 | `moved_to` | `str \| None` | `None` | `reason="no_text"` 时为移入 `meme_no_text/` 的完整路径，否则为 `None` |
 
 ---
@@ -218,19 +171,20 @@ class IndexManager:
 
 ---
 
-### `__init__(data_dir="data", memes_dir="memes", ocr_provider=None, embedding_provider=None, sync_concurrency=None, no_text_dir=None, optimizer=None) -> None`
+### `__init__(metadata_store, vector_store, memes_dir, no_text_dir=None, ocr_provider=None, embedding_provider=None, optimizer=None, sync_concurrency=None) -> None`
 
 | 参数 | 类型 | 默认 | 说明 |
 |------|------|------|------|
-| `data_dir` | `str` | `"data"` | 索引文件目录路径 |
-| `memes_dir` | `str` | `"memes"` | 表情包图片目录路径 |
+| `metadata_store` | `MetadataStoreProtocol` | 必填 | 元数据存储，如 `MetadataStore` 实例 |
+| `vector_store` | `VectorStoreProtocol` | 必填 | 向量存储，如 `VectorStore` 实例 |
+| `memes_dir` | `str` | 必填 | 表情包图片目录路径 |
+| `no_text_dir` | `str \| None` | `None` | 无文字图存放目录；`None` 时取 `memes_dir` 同级的 `meme_no_text/` |
 | `ocr_provider` | `OcrProvider \| None` | `None` | OCR 服务注入 |
 | `embedding_provider` | `EmbeddingProvider \| None` | `None` | Embedding 服务注入 |
+| `optimizer` | `ImageOptimizerProtocol \| None` | `None` | 图片压缩优化器注入，如 `ImageOptimizer` 实例；`None` 时不压缩 |
 | `sync_concurrency` | `int \| None` | `None` | `sync_with_filesystem()` 并行处理新增图片时的最大并发数；`None` 或非正数时使用 `DEFAULT_SYNC_CONCURRENCY` |
-| `no_text_dir` | `str \| None` | `None` | 无文字图存放目录；`None` 时取 `memes_dir` 同级的 `meme_no_text/` |
-| `optimizer` | `ImageOptimizer \| None` | `None` | 图片压缩优化器注入；`None` 时不压缩 |
 
-初始化后需调用 `load()` 加载磁盘数据。
+初始化后需调用 `load()` 加载两个 Store。
 
 ---
 
@@ -239,128 +193,8 @@ class IndexManager:
 | | 类型 | 说明 |
 |--|------|------|
 | **返回** | `None` | |
-| **异常** | `IndexCorruptedError` | `index.json` 结构损坏或缺少必要字段 |
 
-加载并校验 `data/index.json` 和 `data/embeddings.json`。启动时必须调用此方法后再使用其他查询或写入方法。
-
----
-
-### `validate_index(data: object) -> None` *(静态方法)*
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `data` | `object` | 解析后的 JSON 数据 |
-
-| | 类型 | 说明 |
-|--|------|------|
-| **返回** | `None` | |
-| **异常** | `IndexCorruptedError` | 缺少 `version`、`entries` 或类型不符 |
-
-校验 `index.json` 顶层结构。
-
----
-
-### `get_entries() -> dict[str, dict[str, str]]`
-
-| | 类型 | 说明 |
-|--|------|------|
-| **返回** | `dict[str, dict[str, str]]` | key 为索引 ID，value 为 `{ "filename": str, "text": str, "text_hash": str }` |
-
-实现 `keyword_searcher.IndexProvider` 协议。
-
----
-
-### `get_embeddings() -> dict[str, dict[str, object]]`
-
-| | 类型 | 说明 |
-|--|------|------|
-| **返回** | `dict[str, dict[str, object]]` | key 为索引 ID，value 为 `{ "text_hash": str, "embedding": list[float] }` |
-
-返回当前内存中的 embedding 索引外层浅拷贝。调用方可读取向量数据，但不应修改返回值后期待写回生效。
-
----
-
-### `get_entry(entry_id: str) -> dict[str, str] | None`
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `entry_id` | `str` | 索引 ID，如 `"1"` |
-
-| | 类型 | 说明 |
-|--|------|------|
-| **返回** | `dict[str, str] \| None` | 匹配条目，格式为 `{ "filename": str, "text": str, "text_hash": str }`；不存在时返回 `None` |
-
----
-
-### `get_by_filename(filename: str) -> dict[str, str] | None`
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `filename` | `str` | 表情包文件名，如 `"cat.jpg"` |
-
-| | 类型 | 说明 |
-|--|------|------|
-| **返回** | `dict[str, str] \| None` | 匹配条目；不存在时返回 `None` |
-
----
-
-### `entry_count` *(property)*
-
-| | 类型 | 说明 |
-|--|------|------|
-| **返回** | `int` | 当前索引中的条目总数 |
-
----
-
-### `save_index() -> None`
-
-| | 类型 | 说明 |
-|--|------|------|
-| **返回** | `None` | |
-| **异常** | `OSError` | 磁盘写入失败时抛出 |
-
-将当前索引原子写入 `data/index.json`。
-
----
-
-### `save_embeddings() -> None`
-
-| | 类型 | 说明 |
-|--|------|------|
-| **返回** | `None` | |
-| **异常** | `OSError` | 磁盘写入失败时抛出 |
-
-将当前 embedding 索引原子写入 `data/embeddings.json`（v2 格式：`{"version": 2, "entries": ...}`，embedding 自动编码为 base64）。
-
----
-
-### `add_entry(filename: str, text: str, embedding: list[float]) -> AddResult`
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `filename` | `str` | 表情包文件名 |
-| `text` | `str` | OCR 识别文本 |
-| `embedding` | `list[float]` | embedding 向量 |
-
-| | 类型 | 说明 |
-|--|------|------|
-| **返回** | `AddResult` | 描述本次新增、替换或无文字移图结果 |
-| **异常** | `OSError` | 磁盘写入失败时抛出 |
-
----
-
-### `remove_entry(entry_id: str) -> bool`
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `entry_id` | `str` | 待删除的索引 ID |
-
-| | 类型 | 说明 |
-|--|------|------|
-| **返回** | `bool` | `True` 删除成功，`False` ID 不存在 |
-| **异常** | `OSError` | 磁盘写入失败时抛出 |
-
-从索引和 embedding 中删除记录，并原子写入磁盘。
+委托 `MetadataStore.load()` 和 `VectorStore.load()`。启动时必须调用此方法后再使用其他查询或写入方法。
 
 ---
 
@@ -370,7 +204,7 @@ class IndexManager:
 |--|------|------|
 | **返回** | `bool` | `True` 成功获取锁，`False` 锁已被占用 |
 
-调用方获取失败时应回复“索引正在更新，请稍后再试”。
+非阻塞尝试获取索引更新锁。调用方获取失败时应回复"索引正在更新，请稍后再试"。
 
 ---
 
@@ -392,19 +226,36 @@ class IndexManager:
 
 ---
 
+### `entry_count` *(property)*
+
+| | 类型 | 说明 |
+|--|------|------|
+| **返回** | `int` | 当前索引中的条目总数（取自 `MetadataStore.entry_count()`） |
+
+---
+
 ### `async sync_with_filesystem() -> SyncResult`
 
 | | 类型 | 说明 |
 |--|------|------|
 | **返回** | `SyncResult` | 新增、删除、去重、无文字移走和失败统计 |
 
-按文件名同步内存索引与 `memes/` 目录；新增图片依赖注入的 OCR 与 Embedding provider。
+按文件名同步索引与 `memes/` 目录，共四阶段：
+
+- **阶段0 跨库一致性修复**：对齐 sqlite ↔ chroma 的 id 集合。
+  - chroma 为空且 sqlite 有数据 → 全量重 embed 后 `VectorStore.rebuild_all`。
+  - sqlite 有、chroma 无的 id → 逐条重 embed 并 `upsert`。
+  - chroma 有、sqlite 无的 id → 删孤儿向量（`remove_many`）。
+- **阶段1 删除**：`memes/` 已不存在的图片，先 sqlite 后 chroma 删除。
+- **阶段2 新增**：新图并行 OCR→embed，串行三分类（无文字移图 / 去重删新图 / 正常新增）；正常新增统一「先 sqlite 后 chroma」，`upsert` 失败回滚 sqlite。
+
+新增图片依赖注入的 OCR 与 Embedding provider。
 
 ---
 
 ### `async add_single_file(filename: str) -> AddResult`
 
-单张图片添加：执行压缩→OCR→Embedding 管道，然后调用 `add_entry`。
+单张图片添加：执行压缩→OCR→Embedding 管道，然后三分类写入（无文字移图 / 去重替换 / 正常新增）。
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
@@ -415,21 +266,4 @@ class IndexManager:
 | **返回** | `AddResult` | 添加/替换/无文字移图结果 |
 | **异常** | `CompressionError` | 图片压缩失败 |
 | **异常** | `OcrError` | OCR 识别失败 |
-| **异常** | `EmbeddingError` | Embedding 生成失败 |
-
----
-
-### `async _process_image_pipeline(filename: str) -> tuple[str, list[float]]`
-
-压缩→OCR→Embedding 管道。先压缩图片（若配置 optimizer），再 OCR 提取文本，最后生成 embedding 向量。
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `filename` | `str` | `memes/` 下的图片文件名 |
-
-| | 类型 | 说明 |
-|--|------|------|
-| **返回** | `tuple[str, list[float]]` | `(ocr_text, embedding)` |
-| **异常** | `CompressionError` | 图片压缩失败 |
-| **异常** | `OcrError` | OCR 识别失败 |
-| **异常** | `EmbeddingError` | Embedding 生成失败 |
+| **异常** | `EmbeddingError` | Embedding 生成失败（含 `upsert` 失败回滚后重抛） |

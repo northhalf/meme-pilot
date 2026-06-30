@@ -1,7 +1,5 @@
 """bot.session 会话管理模块测试。"""
 
-from __future__ import annotations
-
 import asyncio
 from typing import Any, Generator
 from unittest.mock import AsyncMock, MagicMock
@@ -113,6 +111,7 @@ class TestSelectionSession:
         session_manager.create_selection("user1", "sel_001", task1)
         session_manager.create_selection("user1", "sel_002", task2)
         ss = session_manager.get_selection("user1")
+        assert ss is not None
         assert ss.selection_id == "sel_002"
 
     @pytest.mark.asyncio

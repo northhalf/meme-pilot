@@ -30,9 +30,9 @@
 | | 类型 | 说明 |
 |--|------|------|
 | **参数** `image_path` | `str` | 图片文件路径 |
-| **返回** | `str` | 识别到的文本字符串，已清洗定位标记 |
+| **返回** | `str` | 识别到的文本字符串（已清洗定位标记并去除所有空白字符） |
 | **异常** | `FileNotFoundError` | 图片文件不存在 |
 | | `ValueError` | 不支持的图片格式 |
 | | `RuntimeError` | API 调用失败或返回为空 |
 
-将图片转为 base64 data URL 后，通过硅基流动 chat completions API 调用 DeepSeek-OCR 视觉模型进行文字识别。
+将图片转为 base64 data URL 后，通过硅基流动 chat completions API 调用 DeepSeek-OCR 视觉模型进行文字识别；返回前用 `"".join(text.split())` 去除所有空白字符。

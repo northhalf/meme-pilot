@@ -26,10 +26,10 @@
 | | 类型 | 说明 |
 |--|------|------|
 | **参数** `image_path` | `str` | 图片文件路径 |
-| **返回** | `str` | 识别到的文本字符串（可能为空字符串） |
+| **返回** | `str` | 识别到的文本字符串（已去除所有空白字符，可能为空字符串） |
 | **异常** | `RuntimeError` | API 调用失败 |
 
-调用 `AsyncPaddleOCRClient.ocr()` 提交 OCR 任务并等待完成，从返回结果的 `pruned_result` 中防御性提取文本。
+调用 `AsyncPaddleOCRClient.ocr()` 提交 OCR 任务并等待完成，从返回结果的 `pruned_result` 中防御性提取文本，返回前用 `"".join(" ".join(texts).split())` 去除所有空白字符。
 
 兼容多种 API 返回格式：
 - PaddleOCR v3.7 新版：API 返回 `prunedResult` 为完整字典，从 `rec_texts` 列表中提取所有文本行并用空格拼接；根据 `text_rec_score_thresh` 阈值，以 `rec_scores` 置信度过滤低分行
