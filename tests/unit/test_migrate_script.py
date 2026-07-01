@@ -163,3 +163,55 @@ class TestMigration:
         vs.load()
         assert vs.count() == 1
         vs.close()
+
+
+@pytest.fixture
+def dup_text_data_dir(tmp_path: Path) -> Path:
+    """构造含重复 text 的旧 JSON 数据目录（id 1、3 同 text "加班"）。"""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    index_json = {
+        "version": 1,
+        "entries": {
+            "1": {"filename": "a.jpg", "text": "加班", "text_hash": "h1"},
+            "2": {"filename": "b.jpg", "text": "下班", "text_hash": "h2"},
+            "3": {"filename": "c.jpg", "text": "加班", "text_hash": "h3"},
+        },
+    }
+    (data_dir / "index.json").write_text(
+        json.dumps(index_json, ensure_ascii=False), encoding="utf-8"
+    )
+    embeddings_json = {
+        "version": 2,
+        "entries": {
+            "1": {"text_hash": "h1", "embedding": _encode_emb([0.1] * 1024)},
+            "2": {"text_hash": "h2", "embedding": _encode_emb([0.2] * 1024)},
+            "3": {"text_hash": "h3", "embedding": _encode_emb([0.3] * 1024)},
+        },
+    }
+    (data_dir / "embeddings.json").write_text(
+        json.dumps(embeddings_json, ensure_ascii=False), encoding="utf-8"
+    )
+    return data_dir
+
+
+class TestMigrationDuplicate:
+    def test_duplicate_text_skipped_and_counted(self, dup_text_data_dir: Path, capsys) -> None:
+        """重复 text 跳过、计数、不中断迁移。"""
+        _run_migration(dup_text_data_dir)
+        captured = capsys.readouterr()
+        assert "UNIQUE 冲突" in captured.out
+
+        from bot.engine.metadata_store import MetadataStore
+        from bot.engine.vector_store import VectorStore
+        md = MetadataStore(str(dup_text_data_dir / "index.db"))
+        md.load()
+        entries = md.get_all_entries()
+        assert {1, 2} == set(entries)
+        assert entries[1].text == "加班"
+        md.close()
+
+        vs = VectorStore(str(dup_text_data_dir / "chroma"))
+        vs.load()
+        assert vs.count() == 2
+        vs.close()

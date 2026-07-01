@@ -149,7 +149,7 @@ class IndexManager:
     # 四阶段：阶段0 跨库一致性修复 + 阶段1 删除 + 阶段2 新增
 
     async def add_single_file(self, filename: str) -> AddResult
-    # Raises: CompressionError, OcrError, EmbeddingError
+    # Raises: CompressionError, OcrError, EmbeddingError, DuplicateEntryError
 ```
 
 薄编排层：不直接写 SQL/Chroma，全部委托 `MetadataStore` + `VectorStore`。写入顺序统一「先 sqlite 后 chroma」，`upsert` 失败回滚 sqlite。去重键 = 去空白后的 `text`（经 `MetadataStore.get_id_by_text` 判定）。
@@ -157,6 +157,10 @@ class IndexManager:
 ### `docs/api/bot/engine/metadata_store.md`
 
 ```python
+class DuplicateEntryError(sqlite3.IntegrityError):
+    # 写入/更新触发 UNIQUE/PRIMARY KEY 冲突时抛出
+    conflicts: list[tuple[str, str]]  # (column, value) 列表，顺序 id→image_path→text
+
 @dataclass
 class MemeEntry:
     id: int
@@ -185,7 +189,7 @@ class MetadataStore:
         text: str,
         speaker: str | None = None,
         tags: list[str] | None = None,
-    ) -> int  # 自动分配最小空洞 id
+    ) -> int  # 自动分配最小空洞 id；Raises DuplicateEntryError
 
     def add_with_id(
         self,
@@ -194,7 +198,7 @@ class MetadataStore:
         text: str,
         speaker: str | None = None,
         tags: list[str] | None = None,
-    ) -> int  # 迁移专用：保留旧 id
+    ) -> int  # 迁移专用：保留旧 id；Raises DuplicateEntryError
 
     def update(
         self,
@@ -204,12 +208,12 @@ class MetadataStore:
         text: str | None = None,
         speaker: str | None = None,
         tags: list[str] | None = None,
-    ) -> bool
+    ) -> bool  # Raises DuplicateEntryError
 
     def remove(self, entry_id: int) -> bool
 ```
 
-基于 sqlite3。schema：`meme(id INTEGER PRIMARY KEY, image_path, text, speaker)` + `UNIQUE INDEX` on `image_path` + `meme_tag(meme_id, tag, FK ON DELETE CASCADE)`。`PRAGMA foreign_keys = ON`。`text` 假定唯一（无 UNIQUE 约束，调用方需用 `get_id_by_text` 去重）。
+基于 sqlite3。schema：`meme(id INTEGER PRIMARY KEY, image_path, text, speaker)` + `UNIQUE INDEX` on `image_path` 与 `text` + `meme_tag(meme_id, tag, FK ON DELETE CASCADE)`。`PRAGMA foreign_keys = ON`。`text` 与 `image_path` 均有 UNIQUE 约束，写入/更新冲突抛 `DuplicateEntryError`；`IndexManager` 仍用 `get_id_by_text` 在写入前去重。
 
 ### `docs/api/bot/engine/vector_store.md`
 

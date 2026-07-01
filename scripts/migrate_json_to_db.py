@@ -19,7 +19,7 @@ import struct
 from pathlib import Path
 
 from bot.config import PROJECT_ROOT
-from bot.engine.metadata_store import MetadataStore
+from bot.engine.metadata_store import DuplicateEntryError, MetadataStore
 from bot.engine.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
@@ -92,7 +92,9 @@ def run_migration(data_dir: str) -> None:
 
     # 幂等检查
     if metadata_store.entry_count() > 0:
-        print(f"已迁移：data/index.db 已有 {metadata_store.entry_count()} 条记录，跳过。")
+        print(
+            f"已迁移：data/index.db 已有 {metadata_store.entry_count()} 条记录，跳过。"
+        )
         metadata_store.close()
         vector_store.close()
         return
@@ -114,6 +116,7 @@ def run_migration(data_dir: str) -> None:
     skipped_blank = 0
     skipped_bad_id = 0
     skipped_bad_emb = 0
+    skipped_dup = 0
     pending: list[tuple[int, list[float]]] = []
 
     for id_str, entry in index_entries.items():
@@ -128,7 +131,9 @@ def run_migration(data_dir: str) -> None:
         # 去所有空白
         text_new = "".join(str(entry.get("text", "")).split())
         if not text_new:
-            print(f"跳过去空格后为空的条目: id={id_str}, filename={entry.get('filename')}")
+            print(
+                f"跳过去空格后为空的条目: id={id_str}, filename={entry.get('filename')}"
+            )
             skipped_blank += 1
             continue
 
@@ -138,19 +143,28 @@ def run_migration(data_dir: str) -> None:
         emb_record = emb_entries.get(id_str, {})
         embedding = _resolve_embedding(emb_record, emb_version)
         if embedding is None or len(embedding) != EMBEDDING_DIM:
-            print(f"跳过 embedding 缺失/维度异常: id={id_str}, dim={len(embedding) if embedding else 0}")
+            print(
+                f"embedding 缺失/维度异常: id={id_str}, dim={len(embedding) if embedding else 0}"
+            )
             skipped_bad_emb += 1
-            continue
+            # continue
 
         # 写入 sqlite（保留旧 id），向量收集后批量写入 chroma（复用旧向量）
-        new_id = metadata_store.add_with_id(
-            entry_id=old_id,
-            image_path=image_path,
-            text=text_new,
-            speaker=None,
-            tags=[],
-        )
-        pending.append((new_id, embedding))
+        try:
+            new_id = metadata_store.add_with_id(
+                entry_id=old_id,
+                image_path=image_path,
+                text=text_new,
+                speaker=None,
+                tags=[],
+            )
+        except DuplicateEntryError as exc:
+            conflicts = ", ".join(f"{col}={val!r}" for col, val in exc.conflicts)
+            print(f"跳过 UNIQUE 冲突: id={id_str}, 冲突字段=[{conflicts}]")
+            skipped_dup += 1
+            continue
+        if embedding is not None:
+            pending.append((new_id, embedding))
         migrated += 1
 
     # 单一事件循环批量写入所有向量，避免逐条 asyncio.run 反复创建/销毁事件循环
@@ -166,7 +180,9 @@ def run_migration(data_dir: str) -> None:
         "可删除 data/chroma/ 后重启 Bot，后台同步会按 sqlite text 全量重建 embedding。"
     )
     print(f"旧文件 data/index.json、data/embeddings.json 已保留，可自行归档或删除。")
-    print(f"统计：迁移 {migrated}，空文本跳过 {skipped_blank}，非数字 id 跳过 {skipped_bad_id}，embedding 异常跳过 {skipped_bad_emb}")
+    print(
+        f"统计：迁移 {migrated}，空文本跳过 {skipped_blank}，非数字 id 跳过 {skipped_bad_id}，embedding 异常跳过 {skipped_bad_emb}，UNIQUE 冲突跳过 {skipped_dup}"
+    )
 
     metadata_store.close()
     vector_store.close()

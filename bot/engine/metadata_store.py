@@ -9,8 +9,9 @@
 - check_same_thread=False + 内部 threading.Lock 串行化所有 sqlite 访问；
   公开方法为同步，调用方用 asyncio.to_thread 包装以避免阻塞事件循环。
 - _text_to_id 内存反向索引（text→id），load 时全量重建，增删同步维护，加速去重判定。
-- text 假定唯一：schema 未对 text 加 UNIQUE 约束，_text_to_id 为单值映射，
-  故调用方（IndexManager）须在 add 前用 get_id_by_text 做去重检查，避免写入重复 text。
+- text 与 image_path 均有 UNIQUE INDEX 约束：DB 层兜底保证唯一性，
+  IndexManager 仍在 add 前用 get_id_by_text 做去重检查；冲突时抛 DuplicateEntryError。
+  _text_to_id 为单值映射，与 DB 唯一性保持一致。
 """
 
 import logging
@@ -29,6 +30,7 @@ _SCHEMA = (
     "    speaker TEXT"
     ");",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_meme_image_path ON meme(image_path);",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_meme_text ON meme(text);",
     "CREATE TABLE IF NOT EXISTS meme_tag ("
     "    meme_id INTEGER NOT NULL,"
     "    tag TEXT NOT NULL,"
@@ -43,6 +45,21 @@ _FIND_NEXT_ID_SQL = (
     "FROM (SELECT 0 AS id UNION ALL SELECT id FROM meme) t "
     "WHERE NOT EXISTS(SELECT 1 FROM meme t2 WHERE t2.id = t.id + 1)"
 )
+
+
+class DuplicateEntryError(sqlite3.IntegrityError):
+    """写入/更新时触发 UNIQUE/PRIMARY KEY 约束冲突。
+
+    Attributes:
+        conflicts: 所有命中的冲突字段列表，每项为 (column, value)；
+                   例如 [("text", "加班心累"), ("image_path", "cat.jpg")]。
+                   顺序固定为 id → image_path → text。
+    """
+
+    def __init__(self, conflicts: list[tuple[str, str]]) -> None:
+        self.conflicts = conflicts
+        detail = ", ".join(f"{col}={val!r}" for col, val in conflicts)
+        super().__init__(f"重复字段冲突: {detail}")
 
 
 @dataclass
@@ -287,14 +304,22 @@ class MetadataStore:
 
         Returns:
             分配的 int id。
+
+        Raises:
+            DuplicateEntryError: text 或 image_path 撞 UNIQUE 约束。
         """
         with self._lock:
             conn = self._require_conn()
             entry_id = int(conn.execute(_FIND_NEXT_ID_SQL).fetchone()["next_id"])
-            conn.execute(
-                "INSERT INTO meme (id, image_path, text, speaker) VALUES (?, ?, ?, ?)",
-                (entry_id, image_path, text, speaker),
-            )
+            try:
+                conn.execute(
+                    "INSERT INTO meme (id, image_path, text, speaker) VALUES (?, ?, ?, ?)",
+                    (entry_id, image_path, text, speaker),
+                )
+            except sqlite3.IntegrityError as exc:
+                conn.rollback()
+                conflicts = self._detect_conflicts(image_path=image_path, text=text)
+                raise DuplicateEntryError(conflicts) from exc
             self._write_tags(entry_id, tags)
             conn.commit()
             self._text_to_id[text] = entry_id
@@ -319,13 +344,23 @@ class MetadataStore:
 
         Returns:
             写入的 int id（即传入的 entry_id）。
+
+        Raises:
+            DuplicateEntryError: id、text 或 image_path 撞 UNIQUE/PRIMARY KEY 约束。
         """
         with self._lock:
             conn = self._require_conn()
-            conn.execute(
-                "INSERT INTO meme (id, image_path, text, speaker) VALUES (?, ?, ?, ?)",
-                (entry_id, image_path, text, speaker),
-            )
+            try:
+                conn.execute(
+                    "INSERT INTO meme (id, image_path, text, speaker) VALUES (?, ?, ?, ?)",
+                    (entry_id, image_path, text, speaker),
+                )
+            except sqlite3.IntegrityError as exc:
+                conn.rollback()
+                conflicts = self._detect_conflicts(
+                    image_path=image_path, text=text, entry_id=entry_id
+                )
+                raise DuplicateEntryError(conflicts) from exc
             self._write_tags(entry_id, tags)
             conn.commit()
             self._text_to_id[text] = entry_id
@@ -352,6 +387,9 @@ class MetadataStore:
             speaker: 新说话人，None 表示不变。
             tags: 新标记词列表，None 表示不变；非 None 时整体替换。
 
+        Raises:
+            DuplicateEntryError: image_path 或 text 撞他行的 UNIQUE 约束。
+
         Returns:
             True 表示找到并更新，False 表示 id 不存在。
         """
@@ -377,7 +415,18 @@ class MetadataStore:
 
             if sets:
                 params.append(entry_id)
-                conn.execute(f"UPDATE meme SET {', '.join(sets)} WHERE id = ?", params)
+                try:
+                    conn.execute(
+                        f"UPDATE meme SET {', '.join(sets)} WHERE id = ?", params
+                    )
+                except sqlite3.IntegrityError as exc:
+                    conn.rollback()
+                    conflicts = self._detect_conflicts(
+                        image_path=image_path,
+                        text=text,
+                        exclude_id=entry_id,
+                    )
+                    raise DuplicateEntryError(conflicts) from exc
 
             if tags is not None:
                 conn.execute("DELETE FROM meme_tag WHERE meme_id = ?", (entry_id,))
@@ -433,3 +482,52 @@ class MetadataStore:
             "INSERT OR IGNORE INTO meme_tag (meme_id, tag) VALUES (?, ?)",
             [(entry_id, t) for t in tags],
         )
+
+    def _detect_conflicts(
+        self,
+        *,
+        image_path: str | None = None,
+        text: str | None = None,
+        entry_id: int | None = None,
+        exclude_id: int | None = None,
+    ) -> list[tuple[str, str]]:
+        """探测所有命中的 UNIQUE/PRIMARY KEY 冲突字段（调用方已持 _lock）。
+
+        对每个可能碰撞的字段依次探测，返回全部命中的 (column, value) 列表。
+        无命中时返回空列表（理论上不会发生，调用方在 IntegrityError 后才调）。
+
+        Args:
+            image_path: 待探测的 image_path 值，None 表示不探测该列。
+            text: 待探测的 text 值，None 表示不探测该列。
+            entry_id: 待探测的 id 值，None 表示不探测该列。
+            exclude_id: 排除自身行 id（update 场景，避免查到未变更字段）。
+
+        Returns:
+            命中的 (column, value) 列表，顺序为 id → image_path → text。
+        """
+        conn = self._require_conn()
+        conflicts: list[tuple[str, str]] = []
+
+        if entry_id is not None:
+            if conn.execute("SELECT 1 FROM meme WHERE id = ?", (entry_id,)).fetchone():
+                conflicts.append(("id", str(entry_id)))
+
+        if image_path is not None:
+            params: list[object] = [image_path]
+            sql = "SELECT 1 FROM meme WHERE image_path = ?"
+            if exclude_id is not None:
+                sql += " AND id != ?"
+                params.append(exclude_id)
+            if conn.execute(sql, params).fetchone():
+                conflicts.append(("image_path", image_path))
+
+        if text is not None:
+            params = [text]
+            sql = "SELECT 1 FROM meme WHERE text = ?"
+            if exclude_id is not None:
+                sql += " AND id != ?"
+                params.append(exclude_id)
+            if conn.execute(sql, params).fetchone():
+                conflicts.append(("text", text))
+
+        return conflicts

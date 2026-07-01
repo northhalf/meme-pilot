@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from bot.engine.metadata_store import MemeEntry, MetadataStore
+from bot.engine.metadata_store import DuplicateEntryError, MemeEntry, MetadataStore
 
 
 @pytest.fixture
@@ -160,3 +160,81 @@ class TestPersistence:
         s2.load()
         assert s2.entry_count() == 1
         assert s2.get_id_by_text("猫") == 1
+
+
+class TestDuplicateEntryError:
+    """text/image_path/id UNIQUE 约束与 DuplicateEntryError 多字段汇总测试。"""
+
+    def test_add_duplicate_text_raises(self, store: MetadataStore) -> None:
+        """add 写入与已有 text 相同时抛 DuplicateEntryError，conflicts 含 text。"""
+        store.add(image_path="a.jpg", text="加班")
+        with pytest.raises(DuplicateEntryError) as exc_info:
+            store.add(image_path="b.jpg", text="加班")
+        assert ("text", "加班") in exc_info.value.conflicts
+        assert ("image_path", "b.jpg") not in exc_info.value.conflicts
+
+    def test_add_with_id_duplicate_id_reported(self, store: MetadataStore) -> None:
+        """add_with_id 撞已存在 id 时 conflicts 含 id。"""
+        store.add_with_id(1, "a.jpg", "甲")
+        with pytest.raises(DuplicateEntryError) as exc_info:
+            store.add_with_id(1, "b.jpg", "乙")  # id 冲突，image_path/text 不冲突
+        assert ("id", "1") in exc_info.value.conflicts
+
+    def test_add_with_id_duplicate_text_reported(self, store: MetadataStore) -> None:
+        """add_with_id 撞已存在 text 时 conflicts 含 text。"""
+        store.add_with_id(1, "a.jpg", "加班")
+        with pytest.raises(DuplicateEntryError) as exc_info:
+            store.add_with_id(2, "b.jpg", "加班")  # text 冲突
+        assert ("text", "加班") in exc_info.value.conflicts
+
+    def test_add_duplicate_image_path_raises(self, store: MetadataStore) -> None:
+        """add 写入与已有 image_path 相同时抛 DuplicateEntryError，conflicts 含 image_path。"""
+        store.add(image_path="a.jpg", text="甲")
+        with pytest.raises(DuplicateEntryError) as exc_info:
+            store.add(image_path="a.jpg", text="乙")
+        assert ("image_path", "a.jpg") in exc_info.value.conflicts
+        assert ("text", "乙") not in exc_info.value.conflicts
+
+    def test_add_both_fields_duplicate_reports_both(self, store: MetadataStore) -> None:
+        """add 同时撞 text 和 image_path 时 conflicts 同时含两字段，顺序 id→image_path→text。"""
+        store.add(image_path="a.jpg", text="加班")
+        with pytest.raises(DuplicateEntryError) as exc_info:
+            store.add(image_path="a.jpg", text="加班")
+        assert exc_info.value.conflicts == [
+            ("image_path", "a.jpg"),
+            ("text", "加班"),
+        ]
+
+    def test_update_image_path_collision_raises(self, store: MetadataStore) -> None:
+        """update 改 image_path 撞他行时抛 DuplicateEntryError，只报 image_path。"""
+        store.add(image_path="a.jpg", text="甲")
+        eid2 = store.add(image_path="b.jpg", text="乙")
+        with pytest.raises(DuplicateEntryError) as exc_info:
+            store.update(eid2, image_path="a.jpg")
+        assert exc_info.value.conflicts == [("image_path", "a.jpg")]
+
+    def test_update_text_collision_raises(self, store: MetadataStore) -> None:
+        """update 改 text 撞他行时抛 DuplicateEntryError，只报 text。"""
+        store.add(image_path="a.jpg", text="加班")
+        eid2 = store.add(image_path="b.jpg", text="下班")
+        with pytest.raises(DuplicateEntryError) as exc_info:
+            store.update(eid2, text="加班")
+        assert exc_info.value.conflicts == [("text", "加班")]
+
+    def test_update_both_fields_collision_reports_both(self, store: MetadataStore) -> None:
+        """update 同时改 image_path+text 撞他行时 conflicts 含两字段。"""
+        store.add(image_path="a.jpg", text="加班")
+        eid2 = store.add(image_path="b.jpg", text="下班")
+        with pytest.raises(DuplicateEntryError) as exc_info:
+            store.update(eid2, image_path="a.jpg", text="加班")
+        assert exc_info.value.conflicts == [
+            ("image_path", "a.jpg"),
+            ("text", "加班"),
+        ]
+
+    def test_update_same_row_not_reported(self, store: MetadataStore) -> None:
+        """update 改成自身已有的值不报冲突（exclude_id 排除自身）。"""
+        store.add(image_path="a.jpg", text="加班")
+        eid = store.get_id_by_text("加班")
+        # 改成自身 image_path/text 不应抛
+        assert store.update(eid, image_path="a.jpg", text="加班") is True

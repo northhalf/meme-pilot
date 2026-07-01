@@ -159,6 +159,8 @@ CREATE TABLE meme (
     text TEXT NOT NULL,         -- OCR 去除所有空白后的文本
     speaker TEXT                -- 说话人，v1.0 预留
 );
+CREATE UNIQUE INDEX idx_meme_image_path ON meme(image_path);
+CREATE UNIQUE INDEX idx_meme_text ON meme(text);
 CREATE TABLE meme_tag (
     meme_id INTEGER NOT NULL,
     tag TEXT NOT NULL,

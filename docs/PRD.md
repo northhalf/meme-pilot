@@ -302,6 +302,7 @@ CREATE TABLE meme (
     speaker TEXT
 );
 CREATE UNIQUE INDEX idx_meme_image_path ON meme(image_path);
+CREATE UNIQUE INDEX idx_meme_text ON meme(text);
 
 CREATE TABLE meme_tag (
     meme_id INTEGER NOT NULL,
@@ -312,7 +313,7 @@ CREATE TABLE meme_tag (
 CREATE INDEX idx_meme_tag_tag ON meme_tag(tag);
 ```
 
-`meme` 表以 `id` 为主键（`INTEGER PRIMARY KEY`，手动分配最小空洞 id，不用 `AUTOINCREMENT`），`image_path` 为 `memes/` 下相对路径（扁平结构下即文件名），`text` 为 OCR 去除所有空白后的文本，`speaker` 为说话人（v1.0 预留，不填充）。`meme_tag` 关联表存多值标记词，`ON DELETE CASCADE` 随 `meme` 行删除。`PRAGMA foreign_keys = ON`。`text` 假定唯一但 schema 未加 `UNIQUE` 约束（`UNIQUE INDEX` 加在 `image_path` 上），去重由调用方（`IndexManager`）通过 `MetadataStore.get_id_by_text` 在写入前检查。
+`meme` 表以 `id` 为主键（`INTEGER PRIMARY KEY`，手动分配最小空洞 id，不用 `AUTOINCREMENT`），`image_path` 为 `memes/` 下相对路径（扁平结构下即文件名），`text` 为 OCR 去除所有空白后的文本，`speaker` 为说话人（v1.0 预留，不填充）。`meme_tag` 关联表存多值标记词，`ON DELETE CASCADE` 随 `meme` 行删除。`PRAGMA foreign_keys = ON`。`text` 与 `image_path` 均加 `UNIQUE INDEX` 约束；`IndexManager` 仍通过 `get_id_by_text` 在写入前去重，DB 层 UNIQUE 作为兜底，冲突抛 `DuplicateEntryError`。
 
 **`data/chroma/`（ChromaDB 向量库）**：
 

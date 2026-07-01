@@ -19,7 +19,7 @@
 | **授权用户列表** | 环境变量 `AUTHORIZED_USER_IDS` 声明的 QQ 号白名单，多个 QQ 号用英文逗号分隔，例如 `123456,987654` |
 | **非授权用户** | 不在 `AUTHORIZED_USER_IDS` 中的 QQ 用户；v1.0 中其私聊消息会被静默忽略，只记录日志，不回复提示 |
 | **群聊消息** | `/search`、`/help`、普通文本（组 B）可通过群聊中 @bot 的方式触发；`/add`、`/ai`、`/refresh`（组 A）群聊中 @bot 调用时回复"此命令仅限私聊使用"。非授权用户在群聊中@bot 发送任何消息时静默忽略。 |
-| **去重键** | OCR 文本去除所有空白字符（含半角/全角空格、制表符、换行）后的纯文本；用于在 `/add` 和 `sync_with_filesystem` 新增阶段判定「是否完全相同的图片」，通过 `MetadataStore.get_id_by_text` 查询，实时计算不落盘 |
+| **去重键** | OCR 文本去除所有空白字符（含半角/全角空格、制表符、换行）后的纯文本；用于在 `/add` 和 `sync_with_filesystem` 新增阶段判定「是否完全相同的图片」，通过 `MetadataStore.get_id_by_text` 查询，实时计算不落盘；DB 层 `text` UNIQUE 约束兜底，冲突抛 `DuplicateEntryError` |
 | **无文字目录** | `memes/` 同级的 `meme_no_text/` 目录；OCR 去除所有空白后为空的图片在此场景下不进入索引，被移动到该目录并由日志 warning 提示，本项目不处理该类表情包 |
 | **entry_id** | 索引 id，类型为 `int`，全栈统一（sqlite `meme.id` 与 chroma 向量 id 一一对应）；删除记录后保持其他已有 id 稳定，允许临时编号空洞，新增时复用最小空洞 id |
 | **image_path** | `memes/` 目录下相对路径（扁平结构下即文件名），存储在 sqlite `meme.image_path` 列；原 v1.0 早期称 `filename`，重构后改为相对路径语义 |
@@ -33,7 +33,7 @@
 | **NapCatQQ** | QQ 协议端，基于 NTQQ 的 OneBot v11 实现，负责收发 QQ 消息 |
 | **NoneBot2** | Python 异步聊天机器人框架，负责业务逻辑 |
 | **DeepSeek-OCR** | 硅基流动上的视觉 OCR 模型（`deepseek-ai/DeepSeek-OCR`），通过 chat completions API 调用，用于从图片中提取文字；返回去除所有空白后的文本 |
-| **index.db** | 业务索引数据库，sqlite3 格式，存于 `data/index.db`；`meme` 表保存每个 id 对应的 `image_path`、OCR `text`（去空白后）、`speaker`，`meme_tag` 关联表保存多值标记词；`UNIQUE INDEX` 加在 `image_path` 上，`PRAGMA foreign_keys = ON` |
+| **index.db** | 业务索引数据库，sqlite3 格式，存于 `data/index.db`；`meme` 表保存每个 id 对应的 `image_path`、OCR `text`（去空白后）、`speaker`，`meme_tag` 关联表保存多值标记词；`UNIQUE INDEX` 加在 `image_path` 与 `text` 上，`PRAGMA foreign_keys = ON` |
 | **原子索引更新** | 更新 sqlite 与 chroma 时统一「先 sqlite 后 chroma」写入顺序，`VectorStore.upsert` 失败时回滚 sqlite 写入，保证两库一致；失败时保留旧索引 |
 | **chroma 向量库** | AI 匹配必需的向量索引，存于 `data/chroma/`，ChromaDB `PersistentClient`，collection 默认 `memes`，HNSW `cosine` 距离；每条向量仅存 `id`（与 sqlite `meme.id` 一一对应，内部转 `str`）+ 1024 维 `embedding`；`similarity = 1 - distance`；首次建索引和 `/refresh` 时由 `VectorStore` 维护，sync 阶段0 负责跨库一致性修复 |
 | **pylcs** | C++ 实现的最长公共子序列/子串算法库，用于关键词的非精确匹配 |
