@@ -59,6 +59,18 @@ def _remove_particles(text: str) -> str:
     )
 
 
+def _strip_all_whitespace(text: str) -> str:
+    """去除字符串中所有空白字符，保留其余字符（含助词）。
+
+    Args:
+        text: 待处理的文本。
+
+    Returns:
+        去除所有空白字符后的字符串。
+    """
+    return "".join(text.split())
+
+
 class KeywordSearcher:
     """关键词模糊搜索引擎。
 
@@ -92,7 +104,7 @@ class KeywordSearcher:
     def _compute_similarity(keyword: str, text: str) -> float:
         """计算关键词与文本的相似度。
 
-        优先精确子串匹配（返回 100），否则使用 LCS 算法。
+        使用 LCS 算法。
 
         Args:
             keyword: 搜索关键词（已去助词去空格）。
@@ -101,45 +113,59 @@ class KeywordSearcher:
         Returns:
             相似度分数，0-100。
         """
-        if keyword in text:
-            return 100.0
         lcs_len = pylcs.lcs_sequence_length(keyword, text)
         return (lcs_len / len(keyword)) * 100
 
-    def search(self, keyword: str) -> list[SearchResult]:
-        """根据关键词搜索表情包。
+    def _search_exact_substring(
+        self,
+        entries: dict[int, MemeEntry],
+        raw: str,
+    ) -> list[SearchResult]:
+        """第一层：精确子串匹配。
 
-        先对 keyword 做分词 + 助词过滤 + 去所有空白，再用过滤后的文本做 LCS 匹配。
+        用「原始输入去所有空白、保留助词」的关键词对 OCR 文本做子串判定，
+        命中条目 similarity=100.0。
 
         Args:
-            keyword: 用户输入的搜索关键词。
+            entries: 全部索引条目，key=int(id)。
+            raw: 去所有空白后的关键词（保留助词）。
 
         Returns:
-            按相似度降序排列的搜索结果列表，最多返回 limit 条。
-            无匹配时返回空列表。
+            命中结果列表（按 entries 读出顺序，未截断）；无命中返回空列表。
         """
-        keyword = keyword.strip()
-        if not keyword:
-            logger.debug("关键词为空，返回空结果")
-            return []
+        return [
+            SearchResult(
+                entry_id=entry.id,
+                image_path=entry.image_path,
+                text=entry.text,
+                similarity=100.0,
+            )
+            for entry in entries.values()
+            if entry.text and raw in entry.text
+        ]
 
-        cleaned = _remove_particles(keyword)
-        cleaned = "".join(cleaned.split())  # 删除所有空白字符
-        if not cleaned:
-            logger.debug("关键词去助词后为空，返回空结果")
-            return []
+    def _search_fuzzy_lcs(
+        self,
+        entries: dict[int, MemeEntry],
+        cleaned: str,
+    ) -> list[SearchResult]:
+        """第二层：LCS 模糊回退。
 
-        entries = self._metadata_store.get_all_entries()
-        if not entries:
-            logger.debug("索引为空，返回空结果")
-            return []
+        用「去助词+去空白」的关键词走现有 LCS 模糊匹配，阈值过滤 + 降序排序
+        +「存在 100 分只保留 100 分」规则。
 
+        Args:
+            entries: 全部索引条目，key=int(id)。
+            cleaned: 去助词并去空白后的关键词。
+
+        Returns:
+            按相似度降序排列的结果列表（未截断）；无匹配返回空列表。
+        """
         results: list[SearchResult] = []
         for entry in entries.values():
             text = entry.text
             if not text:
                 continue
-
             score = self._compute_similarity(cleaned, text)
             if score >= self._threshold:
                 results.append(
@@ -152,17 +178,61 @@ class KeywordSearcher:
                 )
 
         results.sort(key=lambda r: r.similarity, reverse=True)
-
-        # 如果存在分数为 100 的结果，只返回分数为 100 的结果
         perfect_results = [r for r in results if r.similarity == 100.0]
         if perfect_results:
             results = perfect_results
+        return results
 
+    def search(self, keyword: str) -> list[SearchResult]:
+        """根据关键词搜索表情包。
+
+        两层匹配，短路返回：
+        1. 精确子串层：用「原始输入去所有空白、保留助词」的关键词做子串匹配；
+           命中则只返回包含该子串的条目（similarity=100.0）。
+        2. LCS 模糊回退层：仅当第一层未命中时启用，用「去助词+去空白」的关键词
+           走现有 LCS 模糊匹配（阈值 60，Top 10）。
+
+        Args:
+            keyword: 用户输入的搜索关键词。
+
+        Returns:
+            按相似度降序排列的搜索结果列表，最多返回 limit 条。无匹配时返回空列表。
+        """
+        keyword = keyword.strip()
+        if not keyword:
+            logger.debug("关键词为空，返回空结果")
+            return []
+
+        raw = _strip_all_whitespace(keyword)
+        if not raw:
+            logger.debug("关键词去空白后为空，返回空结果")
+            return []
+
+        entries = self._metadata_store.get_all_entries()
+        if not entries:
+            logger.debug("索引为空，返回空结果")
+            return []
+
+        exact_results = self._search_exact_substring(entries, raw)
+        if exact_results:
+            logger.info(
+                "关键词精确子串命中：keyword=%r, 命中=%d, 返回=%d",
+                keyword,
+                len(exact_results),
+                min(len(exact_results), self._limit),
+            )
+            return exact_results[: self._limit]
+
+        cleaned = _strip_all_whitespace(_remove_particles(keyword))
+        if not cleaned:
+            logger.debug("关键词去助词后为空，返回空结果")
+            return []
+
+        results = self._search_fuzzy_lcs(entries, cleaned)
         logger.info(
             "关键词搜索完成：keyword=%r, 匹配=%d, 返回=%d",
             keyword,
             len(results),
             min(len(results), self._limit),
         )
-
         return results[: self._limit]

@@ -82,6 +82,69 @@ class TestSearchExactSubstring:
         assert results[0].similarity == 100.0
 
 
+class TestSearchExactSubstringLayer:
+    """第一层：原始去空白关键词的精确子串短路。"""
+
+    def test_raw_substring_preserves_particles(self):
+        # 含助词的原始输入，raw 恰为 text 子串即命中
+        entries = {1: MemeEntry(id=1, image_path="a.jpg", text="的加班心累")}
+        s = KeywordSearcher(MockMetadataStore(entries))
+        results = s.search("的加班")
+        assert len(results) == 1
+        assert results[0].entry_id == 1
+        assert results[0].similarity == 100.0
+
+    def test_internal_whitespace_stripped_in_raw(self):
+        # 内部空白被去除后再做子串判定
+        entries = {1: MemeEntry(id=1, image_path="a.jpg", text="加班了")}
+        s = KeywordSearcher(MockMetadataStore(entries))
+        results = s.search("加班 了")
+        assert len(results) == 1
+        assert results[0].similarity == 100.0
+
+    def test_raw_miss_falls_back_to_lcs(self):
+        # raw 不是任何 text 子串 → 回退 LCS（cleaned 去助词后是 text 子串 → 100）
+        entries = {1: MemeEntry(id=1, image_path="a.jpg", text="加班到凌晨")}
+        s = KeywordSearcher(MockMetadataStore(entries))
+        results = s.search("了加班吗")  # raw="了加班吗" 不命中；cleaned="加班" 是 text 子串 → 100
+        assert len(results) == 1
+        assert results[0].entry_id == 1
+        assert results[0].similarity == 100.0
+
+    def test_raw_hit_excludes_non_substring_entries(self):
+        # 第一层命中即短路，非子串条目不进入结果
+        entries = {
+            1: MemeEntry(id=1, image_path="a.jpg", text="加班到凌晨"),
+            2: MemeEntry(id=2, image_path="b.jpg", text="完全无关的文本"),
+        }
+        s = KeywordSearcher(MockMetadataStore(entries))
+        results = s.search("加班")  # raw 命中 entry 1；entry 2 不含"加班"子串
+        assert {r.entry_id for r in results} == {1}
+        assert all(r.similarity == 100.0 for r in results)
+
+    def test_raw_hit_respects_limit(self):
+        entries = {
+            i: MemeEntry(id=i, image_path=f"m_{i}.jpg", text=f"加班第{i}天")
+            for i in range(1, 16)
+        }
+        s = KeywordSearcher(MockMetadataStore(entries), limit=5)
+        results = s.search("加班")
+        assert len(results) == 5
+        assert all(r.similarity == 100.0 for r in results)
+
+    def test_raw_hit_strictness_vs_cleaned(self):
+        # raw="的鱼" 命中 entry1 的 "的鱼"；去助词后 cleaned="鱼" 同时命中 entry1 和 entry2
+        # 现有实现（去助词）会返回 2 条；新实现第一层只返回 raw 命中的 1 条
+        entries = {
+            1: MemeEntry(id=1, image_path="a.jpg", text="这是的鱼"),
+            2: MemeEntry(id=2, image_path="b.jpg", text="鱼在游"),
+        }
+        s = KeywordSearcher(MockMetadataStore(entries))
+        results = s.search("的鱼")
+        assert {r.entry_id for r in results} == {1}
+        assert all(r.similarity == 100.0 for r in results)
+
+
 class TestSearchFuzzy:
     def test_partial_overlap(self, searcher: KeywordSearcher) -> None:
         results = searcher.search("猫抓蝴蝶")
@@ -178,3 +241,27 @@ class TestParticleRemovalFn:
         from bot.engine.keyword_searcher import _remove_particles
 
         assert "".join(_remove_particles("的呢吗").split()) == ""
+
+
+class TestStripAllWhitespace:
+    """_strip_all_whitespace：去除所有空白字符，保留助词。"""
+
+    def test_removes_internal_space(self):
+        from bot.engine.keyword_searcher import _strip_all_whitespace
+
+        assert _strip_all_whitespace("加班 了") == "加班了"
+
+    def test_removes_all_kinds_of_whitespace(self):
+        from bot.engine.keyword_searcher import _strip_all_whitespace
+
+        assert _strip_all_whitespace(" 加\n班\t了　") == "加班了"
+
+    def test_preserves_particles(self):
+        from bot.engine.keyword_searcher import _strip_all_whitespace
+
+        assert _strip_all_whitespace("的加班吗") == "的加班吗"
+
+    def test_empty_string(self):
+        from bot.engine.keyword_searcher import _strip_all_whitespace
+
+        assert _strip_all_whitespace("   ") == ""

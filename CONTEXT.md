@@ -11,7 +11,7 @@
 | **索引** | 从表情包图片中 OCR 提取的文字和图片路径信息，存储在 sqlite `data/index.db` 中（`meme` 表 + `meme_tag` 关联表），向量存储在 ChromaDB `data/chroma/` 中 |
 | **测试目录** | 仓库根目录 `tests/`；按 `unit/`、`integration/`、`fixtures/` 分层，当前只规划目录结构，不代表已经引入测试框架或固定测试命令 |
 | **按文件名同步的增量刷新** | 启动和 `/refresh` 时使用的 v1.0 同步策略：阶段0 跨库一致性修复（对齐 sqlite ↔ chroma 的 id 集合，chroma 损坏/为空且 sqlite 有数据时全量重 embed `rebuild_all`）；阶段1 删除 `memes/` 已不存在图片的记录；阶段2 新增图片先按格式执行图片无损压缩，再追加索引记录；文件名仍存在的图片不重新 OCR，不检测同名覆盖；删除记录后保持其他已有 id 稳定，允许临时编号空洞；新增图片按文件名升序处理，并优先复用最小空洞 id；新增图片 OCR 后按「去除所有空白字符的去重键」去重，与已有条目或其他新图同键时保留已有/靠前者、删除重复新图；OCR 无文字的新图移至 `meme_no_text/` 不进索引 |
-| **关键词搜索** | 功能一：用户输入关键词，使用 jieba.posseg 分词过滤助词后，对索引中的 OCR 文本做 pylcs LCS 模糊匹配（阈值统一 >= 60），按分数降序返回 Top 10 表情包；不匹配文件名；如果存在分数为 100 的结果，只返回分数为 100 的结果 |
+| **关键词搜索** | 功能一：用户输入关键词，先用「原始输入去所有空白、保留助词」的关键词对索引中的 OCR 文本做精确子串匹配，命中则只返回包含该子串的 Top 10 表情包；未命中时回退到 jieba.posseg 分词过滤助词后的关键词，用 pylcs LCS 模糊匹配（阈值统一 >= 60），按分数降序返回 Top 10；模糊回退阶段如果存在分数为 100 的结果，只返回分数为 100 的结果；不匹配文件名 |
 | **AI 匹配** | 功能二：用户用自然语言描述，先用 `VectorStore.query` 从 ChromaDB 召回 Top 10（不设最低相似度阈值），再用 `MetadataStore.get_entry` 取 metadata 构候选，经 DeepSeek 精排后返回；若精排失败、解析失败或返回 `0`，fallback 到 embedding Top 1。`AIMatcher` 通过 `MetadataEntryProvider` + `VectorQueryProvider` 两个 Protocol 依赖两个 Store（见「依赖协议」） |
 | **图片无损压缩** | 新增图片进入索引前的文件优化步骤；`/add`、启动同步和 `/refresh` 对新增的 `.jpg/.jpeg/.png/.webp/.gif` 尝试无损压缩，成功后覆盖原文件；`.bmp` 不压缩，其他扩展名不作为表情包处理 |
 | **私聊** | v1.0 的基础会话形态：授权 QQ 用户与 Bot 一对一对话；支持所有命令（组 A：`/add`、`/ai`、`/refresh`；组 B：`/search`、`/help`、普通文本） |

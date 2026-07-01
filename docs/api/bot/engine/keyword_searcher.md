@@ -65,15 +65,15 @@ class SearchResult:
 |--|------|------|
 | **返回** | `list[SearchResult]` | 按 `similarity` 降序排列，最多 `limit` 条；无匹配或关键词为空时返回 `[]` |
 
-先对 keyword 做分词 + 助词过滤 + 去所有空白，再用过滤后的文本做 LCS 匹配。
-如果存在分数为 100 的结果，只返回分数为 100 的结果。
+两层短路匹配：先用「原始输入去所有空白、保留助词」的关键词做精确子串匹配，命中则只返回这些条目（similarity=100.0）；未命中才回退到「去助词 + 去空白」的关键词走 LCS 模糊匹配。
 
 **搜索逻辑：**
-1. 对 `keyword` 做 `jieba.posseg` 分词 + 词性标注，过滤助词类标签（`uj`/`ul`/`uz`/`us`/`y`/`e`）。
-2. 去助词后再去除所有空白字符；结果为空字符串则直接返回空列表。
-3. 使用去助词、去空白后的文本与每条 OCR 文本（`MetadataStore.get_all_entries()` 返回的 `entry.text`）做 LCS 匹配，过滤 `score < threshold` 的结果（全程统一使用 `threshold` 参数值，无特殊降阈逻辑）。
-4. 若 `keyword`（清洗后）是 `text` 的子串，直接返回 100（精确命中）。
-5. 否则使用 `pylcs.lcs_sequence_length(cleaned, text)` 计算最长公共子序列长度，相似度 = `(lcs_len / len(cleaned)) * 100`。
-6. 如果存在分数为 100 的结果，过滤掉低于 100 的结果。
+1. 对 `keyword` 做 `strip`；为空则返回 `[]`。
+2. 第一层「精确子串」：`raw = _strip_all_whitespace(keyword)`（去除所有空白字符，保留助词）。遍历 `entry.text`，若 `raw in text` 则命中，`similarity = 100.0`。命中集非空则只返回这些条目（按 `entries` 读出顺序，截断至 `limit`）。
+3. 第二层「LCS 模糊回退」（仅当第一层未命中时启用）：`cleaned = _strip_all_whitespace(_remove_particles(keyword))`（`jieba.posseg` 分词过滤助词 `uj`/`ul`/`uz`/`us`/`y`/`e` + 去所有空白）；为空则返回 `[]`。
+4. 对每条 `entry.text` 计算 `_compute_similarity(cleaned, text)`：若 `cleaned in text` 返回 100；否则 `pylcs.lcs_sequence_length(cleaned, text)` 计算相似度 `(lcs_len / len(cleaned)) * 100`。
+5. 过滤 `score < threshold` 的结果，按 `similarity` 降序排列。
+6. 若存在分数为 100 的结果，只保留 100 分结果。
+7. 截断至 `limit` 返回。
 
 **依赖：** `jieba`（分词 + 词性标注）、`pylcs`（LCS 算法）。
