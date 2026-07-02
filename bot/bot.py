@@ -67,25 +67,12 @@ def _read_bot_port() -> int:
 async def _background_sync(index_manager: IndexManager) -> None:
     """后台索引同步任务，不阻塞启动。
 
-    同步期间通过 acquire_lock() 获取锁（is_locked = True），
-    插件层自动回复"索引正在更新"。
-    同步失败时记录错误日志，Bot 继续运行。
-
     Args:
         index_manager: 已加载索引的 IndexManager 实例。
     """
     logger.info("开始后台索引同步...")
     try:
-        # 获取锁，同步期间 is_locked = True
-        # 启动时无其他任务持有锁，但防御性检查返回值
-        if not await index_manager.acquire_lock():
-            logger.warning("后台同步获取锁失败（锁已被占用），跳过本次同步")
-            return
-        try:
-            result = await index_manager.sync_with_filesystem()
-        finally:
-            index_manager.release_lock()
-
+        result = await index_manager.refresh()
         logger.info(
             "后台索引同步完成: 新增=%d, 删除=%d, 去重=%d, 无文字移走=%d, 失败=%d",
             result.added,
@@ -106,13 +93,11 @@ async def _on_startup() -> None:
     流程：
     1. 配置日志
     2. 创建 OCR / Embedding / Rerank / ImageOptimizer 服务
-    3. 创建 MetadataStore + VectorStore + IndexManager 并加载索引
+    3. 创建 MetadataStore + VectorStore
     4. 创建 AIMatcher / KeywordSearcher
-    5. 注册到 app_state 供插件获取（Bot 立即可用）
-    6. 后台执行 sync_with_filesystem()（不阻塞启动）
-
-    同步期间 is_locked = True，插件层自动回复"索引正在更新"。
-    同步失败时记录错误日志，Bot 继续运行（用已有索引）。
+    5. 创建 IndexManager 并加载索引
+    6. 注册到 app_state 供插件获取（Bot 立即可用）
+    7. 后台执行 refresh()（不阻塞启动）
     """
     # 1. 日志
     setup_logging("log")
@@ -130,24 +115,11 @@ async def _on_startup() -> None:
     rerank_service = RerankService()
     image_optimizer = ImageOptimizer()
 
-    # 3. 创建存储与 IndexManager 并加载索引
-    memes_dir = str(MEMES_DIR)
-    sync_concurrency = _read_sync_concurrency()
-
+    # 3. 创建 MetadataStore 与 VectorStore
     metadata_store = MetadataStore(str(INDEX_DB_PATH))
     vector_store = VectorStore(str(CHROMA_DIR))
-    index_manager = IndexManager(
-        metadata_store=metadata_store,
-        vector_store=vector_store,
-        memes_dir=memes_dir,
-        ocr_provider=ocr_service,
-        embedding_provider=embedding_service,
-        optimizer=image_optimizer,
-        sync_concurrency=sync_concurrency,
-    )
-    index_manager.load()
 
-    # 4. 创建搜索和匹配服务（可立即使用已有索引）
+    # 4. 创建搜索和匹配服务（IndexManager 内部持锁后委托调用）
     ai_matcher = AIMatcher(
         metadata_store=metadata_store,
         vector_store=vector_store,
@@ -156,7 +128,24 @@ async def _on_startup() -> None:
     )
     keyword_searcher = KeywordSearcher(metadata_store)
 
-    # 5. 注册到 app_state（Bot 立即可用）
+    # 5. 创建 IndexManager 并加载索引
+    memes_dir = str(MEMES_DIR)
+    sync_concurrency = _read_sync_concurrency()
+
+    index_manager = IndexManager(
+        metadata_store=metadata_store,
+        vector_store=vector_store,
+        memes_dir=memes_dir,
+        ocr_provider=ocr_service,
+        embedding_provider=embedding_service,
+        optimizer=image_optimizer,
+        keyword_searcher=keyword_searcher,
+        ai_matcher=ai_matcher,
+        sync_concurrency=sync_concurrency,
+    )
+    index_manager.load()
+
+    # 6. 注册到 app_state（Bot 立即可用）
     init_app(
         index_manager=index_manager,
         metadata_store=metadata_store,
@@ -169,24 +158,25 @@ async def _on_startup() -> None:
     )
     logger.info("MemePilot 启动完成，后台索引同步进行中...")
 
-    # 6. 后台执行首次索引同步（不阻塞启动）
+    # 7. 后台执行首次索引同步（不阻塞启动）
     asyncio.create_task(_background_sync(index_manager))
 
 
 async def _on_shutdown() -> None:
-    """NoneBot2 关闭钩子 — 释放 OCR 服务与存储的会话/连接。"""
-    from bot.app_state import get_metadata_store, get_ocr_service, get_vector_store
+    """NoneBot2 关闭钩子 — 先关闭 IndexManager，再关闭 OCR 服务。"""
+    from bot.app_state import get_index_manager, get_ocr_service
+
+    try:
+        index_manager = get_index_manager()
+        await index_manager.close()
+        logger.info("IndexManager 已关闭")
+    except RuntimeError:
+        pass
 
     try:
         ocr_service = get_ocr_service()
         await ocr_service.close()
         logger.info("OCR 服务 HTTP 会话已关闭")
-    except RuntimeError:
-        pass
-    try:
-        get_metadata_store().close()
-        get_vector_store().close()
-        logger.info("存储已关闭")
     except RuntimeError:
         pass
 

@@ -292,7 +292,6 @@ class TestGotSelection:
     @patch("bot.plugins._search_utils.MessageSegment")
     @patch("bot.plugins._search_utils.handle_selection")
     @patch("bot.plugins._search_utils.session_manager.remove_selection")
-    @patch("bot.plugins._search_utils.session_manager.deactivate_chat")
     @patch("bot.plugins._search_utils.session_manager.activate_chat")
     @patch("bot.plugins._search_utils.session_manager.get_selection")
     @patch("bot.plugins._search_utils.got_intercept_bypass", return_value=False)
@@ -301,12 +300,11 @@ class TestGotSelection:
         mock_bypass: MagicMock,
         mock_get_sel: MagicMock,
         mock_activate: MagicMock,
-        mock_deactivate: MagicMock,
         mock_remove_sel: MagicMock,
         mock_handle: MagicMock,
         mock_segment: MagicMock,
     ) -> None:
-        """有效编号选择应发送对应图片并清理会话。"""
+        """有效编号选择应发送对应图片并清理选择会话。"""
         result = _make_search_result(image_path="a.jpg")
         mock_handle.return_value = result
         mock_get_sel.return_value = MagicMock()
@@ -318,7 +316,6 @@ class TestGotSelection:
         )
 
         mock_remove_sel.assert_called_once_with("12345")
-        mock_deactivate.assert_called_once_with("12345")
         matcher.finish.assert_awaited_once()
 
     @pytest.mark.asyncio

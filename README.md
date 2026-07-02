@@ -2,7 +2,7 @@
 
 MemePilot 是一个部署在 Docker 中的 QQ 表情包机器人，帮你从本地表情包库中快速找到想要的表情包。/search、/help 和普通文本支持群聊 @bot 使用；/add、/refresh、/ai 仅限私聊。/cancel 私聊和群聊均可使用。
 
-隐私说明：表情包图片始终本地存储；OCR 文本会按功能需要发送给 SiliconFlow 和 DeepSeek。
+隐私说明：表情包图片始终本地存储；OCR 文本会按 `OCR_PROVIDER` 配置发送给对应服务（默认 `paddle` 时使用百度 PaddleOCR 云 API，`deepseek` 时使用 SiliconFlow DeepSeek-OCR）；Embedding 调用由 `EMBEDDING_API_KEY` 指定的服务；LLM 精排调用 DeepSeek。
 
 ## ✨ 功能
 
@@ -75,7 +75,10 @@ Bot: 索引更新完成 ✅
 
 - Docker & Docker Compose
 - DeepSeek API Key（用于 LLM 精排，[点此获取](https://platform.deepseek.com)）
-- SiliconFlow API Key（用于生成 embedding，[点此获取](https://siliconflow.cn)）
+- Embedding API Key（任意 OpenAI 兼容服务，默认配置使用 SiliconFlow，[点此获取](https://siliconflow.cn)）
+- OCR 凭证（二选一）：
+  - `OCR_PROVIDER=paddle`（默认）：百度 PaddleOCR 云 API Access Token（[点此获取](https://ai.baidu.com/tech/ocr/general)）
+  - `OCR_PROVIDER=deepseek`：SiliconFlow API Key（与 DeepSeek-OCR 共用同一账户）
 
 ### 部署步骤
 
@@ -90,12 +93,17 @@ cp .env.example .env
 #   QQ_ACCOUNT=机器人登录的QQ号
 #   AUTHORIZED_USER_IDS=允许使用机器人的QQ号，多个用英文逗号分隔
 #   DEEPSEEK_API_KEY=sk-你的DeepSeekKey
-#   SILICONFLOW_API_KEY=sk-你的SiliconFlowKey
 #   EMBEDDING_API_KEY=sk-你的EmbeddingKey
+#   PADDLEOCR_ACCESS_TOKEN=你的百度OCRToken  # 当 OCR_PROVIDER=paddle（默认）时必填
+#   SILICONFLOW_API_KEY=sk-你的SiliconFlowKey  # 当 OCR_PROVIDER=deepseek 时必填
 #   BOT_PORT=8080  # 可选，Bot 监听端口
 #   NAPCAT_WEBUI_TOKEN=你的密码  # 可选，WebUI 登录密钥
 #   SYNC_CONCURRENCY=5  # 可选，索引同步并发上限
+#   READ_LOCK_TIMEOUT=00:00:30  # 可选，search/ai_match 等待写锁释放的超时
+#   ADD_COMMAND_TIMEOUT=00:01:00  # 可选，/add 从提交到结果返回的超时
 #   SESSION_EXPIRE_TIMEOUT=00:01:00  # 可选，会话超时时间
+#   OCR_PROVIDER=paddle  # 可选，OCR 引擎：paddle（默认，需 PADDLEOCR_ACCESS_TOKEN）或 deepseek（需 SILICONFLOW_API_KEY）
+#   PADDLEOCR_BASE_URL=https://aip.baidubce.com  # 可选，百度 OCR API 地址
 
 # 3. 放入表情包
 # 把你的 .jpg/.jpeg/.png/.gif/.webp/.bmp 放到 memes/ 目录
@@ -110,7 +118,7 @@ docker compose logs -f bot
 # 文件日志级别为 DEBUG，控制台为 INFO
 ```
 
-首次启动会自动扫描 `memes/` 目录中的图片，用 DeepSeek-OCR 提取文字并建立索引。索引同步在后台执行，Bot 启动后立即可用；同步期间搜索命令会提示"索引正在更新"。
+首次启动会自动扫描 `memes/` 目录中的图片，按 `OCR_PROVIDER` 配置（默认 `paddle`）提取文字并建立索引。索引同步在后台执行，Bot 启动后立即可用；同步期间搜索命令会提示"索引更新较慢，请稍后再试"。
 
 ### 扫码登录与反向 WebSocket
 

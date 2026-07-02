@@ -83,8 +83,12 @@ class AIMatcher:
         limit: int = 10,
     ) -> None
 
-    async def match(self, description: str) -> AIMatchResult | None
-    # Raises: ValueError（用户描述 embedding 为空/非数字/零向量）
+    async def match_with_vector(
+        self,
+        description: str,
+        query_vector: list[float],
+    ) -> AIMatchResult | None
+    # 调用方需保证 description 非空、query_vector 非零向量
 ```
 
 ### `docs/api/bot/engine/index_manager.md`
@@ -96,6 +100,8 @@ class IndexCorruptedError(Exception)
 class CompressionError(RuntimeError)
 class OcrError(RuntimeError)
 class EmbeddingError(RuntimeError)
+class RefreshInProgressError(RuntimeError)
+class IndexAddCancelledError(RuntimeError)
 
 class OcrProvider(Protocol):
     async def ocr(self, image_path: str) -> str
@@ -120,6 +126,8 @@ class AddResult:
 class IndexManager:
     SUPPORTED_EXTENSIONS: frozenset[str]
     DEFAULT_SYNC_CONCURRENCY: int
+    read_timeout: float
+    add_user_timeout: float
 
     def __init__(
         self,
@@ -130,29 +138,31 @@ class IndexManager:
         ocr_provider: OcrProvider | None = None,
         embedding_provider: EmbeddingProvider | None = None,
         optimizer: ImageOptimizer | None = None,
+        keyword_searcher: KeywordSearcher | None = None,
+        ai_matcher: AIMatcher | None = None,
         sync_concurrency: int | None = None,
     ) -> None
 
-    def load(self) -> None  # 委托两个 Store.load()
+    def load(self) -> None
 
-    async def acquire_lock(self) -> bool
+    async def search(self, keyword: str) -> list[SearchResult]
+    # 持读锁调用 KeywordSearcher；空库返回 []；超时抛 asyncio.TimeoutError
 
-    def release_lock(self) -> None
+    async def ai_match(self, description: str) -> AIMatchResult | None
+    # 锁外 embed，持读锁调用 AIMatcher.match_with_vector()；超时抛 asyncio.TimeoutError
 
-    @property
-    def is_locked(self) -> bool
+    async def add(self, filename: str) -> AddResult
+    # FIFO 入队；refresh 期间抛 RefreshInProgressError；关闭时抛 IndexAddCancelledError
 
-    @property
-    def entry_count(self) -> int
+    async def refresh(self) -> SyncResult
+    # 独占写锁执行同步；运行期间新的 add/refresh 被拒绝
 
-    async def sync_with_filesystem(self) -> SyncResult
-    # 四阶段：阶段0 跨库一致性修复 + 阶段1 删除 + 阶段2 新增
-
-    async def add_single_file(self, filename: str) -> AddResult
-    # Raises: CompressionError, OcrError, EmbeddingError, DuplicateEntryError
+    async def close(self) -> None
+    # 取消 workers，清空 pending，关闭两个 Store
 ```
 
 薄编排层：不直接写 SQL/Chroma，全部委托 `MetadataStore` + `VectorStore`。写入顺序统一「先 sqlite 后 chroma」，`upsert` 失败回滚 sqlite。去重键 = 去空白后的 `text`（经 `MetadataStore.get_id_by_text` 判定）。
+新增 `RefreshInProgressError`、`IndexAddCancelledError` 用于拒绝刷新期间的写入与关闭时的待处理任务。
 
 ### `docs/api/bot/engine/metadata_store.md`
 
@@ -373,9 +383,8 @@ NoneBot2 应用入口，详见 `docs/api/bot/bot.md`。
 - 启动：`main()` — 初始化 NoneBot2（`driver="~fastapi"`），注册 OneBot V11 适配器，加载插件，启动驱动器
 - Startup hook：`_on_startup()` — 创建 OCR/Embedding/Rerank/ImageOptimizer 服务，创建 `MetadataStore(INDEX_DB_PATH)` + `VectorStore(CHROMA_DIR)` 并注入 `IndexManager`，`load()` 后注册到 `app_state`、后台执行索引同步；根据 `OCR_PROVIDER` 环境变量选择 OCR 引擎（`paddle`/`deepseek`）
 - Shutdown hook：`_on_shutdown()` — 关闭 OCR 服务 HTTP 会话，并 `close()` 两个 Store（sqlite 连接 + chroma PersistentClient）
-- `_background_sync()` — 后台同步任务，`acquire_lock()` 获取锁，同步完成/失败后释放
-- 同步期间 `is_locked = True`，插件层自动回复"索引正在更新"；同步失败时记录日志，Bot 继续运行
-- 环境变量：`BOT_HOST`（默认 `0.0.0.0`）、`BOT_PORT`（默认 `8080`，无效值回退 8080）、`SYNC_CONCURRENCY`（默认 5）
+- `_background_sync()` — 后台同步任务，调用 `IndexManager.refresh()` 以独占写锁执行同步；同步失败时记录日志，Bot 继续运行
+- 环境变量：`BOT_HOST`（默认 `0.0.0.0`）、`BOT_PORT`（默认 `8080`，无效值回退 8080）、`SYNC_CONCURRENCY`（默认 5）、`READ_LOCK_TIMEOUT`（默认 `00:00:30`）、`ADD_COMMAND_TIMEOUT`（默认 `00:01:00`）
 
 ### `docs/api/bot/logging_config.md`
 
@@ -420,8 +429,7 @@ def get_keyword_searcher() -> KeywordSearcher
 NoneBot2 命令插件，注册 `/refresh` 命令。
 
 - 依赖：`app_state.get_index_manager()`、`auth.is_authorized()`
-- 锁：`await IndexManager.acquire_lock()` / `IndexManager.release_lock()`
-- 同步：`IndexManager.sync_with_filesystem() -> SyncResult`
+- 同步：`IndexManager.refresh() -> SyncResult`
 - 群聊：授权用户群聊 @bot 调用时回复"此命令仅限私聊使用"
 
 ### `bot/plugins/_search_utils.py`
@@ -432,8 +440,9 @@ NoneBot2 命令插件，注册 `/refresh` 命令。
 async def execute_search(
     bot: Bot, event: MessageEvent, cmd_matcher: Matcher, keyword: str
 ) -> None
-# 核心搜索逻辑：锁检查 → 索引空检查 → 执行搜索 → 结果分支
+# 核心搜索逻辑：执行搜索 → 结果分支
 # 多结果时注册 session 并启动超时任务
+# 读锁等待超时时回复"索引更新较慢，请稍后再试"
 
 def handle_selection(
     matcher: Matcher, candidates: list[SearchResult], text: str
@@ -453,7 +462,7 @@ async def got_intercept_bypass(
 # /help 通过 reject(HELP_TEXT) 发送帮助文本并继续等待
 ```
 
-- 依赖：`app_state.get_index_manager()`、`app_state.get_keyword_searcher()`、`bot.session.session_manager`、`bot.plugins._search_utils.got_intercept_bypass`、`bot.config.MEMES_DIR`、`bot.plugins._help_text.HELP_TEXT`
+- 依赖：`app_state.get_index_manager()`、`bot.session.session_manager`、`bot.plugins._search_utils.got_intercept_bypass`、`bot.config.MEMES_DIR`、`bot.plugins._help_text.HELP_TEXT`
 
 ### `bot/plugins/_help_text.py`
 
@@ -517,8 +526,7 @@ NoneBot2 命令插件，注册 `/cancel` 命令。
 NoneBot2 命令插件，注册 `/add` 命令。
 
 - 依赖：`app_state.get_index_manager()`、`auth.is_authorized()`、`bot.session.session_manager`、`bot.session.timeout_session`、`bot.plugins._search_utils.got_intercept_bypass`、`bot.config.read_session_timeout()`
-- 锁：只读检查 `IndexManager.is_locked`；管道并发由 `IndexManager._add_sem` 控制
-- 管道：`IndexManager.add_single_file() -> AddResult`
+- 管道：`IndexManager.add() -> AddResult`
 - 图片下载：`httpx.AsyncClient`，30s 超时
 - 文件名：`_sanitize_filename()` 安全化 / `_auto_filename()` 自动生成
 - 文件冲突：`resolve_unique_filename()`
@@ -531,9 +539,9 @@ NoneBot2 命令插件，注册 `/add` 命令。
 
 NoneBot2 命令插件，注册 `/ai` 命令。
 
-- 依赖：`app_state.get_ai_matcher()`、`app_state.get_index_manager()`、`auth.is_authorized()`
-- 锁：只读检查 `IndexManager.is_locked`
-- 匹配：`_do_match()` 封装异常处理，`asyncio.gather()` 并发执行 send 与 match
+- 依赖：`app_state.get_index_manager()`、`auth.is_authorized()`
+- 匹配：`index_manager.ai_match()` 内部持读锁；`asyncio.gather()` 并发执行 send 与 match
+- 错误处理：读锁等待超时回复"索引更新较慢，请稍后再试"
 - 图片：`MessageSegment.image("file://" + str(image_path.resolve()))`
 - 群聊：授权用户群聊 @bot 调用时回复"此命令仅限私聊使用"
 

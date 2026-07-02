@@ -24,31 +24,59 @@ def read_session_timeout() -> int:
     Returns:
         超时秒数，默认 60。
     """
-    from datetime import timedelta
-
-    from pydantic import TypeAdapter
-
-    raw = os.environ.get("SESSION_EXPIRE_TIMEOUT", "")
-    if not raw:
-        return 60
-    # 纯数字（秒）
-    try:
-        value = int(raw)
-        return value if value > 0 else 60
-    except ValueError:
-        pass
-    # pydantic 解析 HH:MM:SS 等格式
-    try:
-        td = TypeAdapter(timedelta).validate_python(raw)
-        total = int(td.total_seconds())
-        return total if total > 0 else 60
-    except Exception:
-        pass
-    return 60
+    return _parse_timeout_seconds(os.environ.get("SESSION_EXPIRE_TIMEOUT", ""), 60)
 
 
 # 有效 OCR Provider 值
 _VALID_OCR_PROVIDERS: frozenset[str] = frozenset({"deepseek", "paddle"})
+
+
+def _parse_timeout_seconds(raw: str, default: int) -> int:
+    """解析超时秒数，支持纯数字或 timedelta 格式。
+
+    Args:
+        raw: 环境变量原始值。
+        default: 解析失败时的默认值。
+
+    Returns:
+        正整数秒数。
+    """
+    from datetime import timedelta
+
+    from pydantic import TypeAdapter
+
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+        return value if value > 0 else default
+    except ValueError:
+        pass
+    try:
+        td = TypeAdapter(timedelta).validate_python(raw)
+        total = int(td.total_seconds())
+        return total if total > 0 else default
+    except Exception:
+        pass
+    return default
+
+
+def read_read_lock_timeout() -> int:
+    """从环境变量读取读锁等待超时秒数。
+
+    Returns:
+        超时秒数，默认 30。
+    """
+    return _parse_timeout_seconds(os.environ.get("READ_LOCK_TIMEOUT", ""), 30)
+
+
+def read_add_command_timeout() -> int:
+    """从环境变量读取 /add 命令用户等待超时秒数。
+
+    Returns:
+        超时秒数，默认 60。
+    """
+    return _parse_timeout_seconds(os.environ.get("ADD_COMMAND_TIMEOUT", ""), 60)
 
 
 def read_ocr_provider() -> str:
@@ -68,5 +96,7 @@ __all__ = [
     "INDEX_DB_PATH",
     "CHROMA_DIR",
     "read_session_timeout",
+    "read_read_lock_timeout",
+    "read_add_command_timeout",
     "read_ocr_provider",
 ]

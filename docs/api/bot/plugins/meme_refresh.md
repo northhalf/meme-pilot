@@ -19,14 +19,13 @@
 ## 行为
 
 1. 授权校验：非授权用户静默忽略（仅日志）
-2. `session_manager.activate_chat()` 激活会话
+2. `session_manager.activate_chat()` 激活会话，已有活跃会话则拒绝
 3. 群聊拦截：非 `"private"` 消息类型回复"此命令仅限私聊使用"
-4. 获取全局索引更新锁，失败则回复"索引正在更新，请稍后再试"
+4. 获取 `IndexManager`，未初始化则回复"服务未就绪，请稍后再试"
 5. 回复"正在刷新索引，请稍候..."
-6. 调用 `IndexManager.sync_with_filesystem()` 执行增量同步
-7. 释放锁（`try/finally` 保证）
-8. `session_manager.deactivate_chat()` 清理会话
-9. 回复摘要：新增/删除/去重/无文字移走/失败统计
+6. 调用 `IndexManager.refresh()` 执行增量同步；若抛出 `RefreshInProgressError`，回复"已有刷新任务在进行中，请稍后再试"
+7. `session_manager.deactivate_chat()` 清理会话
+8. 回复摘要：新增/删除/去重/无文字移走/失败统计
 
 ## 回复格式
 
@@ -39,7 +38,7 @@
 
 **群聊调用：** `此命令仅限私聊使用`
 
-**锁占用：** `索引正在更新，请稍后再试`
+**已有刷新任务：** `已有刷新任务在进行中，请稍后再试`
 
 **memes/ 为空：** `表情包目录为空，请先添加图片并执行 /refresh`
 

@@ -117,21 +117,13 @@ class AIMatchResult:
 
 ---
 
-### `async match(description: str) -> AIMatchResult | None`
+### `async match_with_vector(description: str, query_vector: list[float]) -> AIMatchResult | None`
 
 | | 类型 | 说明 |
 |--|------|------|
-| **参数** `description` | `str` | 用户自然语言描述 |
-| **返回** | `AIMatchResult \| None` | 最终匹配结果；空描述、向量库为空或无有效候选时返回 `None` |
-| **异常** | `ValueError` | 用户描述 embedding 为空、非数字或为零向量 |
+| **参数** `description` | `str` | 用户自然语言描述（已 strip） |
+| **参数** `query_vector` | `list[float]` | 用户描述对应的 embedding 向量 |
+| **返回** | `AIMatchResult \| None` | 最终匹配结果；空描述、向量库为空或无有效候选时返回 `None`；零向量抛 `ValueError` |
+| **异常** | `ValueError` | `query_vector` 为零向量 |
 
-流程：
-
-1. 清洗用户描述（`strip`），空描述直接返回 `None`。
-2. `VectorStore.count() == 0` 时直接返回 `None`，不调用 embedding provider。
-3. 调用 `embedding_provider.embed(description)` 生成用户描述向量；provider 抛出的异常向外传播。
-4. 用户描述向量为空列表、含非数字/非有限数字元素时抛 `ValueError`；为零向量时抛 `ValueError`。
-5. `VectorStore.query(query_vector, n_results=limit)` 从 ChromaDB 召回 Top-N `VectorHit`（不设最低相似度阈值）。
-6. 用 `MetadataStore.get_entry(hit.entry_id)` 将每个 hit 转为 `AIMatchCandidate`（带 1-based `rank`）；metadata 缺失的 hit 被跳过并记录 warning。无候选时返回 `None`。
-7. 未配置 `rerank_provider` 时返回 embedding Top 1，`source="embedding"`。
-8. 配置 `rerank_provider` 时使用精排结果，`source="rerank"`；精排抛异常、返回 `0`、返回非整数或越界时 fallback 到 embedding Top 1，`source="embedding"`。
+调用方需保证 `description` 非空、`query_vector` 非零向量。`IndexManager.ai_match()` 在锁外生成 embedding，再持读锁调用此方法。

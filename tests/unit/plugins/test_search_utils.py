@@ -98,20 +98,15 @@ class TestHandleSelection:
 from unittest.mock import patch
 
 
-def _make_index_manager(*, is_locked: bool = False, entry_count: int = 10) -> MagicMock:
+def _make_index_manager(*, results: list | None = None, search_side_effect: Exception | None = None) -> MagicMock:
     im = MagicMock()
-    im.is_locked = is_locked
-    im.entry_count = entry_count
-    return im
-
-
-def _make_keyword_searcher(*, results: list | None = None) -> MagicMock:
-    ks = MagicMock()
-    if results is not None:
-        ks.search.return_value = results
+    if search_side_effect is not None:
+        im.search = AsyncMock(side_effect=search_side_effect)
+    elif results is not None:
+        im.search = AsyncMock(return_value=results)
     else:
-        ks.search.return_value = [_make_search_result()]
-    return ks
+        im.search = AsyncMock(return_value=[_make_search_result()])
+    return im
 
 
 def _make_event(user_id: str = "12345") -> MagicMock:
@@ -130,53 +125,35 @@ class TestExecuteSearch:
     """execute_search 测试。"""
 
     @pytest.mark.asyncio
-    @patch("bot.plugins._search_utils.get_keyword_searcher")
     @patch("bot.plugins._search_utils.get_index_manager")
-    async def test_lock_contention_replies(
-        self, mock_get_im: MagicMock, mock_get_ks: MagicMock
+    async def test_timeout_replies(
+        self, mock_get_im: MagicMock
     ) -> None:
-        """索引锁占用时应回复提示。"""
+        """等待读锁超时应回复提示。"""
+        import asyncio
         from bot.plugins._search_utils import execute_search
 
-        mock_get_im.return_value = _make_index_manager(is_locked=True)
+        mock_get_im.return_value = _make_index_manager(
+            search_side_effect=asyncio.TimeoutError()
+        )
         _cmd = MagicMock()
         _cmd.finish = AsyncMock()
 
         await execute_search(_make_bot(), _make_event(), _cmd, "加班")
 
         _cmd.finish.assert_awaited_once()
-        assert "索引正在更新" in _cmd.finish.call_args[0][0]
-
-    @pytest.mark.asyncio
-    @patch("bot.plugins._search_utils.get_keyword_searcher")
-    @patch("bot.plugins._search_utils.get_index_manager")
-    async def test_empty_index_replies(
-        self, mock_get_im: MagicMock, mock_get_ks: MagicMock
-    ) -> None:
-        """索引为空时应回复提示。"""
-        from bot.plugins._search_utils import execute_search
-
-        mock_get_im.return_value = _make_index_manager(entry_count=0)
-        _cmd = MagicMock()
-        _cmd.finish = AsyncMock()
-
-        await execute_search(_make_bot(), _make_event(), _cmd, "加班")
-
-        _cmd.finish.assert_awaited_once()
-        assert "表情包目录为空" in _cmd.finish.call_args[0][0]
+        assert "索引更新较慢" in _cmd.finish.call_args[0][0]
 
     @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.session_manager.deactivate_chat")
-    @patch("bot.plugins._search_utils.get_keyword_searcher")
     @patch("bot.plugins._search_utils.get_index_manager")
     async def test_no_results_replies(
-        self, mock_get_im: MagicMock, mock_get_ks: MagicMock, mock_deactivate: MagicMock
+        self, mock_get_im: MagicMock, mock_deactivate: MagicMock
     ) -> None:
         """无匹配结果时应回复提示并 deactivate_chat。"""
         from bot.plugins._search_utils import execute_search
 
-        mock_get_im.return_value = _make_index_manager()
-        mock_get_ks.return_value = _make_keyword_searcher(results=[])
+        mock_get_im.return_value = _make_index_manager(results=[])
         _cmd = MagicMock()
         _cmd.finish = AsyncMock()
 
@@ -189,20 +166,17 @@ class TestExecuteSearch:
     @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.session_manager.deactivate_chat")
     @patch("bot.plugins._search_utils.MessageSegment")
-    @patch("bot.plugins._search_utils.get_keyword_searcher")
     @patch("bot.plugins._search_utils.get_index_manager")
     async def test_single_result_sends_image(
         self,
         mock_get_im: MagicMock,
-        mock_get_ks: MagicMock,
         mock_segment: MagicMock,
         mock_deactivate: MagicMock,
     ) -> None:
         """唯一结果应直接发送图片并 deactivate_chat。"""
         from bot.plugins._search_utils import execute_search
 
-        mock_get_im.return_value = _make_index_manager()
-        mock_get_ks.return_value = _make_keyword_searcher(
+        mock_get_im.return_value = _make_index_manager(
             results=[_make_search_result(image_path="加班心累.jpg")]
         )
         _cmd = MagicMock()
@@ -217,12 +191,10 @@ class TestExecuteSearch:
     @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.session_manager.create_selection")
     @patch("bot.plugins._search_utils.timeout_session")
-    @patch("bot.plugins._search_utils.get_keyword_searcher")
     @patch("bot.plugins._search_utils.get_index_manager")
     async def test_multiple_results_registers_session(
         self,
         mock_get_im: MagicMock,
-        mock_get_ks: MagicMock,
         mock_timeout: MagicMock,
         mock_create_selection: MagicMock,
     ) -> None:
@@ -233,8 +205,7 @@ class TestExecuteSearch:
             _make_search_result(entry_id=1, text="甲"),
             _make_search_result(entry_id=2, text="乙"),
         ]
-        mock_get_im.return_value = _make_index_manager()
-        mock_get_ks.return_value = _make_keyword_searcher(results=results)
+        mock_get_im.return_value = _make_index_manager(results=results)
         _cmd = MagicMock()
         _cmd.state = {}
         _cmd.send = AsyncMock()
@@ -255,18 +226,16 @@ class TestExecuteSearch:
         assert "选择已过期" in timeout_args[4]  # message
 
     @pytest.mark.asyncio
-    @patch("bot.plugins._search_utils.get_keyword_searcher")
     @patch("bot.plugins._search_utils.get_index_manager")
     async def test_search_exception_replies_error(
-        self, mock_get_im: MagicMock, mock_get_ks: MagicMock
+        self, mock_get_im: MagicMock
     ) -> None:
         """search() 抛异常时应回复服务不可用。"""
         from bot.plugins._search_utils import execute_search
 
-        mock_get_im.return_value = _make_index_manager()
-        ks = _make_keyword_searcher()
-        ks.search.side_effect = RuntimeError("pylcs 错误")
-        mock_get_ks.return_value = ks
+        mock_get_im.return_value = _make_index_manager(
+            search_side_effect=RuntimeError("pylcs 错误")
+        )
         _cmd = MagicMock()
         _cmd.finish = AsyncMock()
 

@@ -4,6 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from bot.engine.index_manager import RefreshInProgressError
+
 # ---------------------------------------------------------------------------
 # 在导入插件前 mock nonebot.on_command，避免需要 NoneBot2 完整初始化。
 # 用 MagicMock 的 handle() 返回一个透传 decorator（原函数不变），
@@ -51,21 +53,24 @@ def _make_matcher() -> MagicMock:
 
 def _make_index_manager(
     *,
-    acquire_result: bool = True,
     entry_count: int = 5,
     sync_result: object = None,
+    refresh_side_effect: Exception | None = None,
 ) -> MagicMock:
     """创建模拟的 IndexManager。"""
     from bot.engine.index_manager import SyncResult
 
     im = MagicMock()
-    im.acquire_lock = AsyncMock(return_value=acquire_result)
     im.entry_count = entry_count
-    im.sync_with_filesystem = AsyncMock(
-        return_value=(
-            sync_result if sync_result is not None else SyncResult(added=2, deleted=0)
-        )
+    result = (
+        sync_result
+        if sync_result is not None
+        else SyncResult(added=2, deleted=0)
     )
+    if refresh_side_effect is not None:
+        im.refresh = AsyncMock(side_effect=refresh_side_effect)
+    else:
+        im.refresh = AsyncMock(return_value=result)
     return im
 
 
@@ -91,8 +96,7 @@ class TestHandleRefreshAuth:
 
         await handle_refresh(_make_bot(), _make_event("111"), matcher)
 
-        im.acquire_lock.assert_called_once()
-        im.sync_with_filesystem.assert_awaited_once()
+        im.refresh.assert_awaited_once()
 
     @pytest.mark.asyncio
     @patch.object(meme_refresh, "is_authorized", return_value=False)
@@ -136,54 +140,23 @@ class TestHandleRefreshAuth:
 
 
 class TestHandleRefreshLock:
-    """索引锁测试。"""
+    """刷新冲突测试。"""
 
     @pytest.mark.asyncio
     @patch.object(meme_refresh, "is_authorized", return_value=True)
     @patch.object(meme_refresh, "get_index_manager")
-    async def test_lock_contention_replies(
+    async def test_refresh_in_progress_replies(
         self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
-        """锁占用时应回复提示。"""
+        """已有刷新任务运行时应回复提示。"""
         matcher = _make_matcher()
-        im = _make_index_manager(acquire_result=False)
+        im = _make_index_manager(refresh_side_effect=RefreshInProgressError("刷新中"))
         mock_get_im.return_value = im
 
         await handle_refresh(_make_bot(), _make_event("12345"), matcher)
 
-        matcher.finish.assert_awaited_once_with("索引正在更新，请稍后再试")
-        im.sync_with_filesystem.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    @patch.object(meme_refresh, "is_authorized", return_value=True)
-    @patch.object(meme_refresh, "get_index_manager")
-    async def test_lock_released_after_sync(
-        self, mock_get_im: MagicMock, mock_auth: MagicMock
-    ) -> None:
-        """同步完成后应释放锁。"""
-        matcher = _make_matcher()
-        im = _make_index_manager()
-        mock_get_im.return_value = im
-
-        await handle_refresh(_make_bot(), _make_event("12345"), matcher)
-
-        im.release_lock.assert_called_once()
-
-    @pytest.mark.asyncio
-    @patch.object(meme_refresh, "is_authorized", return_value=True)
-    @patch.object(meme_refresh, "get_index_manager")
-    async def test_lock_released_on_sync_exception(
-        self, mock_get_im: MagicMock, mock_auth: MagicMock
-    ) -> None:
-        """sync_with_filesystem 异常时也应释放锁。"""
-        matcher = _make_matcher()
-        im = _make_index_manager()
-        im.sync_with_filesystem = AsyncMock(side_effect=RuntimeError("API 失败"))
-        mock_get_im.return_value = im
-
-        await handle_refresh(_make_bot(), _make_event("12345"), matcher)
-
-        im.release_lock.assert_called_once()
+        matcher.finish.assert_awaited_once_with("已有刷新任务在进行中，请稍后再试")
+        im.refresh.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -218,10 +191,9 @@ class TestHandleRefreshSync:
     async def test_sync_exception_replies_error(
         self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
-        """sync_with_filesystem 异常时应回复错误提示。"""
+        """refresh() 异常时应回复错误提示。"""
         matcher = _make_matcher()
-        im = _make_index_manager()
-        im.sync_with_filesystem = AsyncMock(side_effect=RuntimeError("网络错误"))
+        im = _make_index_manager(refresh_side_effect=RuntimeError("网络错误"))
         mock_get_im.return_value = im
 
         await handle_refresh(_make_bot(), _make_event("12345"), matcher)

@@ -4,7 +4,7 @@
 可选设置 SILICONFLOW_BASE_URL 和 SILICONFLOW_OCR_MODEL。
 
 运行方式：
-    uv run pytest tests/integration/test_ocr_service_api.py -v -s
+    uv run pytest tests/integration/test_deepseek_ocr_api.py -v -s
 """
 
 import os

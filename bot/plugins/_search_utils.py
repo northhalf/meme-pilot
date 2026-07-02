@@ -17,7 +17,7 @@ from nonebot.adapters.onebot.v11 import (
 from nonebot.exception import FinishedException, RejectedException
 from nonebot.matcher import Matcher
 
-from bot.app_state import get_index_manager, get_keyword_searcher
+from bot.app_state import get_index_manager
 from bot.config import MEMES_DIR
 from bot.engine.keyword_searcher import SearchResult
 
@@ -62,19 +62,19 @@ async def got_intercept_bypass(
     user_id: str,
     matcher: Matcher,
     text: str,
-    HELP_TEXT: str,
+    help_text: str,
 ) -> bool:
     """Got handler 入口统一拦截 /help 和 /cancel。
 
     /cancel 分支委托给 session_manager.execute_cancel。
-    /help 分支通过 reject(HELP_TEXT) 发送帮助文本并继续等待。
+    /help 分支通过 reject(help_text) 发送帮助文本并继续等待。
     将 FinishedException 和 RejectedException 抛出
 
     Args:
         user_id: 用户 ID。
         matcher: 当前 got handler 的 matcher。
         text: 用户消息文本。
-        HELP_TEXT: 帮助文本常量。
+        help_text: 帮助文本常量。
 
     Returns:
         True 表示拦截到命令（调用方应 return），
@@ -86,7 +86,7 @@ async def got_intercept_bypass(
         return True
 
     if text.startswith("/help ") or text == "/help":
-        await matcher.reject(HELP_TEXT)  # 抛 RejectedException，以下不可达
+        await matcher.reject(help_text)  # 抛 RejectedException，以下不可达
         return True
 
     return False
@@ -100,7 +100,7 @@ async def execute_search(
 ) -> None:
     """核心搜索逻辑。
 
-    流程：锁检查 → 索引空检查 → 执行搜索 → 结果分支。
+    流程：执行搜索 → 结果分支。
     多结果时创建选择会话（selection_id + create_selection）并启动超时任务。
 
     Args:
@@ -119,28 +119,13 @@ async def execute_search(
         await cmd_matcher.finish("服务未就绪，请稍后再试")
         return
 
-    # 锁检查
-    if index_manager.is_locked:
-        logger.info("用户 %s 的搜索被拒绝：索引正在更新", user_id)
-        await cmd_matcher.finish("索引正在更新，请稍后再试")
-        return
-
-    # 索引空检查
-    if index_manager.entry_count == 0:
-        await cmd_matcher.finish("表情包目录为空，请先添加图片并执行 /refresh")
-        return
-
-    # 获取 KeywordSearcher
-    try:
-        keyword_searcher = get_keyword_searcher()
-    except RuntimeError:
-        logger.error("KeywordSearcher 尚未初始化")
-        await cmd_matcher.finish("服务未就绪，请稍后再试")
-        return
-
     # 执行搜索
     try:
-        results = keyword_searcher.search(keyword)
+        results = await index_manager.search(keyword)
+    except asyncio.TimeoutError:
+        logger.info("用户 %s 的搜索等待读锁超时", user_id)
+        await cmd_matcher.finish("索引更新较慢，请稍后再试")
+        return
     except Exception:
         logger.exception("关键词搜索异常: keyword=%r", keyword)
         await cmd_matcher.finish("搜索服务暂时不可用，稍后重试")
@@ -229,7 +214,6 @@ async def handle_got_selection(
             await matcher.finish(
                 MessageSegment.image("file://" + str(image_path.resolve()))
             )
-            session_manager.deactivate_chat(user_id)
 
         except RejectedException:
             raise

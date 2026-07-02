@@ -29,11 +29,10 @@
 2. 群聊拦截：非 `"private"` 消息类型回复"此命令仅限私聊使用"
 3. 激活聊天会话（`session_manager.activate_chat`），已有活跃会话则拒绝（回复"已有命令在处理中，请先 /cancel"）
 4. 获取 `IndexManager`，未初始化则回复"服务未就绪"
-5. 检查索引锁（`IndexManager.is_locked`），锁占用则回复"索引正在更新"
-6. 捕获目标命名（`/add` 后的文本）存入 `matcher.state`
-7. 创建选择会话（`selection_id` + `session_manager.create_selection`）并启动超时任务（`timeout_session`）
-8. 调用 `session_manager.reset_current_task(user_id)` 清除已结束的 handle task 引用
-9. 回复"请发送图片"并等待用户图片
+5. 捕获目标命名（`/add` 后的文本）存入 `matcher.state`
+6. 创建选择会话（`selection_id` + `session_manager.create_selection`）并启动超时任务（`timeout_session`）
+7. 调用 `session_manager.reset_current_task(user_id)` 清除已结束的 handle task 引用
+8. 回复"请发送图片"并等待用户图片
 
 ### got_image（等待图片）
 
@@ -47,23 +46,22 @@
 4. 无图片时 `reject` 提示重发（RejectedException 不清理会话，会话保持活跃）
 5. **清理选择会话**：收到有效图片后调用 `session_manager.remove_selection(user_id)` 清除选择会话
 6. 获取 `IndexManager`
-7. 只读检查索引锁（`IndexManager.is_locked`），锁占用则 `deactivate_chat` 后回复"索引正在更新"
-8. 下载图片（httpx，30s 超时）
+7. 下载图片（httpx，30s 超时）
 9. 确定扩展名（URL 路径 → Content-Type），不支持则回复错误
 10. 构建文件名：有目标命名用 `_sanitize_filename()`，否则 `_auto_filename()`（`meme_<时间戳>_<hash8>`）
 11. `resolve_unique_filename()` 处理文件名冲突
 12. 保存图片到 `memes/`
 13. `try/except/else`：
-    - `try`：`IndexManager.add_single_file()` 执行压缩→OCR→Embedding 管道
+    - `try`：`IndexManager.add()` 执行压缩→OCR→Embedding 管道
     - `except CompressionError/OcrError/EmbeddingError`：分别回复对应错误消息，`deactivate_chat`
     - `else`：回复成功（`added`/`replaced` 分支附 OCR 文字，`no_text` 分支不变），`deactivate_chat`
 14. `except` 分支：删除刚下载的图片文件（`filepath.unlink(missing_ok=True)`），`deactivate_chat`
 
 ## 回复格式
 
-**成功添加：** `新增表情包✅，识别到的文字为：{OCR 文本}`
+**成功添加：** `新增表情包✅，识别到的文字为：\n「{OCR 文本}」`
 
-**替换旧图：** `替换旧图✅，识别到的文字为：{OCR 文本}`
+**替换旧图：** `替换旧图✅，识别到的文字为：\n「{OCR 文本}」`
 
 **无文字：** `未识别到文字，已移至 meme_no_text/`
 
@@ -85,7 +83,7 @@
 
 **服务未就绪：** `服务未就绪，请稍后再试`
 
-**锁占用：** `索引正在更新，请稍后再试`
+**锁占用：** `索引正在刷新，请稍后再试`
 
 ## 会话管理
 

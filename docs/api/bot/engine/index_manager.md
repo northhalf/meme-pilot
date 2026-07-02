@@ -160,110 +160,37 @@ class AddResult:
 class IndexManager:
     SUPPORTED_EXTENSIONS: frozenset[str]
     DEFAULT_SYNC_CONCURRENCY: int
+    read_timeout: float
+    add_user_timeout: float
+
+    def __init__(
+        self,
+        metadata_store: MetadataStore,
+        vector_store: VectorStore,
+        memes_dir: str,
+        no_text_dir: str | None = None,
+        ocr_provider: OcrProvider | None = None,
+        embedding_provider: EmbeddingProvider | None = None,
+        optimizer: ImageOptimizer | None = None,
+        keyword_searcher: KeywordSearcher | None = None,
+        ai_matcher: AIMatcher | None = None,
+        sync_concurrency: int | None = None,
+    ) -> None
+
+    def load(self) -> None
+
+    async def search(self, keyword: str) -> list[SearchResult]
+    # 持读锁调用 KeywordSearcher；空库返回 []；超时抛 asyncio.TimeoutError
+
+    async def ai_match(self, description: str) -> AIMatchResult | None
+    # 锁外 embed，持读锁调用 AIMatcher.match_with_vector()；超时抛 asyncio.TimeoutError
+
+    async def add(self, filename: str) -> AddResult
+    # FIFO 入队；refresh 期间抛 RefreshInProgressError；关闭时抛 IndexAddCancelledError
+
+    async def refresh(self) -> SyncResult
+    # 独占写锁执行同步；运行期间新的 add/refresh 被拒绝
+
+    async def close(self) -> None
+    # 取消 workers，清空 pending，关闭两个 Store
 ```
-
-### 类属性
-
-| 属性 | 类型 | 值 | 说明 |
-|------|------|------|------|
-| `SUPPORTED_EXTENSIONS` | `frozenset[str]` | `{ ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp" }` | 支持的图片扩展名集合 |
-| `DEFAULT_SYNC_CONCURRENCY` | `int` | `5` | 并行同步默认并发上限 |
-
----
-
-### `__init__(metadata_store, vector_store, memes_dir, no_text_dir=None, ocr_provider=None, embedding_provider=None, optimizer=None, sync_concurrency=None) -> None`
-
-| 参数 | 类型 | 默认 | 说明 |
-|------|------|------|------|
-| `metadata_store` | `MetadataStoreProtocol` | 必填 | 元数据存储，如 `MetadataStore` 实例 |
-| `vector_store` | `VectorStoreProtocol` | 必填 | 向量存储，如 `VectorStore` 实例 |
-| `memes_dir` | `str` | 必填 | 表情包图片目录路径 |
-| `no_text_dir` | `str \| None` | `None` | 无文字图存放目录；`None` 时取 `memes_dir` 同级的 `meme_no_text/` |
-| `ocr_provider` | `OcrProvider \| None` | `None` | OCR 服务注入 |
-| `embedding_provider` | `EmbeddingProvider \| None` | `None` | Embedding 服务注入 |
-| `optimizer` | `ImageOptimizerProtocol \| None` | `None` | 图片压缩优化器注入，如 `ImageOptimizer` 实例；`None` 时不压缩 |
-| `sync_concurrency` | `int \| None` | `None` | `sync_with_filesystem()` 并行处理新增图片时的最大并发数；`None` 或非正数时使用 `DEFAULT_SYNC_CONCURRENCY` |
-
-初始化后需调用 `load()` 加载两个 Store。
-
----
-
-### `load() -> None`
-
-| | 类型 | 说明 |
-|--|------|------|
-| **返回** | `None` | |
-
-委托 `MetadataStore.load()` 和 `VectorStore.load()`。启动时必须调用此方法后再使用其他查询或写入方法。
-
----
-
-### `acquire_lock() -> bool`
-
-| | 类型 | 说明 |
-|--|------|------|
-| **返回** | `bool` | `True` 成功获取锁，`False` 锁已被占用 |
-
-非阻塞尝试获取索引更新锁。调用方获取失败时应回复"索引正在更新，请稍后再试"。
-
----
-
-### `release_lock() -> None`
-
-| | 类型 | 说明 |
-|--|------|------|
-| **返回** | `None` | |
-
-释放更新锁。未锁定时调用安全。
-
----
-
-### `is_locked` *(property)*
-
-| | 类型 | 说明 |
-|--|------|------|
-| **返回** | `bool` | `True` 锁被持有，`False` 未锁定 |
-
----
-
-### `entry_count` *(property)*
-
-| | 类型 | 说明 |
-|--|------|------|
-| **返回** | `int` | 当前索引中的条目总数（取自 `MetadataStore.entry_count()`） |
-
----
-
-### `async sync_with_filesystem() -> SyncResult`
-
-| | 类型 | 说明 |
-|--|------|------|
-| **返回** | `SyncResult` | 新增、删除、去重、无文字移走和失败统计 |
-
-按文件名同步索引与 `memes/` 目录，共四阶段：
-
-- **阶段0 跨库一致性修复**：对齐 sqlite ↔ chroma 的 id 集合。
-  - chroma 为空且 sqlite 有数据 → 全量重 embed 后 `VectorStore.rebuild_all`。
-  - sqlite 有、chroma 无的 id → 逐条重 embed 并 `upsert`。
-  - chroma 有、sqlite 无的 id → 删孤儿向量（`remove_many`）。
-- **阶段1 删除**：`memes/` 已不存在的图片，先 sqlite 后 chroma 删除。
-- **阶段2 新增**：新图并行 OCR→embed，串行三分类（无文字移图 / 去重删新图 / 正常新增）；正常新增统一「先 sqlite 后 chroma」，`upsert` 失败回滚 sqlite。
-
-新增图片依赖注入的 OCR 与 Embedding provider。
-
----
-
-### `async add_single_file(filename: str) -> AddResult`
-
-单张图片添加：执行压缩→OCR→Embedding 管道，然后三分类写入（无文字移图 / 去重替换 / 正常新增）。
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `filename` | `str` | `memes/` 下的图片文件名 |
-
-| | 类型 | 说明 |
-|--|------|------|
-| **返回** | `AddResult` | 添加/替换/无文字移图结果 |
-| **异常** | `CompressionError` | 图片压缩失败 |
-| **异常** | `OcrError` | OCR 识别失败 |
-| **异常** | `EmbeddingError` | Embedding 生成失败（含 `upsert` 失败回滚后重抛） |

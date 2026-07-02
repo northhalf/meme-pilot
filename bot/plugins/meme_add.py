@@ -27,7 +27,9 @@ from bot.config import MEMES_DIR, read_session_timeout
 from bot.engine.index_manager import (
     CompressionError,
     EmbeddingError,
+    IndexAddCancelledError,
     OcrError,
+    RefreshInProgressError,
     resolve_unique_filename,
 )
 from bot.plugins._help_text import HELP_TEXT
@@ -50,7 +52,7 @@ add_cmd = on_command("add", rule=to_me(), priority=5, block=True)
 async def handle_add(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
     """/add 命令入口。
 
-    流程：授权校验 → 会话检查 → 只读锁检查 → 捕获目标命名。
+    流程：授权校验 → 会话检查 → 捕获目标命名。
 
     Args:
         bot: OneBot V11 Bot 实例。
@@ -75,22 +77,6 @@ async def handle_add(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
         # 会话检查：拒绝而非覆盖
         if not session_manager.activate_chat(user_id, "add", matcher):
             await matcher.finish("已有命令在处理中，请先 /cancel")
-            return
-
-        # 获取 IndexManager
-        try:
-            index_manager = get_index_manager()
-        except RuntimeError:
-            session_manager.deactivate_chat(user_id)
-            logger.error("IndexManager 尚未初始化")
-            await matcher.finish("服务未就绪，请稍后再试")
-            return
-
-        # 只读检查索引锁（不持有锁）
-        if index_manager.is_locked:
-            session_manager.deactivate_chat(user_id)
-            logger.info("用户 %s 的 /add 被拒绝：索引正在更新", user_id)
-            await matcher.finish("索引正在更新，请稍后再试")
             return
 
         # 捕获目标命名（命令参数），存入 state 供 got_image 使用
@@ -154,13 +140,9 @@ async def got_image(
             try:
                 index_manager = get_index_manager()
             except RuntimeError:
+                logger.error("IndexManager 尚未初始化")
                 session_manager.deactivate_chat(user_id)
-                return
-
-            # 只读检查索引锁
-            if index_manager.is_locked:
-                session_manager.deactivate_chat(user_id)
-                await matcher.finish("索引正在更新，请稍后再试")
+                await matcher.finish("服务未就绪，请稍后再试")
                 return
 
             # ── 阶段 2：处理流程 ──
@@ -200,7 +182,19 @@ async def got_image(
 
             # 调用 IndexManager 处理
             try:
-                result = await index_manager.add_single_file(filename)
+                result = await asyncio.wait_for(
+                    index_manager.add(filename),
+                    timeout=index_manager.add_user_timeout,
+                )
+            except RefreshInProgressError as exc:
+                logger.info("用户 %s 的 /add 被拒绝：%s", user_id, exc)
+                msg = "索引正在刷新，请稍后再试"
+            except IndexAddCancelledError as exc:
+                logger.info("用户 %s 的 /add 被取消：%s", user_id, exc)
+                msg = "添加任务已取消"
+            except asyncio.TimeoutError:
+                logger.info("用户 %s 的 /add 等待超时", user_id)
+                msg = "添加处理超时，请稍后再试"
             except CompressionError as exc:
                 logger.error("图片压缩失败: %s", exc)
                 msg = "图片压缩失败"

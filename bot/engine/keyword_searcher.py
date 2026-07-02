@@ -195,6 +195,10 @@ class KeywordSearcher:
         Args:
             keyword: 用户输入的搜索关键词。
 
+        Note:
+            调用方必须已持有读锁，保证读取期间 MetadataStore 快照不被并发写入修改。
+            IndexManager.search() 负责持锁。
+
         Returns:
             按相似度降序排列的搜索结果列表，最多返回 limit 条。无匹配时返回空列表。
         """

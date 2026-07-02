@@ -1,7 +1,7 @@
 """索引管理模块 — 薄编排层。
 
 持有 MetadataStore + VectorStore + providers，负责压缩→OCR→Embed 管道编排、
-sync 四阶段（含阶段0跨库一致性修复）、跨库写入一致性、全局锁、并发上限、
+sync 四阶段（含阶段0跨库一致性修复）、跨库写入一致性、读写锁、并发上限、
 去重/无文字移图。不直接写 SQL/Chroma，全部委托两个 Store。
 """
 
@@ -9,13 +9,18 @@ import asyncio
 import itertools
 import logging
 import shutil
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
+from bot.config import read_add_command_timeout, read_read_lock_timeout
+from bot.engine.ai_matcher import AIMatcher, AIMatchResult
 from bot.engine.image_optimizer import OptimizeResult
+from bot.engine.keyword_searcher import KeywordSearcher, SearchResult
 from bot.engine.metadata_store import MemeEntry
 from bot.engine.protocols import EmbeddingProvider
+from bot.engine.rwlock import IndexRwLock
 from bot.engine.vector_store import VectorHit
 
 logger = logging.getLogger(__name__)
@@ -59,6 +64,14 @@ class EmbeddingError(RuntimeError):
     """Embedding 生成失败。"""
 
 
+class RefreshInProgressError(RuntimeError):
+    """索引刷新进行中，新的写入请求应被拒绝。"""
+
+
+class IndexAddCancelledError(RuntimeError):
+    """/add 任务因刷新或关闭而被取消。"""
+
+
 class OcrProvider(Protocol):
     """OCR 服务提供者协议。ocr() 返回去除所有空白后的文本。"""
 
@@ -94,6 +107,7 @@ class MetadataStoreProtocol(Protocol):
         tags: list[str] | None = None,
     ) -> bool: ...
     def remove(self, entry_id: int) -> bool: ...
+    def close(self) -> None: ...
 
 
 class VectorStoreProtocol(Protocol):
@@ -113,6 +127,7 @@ class VectorStoreProtocol(Protocol):
         self, query_embedding: list[float], n_results: int = 10
     ) -> list[VectorHit]: ...
     async def rebuild_all(self, items: list[tuple[int, list[float]]]) -> None: ...
+    def close(self) -> None: ...
 
 
 class ImageOptimizerProtocol(Protocol):
@@ -142,7 +157,7 @@ class SyncResult:
 
 @dataclass
 class AddResult:
-    """add_single_file() 的返回结果。
+    """add() 的返回结果。
 
     Attributes:
         entry_id: 分配/复用的索引 ID（int）；无文字移图场景为 None。
@@ -159,6 +174,14 @@ class AddResult:
     moved_to: str | None = None
 
 
+@dataclass
+class _AddRequest:
+    """Add Worker 任务单元。"""
+
+    filename: str
+    future: asyncio.Future[AddResult]
+
+
 class IndexManager:
     """索引管理薄编排层。
 
@@ -170,9 +193,18 @@ class IndexManager:
         _memes_dir: 表情包图片目录。
         _no_text_dir: 无文字图目录。
         _ocr_provider / _embedding_provider / _optimizer: providers。
-        _lock: sync 独占 asyncio.Lock。
-        _is_syncing: sync 是否在执行。
-        _sync_semaphore / _add_sem: 并发上限信号量。
+        _keyword_searcher: 关键词搜索器，由 IndexManager 持锁后调用。
+        _ai_matcher: AI 匹配器，由 IndexManager 持锁后调用。
+        _rwlock: 读写锁，写者优先。
+        _state_cond: add worker 与 refresh 的协调 Condition。
+        _add_requests: 等待处理的 /add 任务 FIFO 队列。
+        _add_in_flight: 当前正在执行 _process_image_pipeline 或 _write_entry 的任务数。
+        _refresh_pending: 是否有 refresh 正在等待 in_flight add 完成。
+        _refresh_active: 是否有 refresh 正在执行写锁内的同步。
+        _add_workers: add worker task 列表。
+        _shutting_down: 是否正在关闭。
+        _add_concurrency: add worker 并发上限。
+        _sync_semaphore: sync 阶段2 的 OCR/embed 并发信号量。
 
     Class Attributes:
         SUPPORTED_EXTENSIONS: 支持的图片扩展名集合。
@@ -193,6 +225,8 @@ class IndexManager:
         ocr_provider: OcrProvider | None = None,
         embedding_provider: EmbeddingProvider | None = None,
         optimizer: ImageOptimizerProtocol | None = None,
+        keyword_searcher: KeywordSearcher | None = None,
+        ai_matcher: AIMatcher | None = None,
         sync_concurrency: int | None = None,
     ) -> None:
         """初始化 IndexManager。
@@ -205,6 +239,8 @@ class IndexManager:
             ocr_provider: OCR 服务提供者。
             embedding_provider: Embedding 服务提供者。
             optimizer: 图片压缩器。
+            keyword_searcher: 关键词搜索器，由 IndexManager 持锁后调用。
+            ai_matcher: AI 匹配器，由 IndexManager 持锁后调用。
             sync_concurrency: 并发上限，None/非正用默认值。
         """
         self._metadata_store = metadata_store
@@ -217,19 +253,32 @@ class IndexManager:
         self._ocr_provider = ocr_provider
         self._embedding_provider = embedding_provider
         self._optimizer = optimizer
+        self._keyword_searcher = keyword_searcher
+        self._ai_matcher = ai_matcher
 
-        self._lock = asyncio.Lock()
+        self.read_timeout = float(read_read_lock_timeout())
+        self.add_user_timeout = float(read_add_command_timeout())
+
+        self._rwlock = IndexRwLock()
+        self._state_cond = asyncio.Condition()
+        self._add_requests: deque[_AddRequest] = deque()
+        self._add_in_flight = 0
+        self._refresh_pending = False
+        self._refresh_active = False
+        self._refresh_task: asyncio.Task | None = None
+        self._add_workers: list[asyncio.Task] = []
+        self._shutting_down = False
+
         concurrency = (
             sync_concurrency
             if isinstance(sync_concurrency, int) and sync_concurrency > 0
             else self.DEFAULT_SYNC_CONCURRENCY
         )
+        self._add_concurrency = concurrency
         self._sync_semaphore = asyncio.Semaphore(concurrency)
-        self._add_sem = asyncio.Semaphore(concurrency)
-        self._is_syncing: bool = False
 
     # ------------------------------------------------------------------
-    # load / 锁
+    # load / 查询
     # ------------------------------------------------------------------
 
     def load(self) -> None:
@@ -241,36 +290,6 @@ class IndexManager:
         self._vector_store.load()
         logger.info("IndexManager 加载完成: %d 条记录", self.entry_count)
 
-    async def acquire_lock(self) -> bool:
-        """非阻塞尝试获取索引更新锁。
-
-        Returns:
-            True 表示成功获取锁；False 表示锁已被占用，调用方应回复
-            "索引正在更新，请稍后再试"。
-        """
-        if self._lock.locked():
-            return False
-        await self._lock.acquire()
-        self._is_syncing = True
-        logger.debug("索引更新锁已获取")
-        return True
-
-    def release_lock(self) -> None:
-        """释放索引更新锁。未锁定时调用安全。"""
-        self._is_syncing = False
-        if self._lock.locked():
-            self._lock.release()
-            logger.debug("索引更新锁已释放")
-
-    @property
-    def is_locked(self) -> bool:
-        """索引是否处于锁定状态。
-
-        Returns:
-            True 表示索引更新锁被持有，False 表示未锁定。
-        """
-        return self._is_syncing
-
     @property
     def entry_count(self) -> int:
         """当前索引条目总数。
@@ -280,11 +299,181 @@ class IndexManager:
         """
         return self._metadata_store.entry_count()
 
+    async def search(self, keyword: str) -> list[SearchResult]:
+        """关键词搜索。
+
+        Args:
+            keyword: 用户输入的关键词。
+
+        Returns:
+            搜索结果列表；空库时返回空列表。
+
+        Raises:
+            asyncio.TimeoutError: 等待读锁超时。
+            RuntimeError: KeywordSearcher 未注入。
+        """
+        async with self._rwlock.read(timeout=self.read_timeout):
+            if self._metadata_store.entry_count() == 0:
+                return []
+            if self._keyword_searcher is None:
+                raise RuntimeError("KeywordSearcher 未注入")
+            return self._keyword_searcher.search(keyword)
+
+    async def ai_match(self, description: str) -> AIMatchResult | None:
+        """AI 描述匹配。
+
+        Args:
+            description: 用户自然语言描述。
+
+        Returns:
+            匹配结果；空库或无可行候选时返回 None。
+
+        Raises:
+            asyncio.TimeoutError: 等待读锁超时。
+            RuntimeError: AIMatcher 未注入。
+        """
+        if self._ai_matcher is None:
+            raise RuntimeError("AIMatcher 未注入")
+        if self._embedding_provider is None:
+            raise RuntimeError("EmbeddingProvider 未注入")
+        query_vector = await self._embedding_provider.embed(description)
+        async with self._rwlock.read(timeout=self.read_timeout):
+            return await self._ai_matcher.match_with_vector(description, query_vector)
+
+    async def add(self, filename: str) -> AddResult:
+        """提交 /add 任务到 FIFO 队列，等待执行完成。
+
+        Args:
+            filename: memes/ 下的文件名。
+
+        Returns:
+            AddResult 描述添加结果。
+
+        Raises:
+            RefreshInProgressError: 当前有刷新任务在运行或等待中。
+            IndexAddCancelledError: Bot 正在关闭。
+        """
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+
+        async with self._state_cond:
+            if self._shutting_down:
+                raise IndexAddCancelledError("Bot 正在关闭")
+            if self._refresh_active or self._refresh_pending:
+                raise RefreshInProgressError("索引正在批量刷新，请稍后再试")
+
+            self._add_requests.append(_AddRequest(filename, future))
+            self._state_cond.notify_all()
+
+            self._add_workers = [w for w in self._add_workers if not w.done()]
+            while len(self._add_workers) < self._add_concurrency:
+                self._add_workers.append(
+                    asyncio.create_task(self._add_worker_loop())
+                )
+
+        return await future
+
+    async def refresh(self) -> SyncResult:
+        """独占执行索引同步（refresh）。
+
+        Returns:
+            SyncResult 描述同步结果。
+
+        Raises:
+            RefreshInProgressError: 已有刷新任务在运行、等待中或 Bot 正在关闭。
+        """
+        async with self._state_cond:
+            if self._shutting_down:
+                raise RefreshInProgressError("Bot 正在关闭")
+            if self._refresh_active:
+                raise RefreshInProgressError("已有刷新任务在运行")
+            if self._refresh_pending:
+                raise RefreshInProgressError("已有刷新任务在等待中")
+            self._refresh_pending = True
+            self._refresh_task = asyncio.current_task()
+            self._state_cond.notify_all()
+
+        try:
+            async with self._state_cond:
+                await self._state_cond.wait_for(
+                    lambda: self._add_in_flight == 0 or self._shutting_down
+                )
+                if self._shutting_down:
+                    self._refresh_pending = False
+                    self._state_cond.notify_all()
+                    raise RefreshInProgressError("Bot 正在关闭")
+
+                for req in self._add_requests:
+                    try:
+                        req.future.set_exception(
+                            RefreshInProgressError("索引正在刷新，已取消等待中的添加")
+                        )
+                    except Exception:
+                        pass
+                self._add_requests.clear()
+
+                self._refresh_pending = False
+                self._refresh_active = True
+                self._state_cond.notify_all()
+
+            # in_flight 已为 0，且新 add/worker 被 _refresh_active 阻塞，安全获取写锁
+            async with self._rwlock.write():
+                return await self._run_sync_internal()
+        finally:
+            async with self._state_cond:
+                self._refresh_active = False
+                self._refresh_pending = False
+                self._refresh_task = None
+                self._state_cond.notify_all()
+
+    async def close(self) -> None:
+        """安全关闭 IndexManager。
+
+        1. 设置 shutting_down，拒绝新的 add/refresh。
+        2. 取消正在运行的 refresh 与 add worker tasks。
+        3. 等待它们实际结束。
+        4. 清空 pending add 队列。
+        5. 关闭 MetadataStore 和 VectorStore。
+        """
+        async with self._state_cond:
+            self._shutting_down = True
+            self._state_cond.notify_all()
+
+        tasks_to_wait: list[asyncio.Task] = []
+
+        if self._refresh_task is not None and not self._refresh_task.done():
+            self._refresh_task.cancel()
+            tasks_to_wait.append(self._refresh_task)
+
+        for worker in self._add_workers:
+            if not worker.done():
+                worker.cancel()
+                tasks_to_wait.append(worker)
+
+        if tasks_to_wait:
+            await asyncio.gather(*tasks_to_wait, return_exceptions=True)
+
+        async with self._state_cond:
+            for req in self._add_requests:
+                try:
+                    req.future.set_exception(
+                        IndexAddCancelledError("Bot 正在关闭")
+                    )
+                except Exception:
+                    pass
+            self._add_requests.clear()
+            self._state_cond.notify_all()
+
+        try:
+            self._metadata_store.close()
+        finally:
+            self._vector_store.close()
+
     # ------------------------------------------------------------------
     # sync
     # ------------------------------------------------------------------
 
-    async def sync_with_filesystem(self) -> SyncResult:
+    async def _run_sync_internal(self) -> SyncResult:
         """按文件名同步索引与 memes/ 目录（四阶段）。
 
         0. 一致性修复：对齐 sqlite ↔ chroma id 集合。
@@ -488,24 +677,56 @@ class IndexManager:
         return (added, deduped, no_text_moved)
 
     # ------------------------------------------------------------------
-    # add_single_file
+    # add worker
     # ------------------------------------------------------------------
 
-    async def add_single_file(self, filename: str) -> AddResult:
-        """处理单张已保存的图片：压缩→OCR→Embed→写入索引。
+    async def _add_worker_loop(self) -> None:
+        """Add Worker 主循环：串行取任务 → 并行 OCR/embed → 写锁写入。"""
+        while True:
+            request: _AddRequest | None = None
+            incremented = False
+            try:
+                async with self._state_cond:
+                    await self._state_cond.wait_for(
+                        lambda: (
+                            not self._shutting_down
+                            and not self._refresh_pending
+                            and not self._refresh_active
+                            and self._add_requests
+                        )
+                    )
+                    request = self._add_requests.popleft()
+                    self._add_in_flight += 1
+                    incremented = True
 
-        Args:
-            filename: memes/ 下的文件名。
+                text, embedding = await self._process_image_pipeline(request.filename)
 
-        Returns:
-            AddResult 描述添加结果。
+                # 阶段 2：写锁保护跨库写入
+                async with self._rwlock.write():
+                    result = await self._write_entry(request.filename, text, embedding)
+                request.future.set_result(result)
 
-        Raises:
-            CompressionError / OcrError / EmbeddingError: 管道失败。
-        """
-        async with self._add_sem:
-            text, embedding = await self._process_image_pipeline(filename)
-        return await self._write_entry(filename, text, embedding)
+            except asyncio.CancelledError:
+                if request is not None:
+                    try:
+                        request.future.set_exception(
+                            IndexAddCancelledError("添加任务被取消")
+                        )
+                    except Exception:
+                        pass
+                raise
+            except Exception as exc:
+                logger.exception("Add worker 异常")
+                if request is not None:
+                    try:
+                        request.future.set_exception(exc)
+                    except Exception:
+                        pass
+            finally:
+                if incremented:
+                    async with self._state_cond:
+                        self._add_in_flight -= 1
+                        self._state_cond.notify_all()
 
     async def _write_entry(
         self, filename: str, text: str, embedding: list[float]

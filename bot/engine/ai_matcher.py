@@ -146,33 +146,34 @@ class AIMatcher:
         self._rerank_provider = rerank_provider
         self._limit = limit
 
-    async def match(self, description: str) -> AIMatchResult | None:
-        """根据自然语言描述匹配一个表情包。
+    async def match_with_vector(
+        self,
+        description: str,
+        query_vector: list[float],
+    ) -> AIMatchResult | None:
+        """根据已生成的 embedding 向量匹配表情包。
 
         Args:
-            description: 用户输入的自然语言描述。
+            description: 用户输入的自然语言描述（已 strip）。
+            query_vector: 用户描述对应的 embedding 向量。
 
         Returns:
-            匹配结果；空描述、向量库为空或无有效候选时返回 None。
+            匹配结果；空描述、零向量、向量库为空或无有效候选时返回 None。
 
         Raises:
-            ValueError: 用户描述 embedding 为空、非数字或为零向量。
+            ValueError: query_vector 为零向量。
         """
         description = description.strip()
         if not description:
             logger.debug("AI 匹配描述为空，返回空结果")
             return None
 
+        if _vector_norm(query_vector) == 0:
+            raise ValueError("用户描述 embedding 不能是零向量")
+
         if self._vector_store.count() == 0:
             logger.debug("向量库为空，返回空结果")
             return None
-
-        query_vector = _coerce_vector(
-            await self._embedding_provider.embed(description),
-            context="用户描述 embedding",
-        )
-        if _vector_norm(query_vector) == 0:
-            raise ValueError("用户描述 embedding 不能是零向量")
 
         hits = await self._vector_store.query(query_vector, n_results=self._limit)
         candidates = self._build_candidates(hits)
@@ -258,37 +259,6 @@ def _candidate_to_result(candidate: AIMatchCandidate, source: str) -> AIMatchRes
         similarity=candidate.similarity,
         source=source,
     )
-
-
-def _coerce_vector(vector: object, *, context: str) -> list[float]:
-    """将向量转换为浮点数列表。
-
-    Args:
-        vector: 原始向量数据。
-        context: 出错时用于日志的上下文描述。
-
-    Returns:
-        浮点数列表。
-
-    Raises:
-        ValueError: 向量不是非空列表或包含非有限数字元素。
-    """
-    if not isinstance(vector, list) or not vector:
-        raise ValueError(f"{context} 不是非空列表")
-
-    values: list[float] = []
-    for value in vector:
-        if isinstance(value, bool):
-            raise ValueError(f"{context} 包含非数字元素")
-        try:
-            number = float(value)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"{context} 包含非数字元素") from exc
-        if not math.isfinite(number):
-            raise ValueError(f"{context} 包含非有限数字")
-        values.append(number)
-
-    return values
 
 
 def _vector_norm(vector: list[float]) -> float:

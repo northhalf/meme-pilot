@@ -1,5 +1,6 @@
 """/add 命令插件单元测试。"""
 
+import asyncio
 import re
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -29,9 +30,14 @@ with (
     )
 
 
-# ---------------------------------------------------------------------------
-# 辅助构造
-# ---------------------------------------------------------------------------
+from bot.engine.index_manager import (
+    AddResult,
+    CompressionError,
+    EmbeddingError,
+    IndexAddCancelledError,
+    OcrError,
+    RefreshInProgressError,
+)
 
 
 def _make_event(user_id: str = "12345", text: str = "/add") -> MagicMock:
@@ -61,11 +67,15 @@ def _make_matcher(*, state: dict | None = None) -> MagicMock:
     return matcher
 
 
-def _make_index_manager(*, locked: bool = False) -> MagicMock:
+def _make_index_manager() -> MagicMock:
     """创建模拟的 IndexManager。"""
+    from bot.engine.index_manager import AddResult
+
     im = MagicMock()
-    im.is_locked = locked
-    im.add_single_file = AsyncMock()
+    im.add = AsyncMock(
+        return_value=AddResult(entry_id=1, reason="added", text="加班心好累")
+    )
+    im.add_user_timeout = 60.0
     return im
 
 
@@ -285,26 +295,6 @@ class TestHandleAdd:
     @patch.object(meme_add, "get_index_manager")
     @patch.object(meme_add, "is_authorized", return_value=True)
     @patch.object(meme_add, "session_manager")
-    async def test_lock_contention(
-        self,
-        mock_sm: MagicMock,
-        mock_get_im: MagicMock,
-        mock_auth: MagicMock,
-    ) -> None:
-        """锁占用时应回复提示。"""
-        mock_sm.activate_chat.return_value = True
-        mock_get_im.return_value = _make_index_manager(locked=True)
-
-        matcher = _make_matcher()
-        await handle_add(_make_bot(), _make_event("111"), matcher)
-
-        matcher.finish.assert_awaited_once()
-        assert "索引正在更新" in matcher.finish.call_args[0][0]
-
-    @pytest.mark.asyncio
-    @patch.object(meme_add, "get_index_manager")
-    @patch.object(meme_add, "is_authorized", return_value=True)
-    @patch.object(meme_add, "session_manager")
     async def test_target_name_captured(
         self,
         mock_sm: MagicMock,
@@ -443,7 +433,7 @@ class TestGotImage:
         from bot.engine.index_manager import AddResult
 
         im = _make_index_manager()
-        im.add_single_file = AsyncMock(
+        im.add = AsyncMock(
             return_value=AddResult(entry_id=1, reason="added", text="加班心好累")
         )
         mock_get_im.return_value = im
@@ -486,7 +476,7 @@ class TestGotImage:
         from bot.engine.index_manager import AddResult
 
         im = _make_index_manager()
-        im.add_single_file = AsyncMock(
+        im.add = AsyncMock(
             return_value=AddResult(entry_id=1, reason="added", text="加班心好累")
         )
         mock_get_im.return_value = im
@@ -586,7 +576,7 @@ class TestGotImage:
         from bot.engine.index_manager import CompressionError
 
         im = _make_index_manager()
-        im.add_single_file = AsyncMock(side_effect=CompressionError("压缩失败"))
+        im.add = AsyncMock(side_effect=CompressionError("压缩失败"))
         mock_get_im.return_value = im
 
         fake_file = tmp_path / "a.jpg"
@@ -627,7 +617,7 @@ class TestGotImage:
         from bot.engine.index_manager import OcrError
 
         im = _make_index_manager()
-        im.add_single_file = AsyncMock(side_effect=OcrError("OCR 失败"))
+        im.add = AsyncMock(side_effect=OcrError("OCR 失败"))
         mock_get_im.return_value = im
 
         fake_file = tmp_path / "a.jpg"
@@ -668,7 +658,7 @@ class TestGotImage:
         from bot.engine.index_manager import EmbeddingError
 
         im = _make_index_manager()
-        im.add_single_file = AsyncMock(side_effect=EmbeddingError("Embedding 失败"))
+        im.add = AsyncMock(side_effect=EmbeddingError("Embedding 失败"))
         mock_get_im.return_value = im
 
         fake_file = tmp_path / "a.jpg"
@@ -707,7 +697,7 @@ class TestGotImage:
     ) -> None:
         """未知异常时应回复通用错误。"""
         im = _make_index_manager()
-        im.add_single_file = AsyncMock(side_effect=RuntimeError("未知错误"))
+        im.add = AsyncMock(side_effect=RuntimeError("未知错误"))
         mock_get_im.return_value = im
 
         fake_file = tmp_path / "a.jpg"
@@ -726,24 +716,115 @@ class TestGotImage:
     @pytest.mark.asyncio
     @patch.object(meme_add, "session_manager")
     @patch.object(meme_add, "got_intercept_bypass", return_value=False)
+    @patch.object(meme_add, "resolve_unique_filename")
+    @patch.object(meme_add, "_build_filename", return_value="a.jpg")
+    @patch.object(meme_add, "_get_extension", return_value=".jpg")
+    @patch.object(meme_add, "_download_image")
     @patch.object(meme_add, "get_index_manager")
     @patch.object(meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
     async def test_lock_contention_in_got(
         self,
         mock_extract: MagicMock,
         mock_get_im: MagicMock,
+        mock_download: MagicMock,
+        mock_ext: MagicMock,
+        mock_build: MagicMock,
+        mock_resolve: MagicMock,
         mock_bypass: MagicMock,
         mock_sm: MagicMock,
+        tmp_path: Path,
     ) -> None:
-        """got 中索引锁占用时应回复提示。"""
-        im = _make_index_manager(locked=True)
+        """got 中索引刷新时应回复提示。"""
+        im = _make_index_manager()
+        im.add = AsyncMock(side_effect=RefreshInProgressError("索引正在刷新"))
         mock_get_im.return_value = im
+
+        fake_file = tmp_path / "a.jpg"
+        fake_file.write_bytes(b"fake")
+        mock_resolve.return_value = fake_file
+        mock_download.return_value = (b"fake", _make_response())
 
         matcher = _make_matcher()
         await got_image(_make_bot(), _make_event(), matcher, MagicMock())
 
         matcher.finish.assert_awaited_once()
-        assert "索引正在更新" in matcher.finish.call_args[0][0]
+        assert "索引正在刷新" in matcher.finish.call_args[0][0]
+        mock_sm.deactivate_chat.assert_called_once_with("12345")
+
+    @pytest.mark.asyncio
+    @patch.object(meme_add, "session_manager")
+    @patch.object(meme_add, "got_intercept_bypass", return_value=False)
+    @patch.object(meme_add, "resolve_unique_filename")
+    @patch.object(meme_add, "_build_filename", return_value="a.jpg")
+    @patch.object(meme_add, "_get_extension", return_value=".jpg")
+    @patch.object(meme_add, "_download_image")
+    @patch.object(meme_add, "get_index_manager")
+    @patch.object(meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
+    async def test_add_cancelled_replies(
+        self,
+        mock_extract: MagicMock,
+        mock_get_im: MagicMock,
+        mock_download: MagicMock,
+        mock_ext: MagicMock,
+        mock_build: MagicMock,
+        mock_resolve: MagicMock,
+        mock_bypass: MagicMock,
+        mock_sm: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """got 中 add 被取消时应回复提示。"""
+        im = _make_index_manager()
+        im.add = AsyncMock(side_effect=IndexAddCancelledError("Bot 正在关闭"))
+        mock_get_im.return_value = im
+
+        fake_file = tmp_path / "a.jpg"
+        fake_file.write_bytes(b"fake")
+        mock_resolve.return_value = fake_file
+        mock_download.return_value = (b"fake", _make_response())
+
+        matcher = _make_matcher()
+        await got_image(_make_bot(), _make_event(), matcher, MagicMock())
+
+        matcher.finish.assert_awaited_once()
+        assert "添加任务已取消" in matcher.finish.call_args[0][0]
+        mock_sm.deactivate_chat.assert_called_once_with("12345")
+
+    @pytest.mark.asyncio
+    @patch.object(meme_add, "session_manager")
+    @patch.object(meme_add, "got_intercept_bypass", return_value=False)
+    @patch.object(meme_add, "resolve_unique_filename")
+    @patch.object(meme_add, "_build_filename", return_value="a.jpg")
+    @patch.object(meme_add, "_get_extension", return_value=".jpg")
+    @patch.object(meme_add, "_download_image")
+    @patch.object(meme_add, "get_index_manager")
+    @patch.object(meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
+    async def test_add_timeout_replies(
+        self,
+        mock_extract: MagicMock,
+        mock_get_im: MagicMock,
+        mock_download: MagicMock,
+        mock_ext: MagicMock,
+        mock_build: MagicMock,
+        mock_resolve: MagicMock,
+        mock_bypass: MagicMock,
+        mock_sm: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """got 中 add 超时等待时应回复提示。"""
+        im = _make_index_manager()
+        im.add = AsyncMock(side_effect=asyncio.TimeoutError())
+        mock_get_im.return_value = im
+
+        fake_file = tmp_path / "a.jpg"
+        fake_file.write_bytes(b"fake")
+        mock_resolve.return_value = fake_file
+        mock_download.return_value = (b"fake", _make_response())
+
+        matcher = _make_matcher()
+        await got_image(_make_bot(), _make_event(), matcher, MagicMock())
+
+        matcher.finish.assert_awaited_once()
+        assert "添加处理超时" in matcher.finish.call_args[0][0]
         mock_sm.deactivate_chat.assert_called_once_with("12345")
 
     @pytest.mark.asyncio

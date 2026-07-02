@@ -113,7 +113,7 @@ async def _build_index(
         no_text_dir=str(work_dirs["no_text_dir"]),
     )
     manager.load()
-    await manager.sync_with_filesystem()
+    await manager.refresh()
     return manager, metadata_store, vector_store
 
 
@@ -138,9 +138,11 @@ async def test_match_embedding_only(
         embedding_provider=embedding_service,
     )
 
-    result = await matcher.match("没办法了 听天由命")
+    query = "没办法了 听天由命"
+    query_vector = await embedding_service.embed(query)
+    result = await matcher.match_with_vector(query, query_vector)
 
-    print(f"\n描述: 没办法了 听天由命")
+    print(f"\n描述: {query}")
     print(f"结果: {result}")
 
     assert result is not None
@@ -172,9 +174,11 @@ async def test_match_with_rerank(
         rerank_provider=rerank_service,
     )
 
-    result = await matcher.match("没办法了 只能认命")
+    query = "没办法了 只能认命"
+    query_vector = await embedding_service.embed(query)
+    result = await matcher.match_with_vector(query, query_vector)
 
-    print(f"\n描述: 没办法了 只能认命")
+    print(f"\n描述: {query}")
     print(f"结果: {result}")
 
     assert result is not None
@@ -200,7 +204,7 @@ async def test_match_empty_description_returns_none(
         embedding_provider=embedding_service,
     )
 
-    result = await matcher.match("")
+    result = await matcher.match_with_vector("", [1.0])
 
     print(f"\n空描述结果: {result}")
     assert result is None
@@ -227,9 +231,11 @@ async def test_match_returns_correct_filename(
         embedding_provider=embedding_service,
     )
 
-    result = await matcher.match("放弃这个东西")
+    query = "放弃这个东西"
+    query_vector = await embedding_service.embed(query)
+    result = await matcher.match_with_vector(query, query_vector)
 
-    print(f"\n描述: 放弃这个东西")
+    print(f"\n描述: {query}")
     print(f"结果: {result}")
 
     assert result is not None

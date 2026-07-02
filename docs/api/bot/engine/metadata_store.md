@@ -9,7 +9,7 @@
 - `meme_tag` 关联表存多值标记词，`ON DELETE CASCADE` 随 `meme` 行删除。
 - `check_same_thread=False` + 内部 `threading.Lock` 串行化所有 sqlite 访问；公开方法为同步，调用方用 `asyncio.to_thread` 包装以避免阻塞事件循环。
 - `_text_to_id` 内存反向索引（`text → id`），`load()` 时全量重建，增删同步维护，加速去重判定。
-- `text` 假定唯一：schema 未对 `text` 加 `UNIQUE` 约束（`UNIQUE INDEX` 加在 `image_path` 上），`_text_to_id` 为单值映射，故调用方（`IndexManager`）须在 `add` 前用 `get_id_by_text` 做去重检查，避免写入重复 `text`。
+- `text` 与 `image_path` 均有 `UNIQUE INDEX` 约束：DB 层兜底保证唯一性，重复插入会触发 `DuplicateEntryError`；调用方（`IndexManager`）仍应在 `add` 前用 `get_id_by_text` 做去重检查，避免不必要的写入失败。
 
 ## 数据类
 
@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS meme (
     speaker TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_meme_image_path ON meme(image_path);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_meme_text ON meme(text);
 
 CREATE TABLE IF NOT EXISTS meme_tag (
     meme_id INTEGER NOT NULL,
@@ -162,7 +163,7 @@ CREATE INDEX IF NOT EXISTS idx_meme_tag_tag ON meme_tag(tag);
 |--|------|------|
 | **返回** | `list[tuple[int, str]]` | 全部 `(id, text)`，按 id 升序 |
 
-供 `IndexManager.sync_with_filesystem()` 阶段0 全量重 embed 使用。
+供 `IndexManager.refresh()` 阶段0 全量重 embed 使用。
 
 ---
 

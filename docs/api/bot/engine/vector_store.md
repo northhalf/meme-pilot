@@ -2,7 +2,7 @@
 
 > 本文档只记录模块对外接口。模块内部 `_` 前缀函数和方法不在此列出。
 
-基于 chromadb `PersistentClient` 的向量存储。仅存 `id`（与 sqlite 完全一一对应）+ `embedding`（102 维 float32），HNSW cosine 索引，`query` 返回 Top-N `(entry_id, similarity)`。
+基于 chromadb `PersistentClient` 的向量存储。仅存 `id`（与 sqlite 完全一一对应）+ `embedding`（1024 维 float32），HNSW cosine 索引，`query` 返回 Top-N `(entry_id, similarity)`。
 
 设计要点：
 - chroma 为同步库；`upsert`/`remove`/`remove_many`/`query`/`rebuild_all` 用 `asyncio.to_thread` 包装以避免阻塞事件循环；`load()`/`close()`/`count()` 为同步方法（仅供启动期或已在线程中调用）。
@@ -128,7 +128,7 @@ class VectorHit:
 |--|------|------|
 | **返回** | `None` | |
 
-全量重建：先删除 collection 后重建（清空全部向量），再批量写入 `items`。供 `IndexManager.sync_with_filesystem()` 阶段0 全量重 embed 使用。
+全量重建：先删除 collection 后重建（清空全部向量），再批量写入 `items`。供 `IndexManager.refresh()` 阶段0 全量重 embed 使用。
 
 ---
 

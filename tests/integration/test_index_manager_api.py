@@ -107,7 +107,7 @@ async def test_sync_single_image(
     )
     manager.load()
 
-    result = await manager.sync_with_filesystem()
+    result = await manager.refresh()
 
     print(f"\n新增: {result.added}, 删除: {result.deleted}")
     print(f"去重: {result.deduped}, 无文字移走: {result.no_text_moved}")
@@ -153,7 +153,7 @@ async def test_sync_multiple_images(
     )
     manager.load()
 
-    result = await manager.sync_with_filesystem()
+    result = await manager.refresh()
 
     print(f"\n新增: {result.added}, 失败: {result.failed}")
     for eid, entry in metadata_store.get_all_entries().items():
@@ -187,14 +187,14 @@ async def test_sync_delete_removed_image(
     manager.load()
 
     # 首次同步
-    await manager.sync_with_filesystem()
+    await manager.refresh()
     assert manager.entry_count == 2
 
     # 删除一张图片
     (work_dirs["memes_dir"] / "不能用就弃之.png").unlink()
 
     # 再次同步
-    result = await manager.sync_with_filesystem()
+    result = await manager.refresh()
 
     print(f"\n新增: {result.added}, 删除: {result.deleted}")
     assert result.deleted == 1
@@ -228,12 +228,12 @@ async def test_sync_idempotent(
     manager.load()
 
     # 首次同步
-    result1 = await manager.sync_with_filesystem()
+    result1 = await manager.refresh()
     assert result1.added == 1
     assert manager.entry_count == 1
 
     # 再次同步（不增不减）
-    result2 = await manager.sync_with_filesystem()
+    result2 = await manager.refresh()
 
     print(f"\n第二次同步: 新增={result2.added}, 删除={result2.deleted}")
     assert result2.added == 0

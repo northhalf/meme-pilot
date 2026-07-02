@@ -1,7 +1,7 @@
 """/refresh 命令插件 — 增量更新表情包索引。
 
-授权用户在私聊中发送 /refresh，触发 IndexManager.sync_with_filesystem()
-执行按文件名同步的增量刷新。使用全局索引更新锁，锁占用期间拒绝服务。
+授权用户在私聊中发送 /refresh，触发 IndexManager.refresh()
+执行按文件名同步的增量刷新。
 """
 
 import asyncio
@@ -15,6 +15,7 @@ from nonebot.rule import to_me
 
 from bot.app_state import get_index_manager
 from bot.auth import is_authorized, log_unauthorized
+from bot.engine.index_manager import RefreshInProgressError
 from bot.session import session_manager
 
 logger = logging.getLogger(__name__)
@@ -26,7 +27,7 @@ refresh_cmd = on_command("refresh", rule=to_me(), priority=5, block=True)
 async def handle_refresh(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
     """/refresh 命令处理入口。
 
-    流程：授权校验 → 群聊拦截 → 获取锁 → 执行同步 → 释放锁 → 回复摘要。
+    流程：授权校验 → 群聊拦截 → 执行同步 → 回复摘要。
 
     Args:
         bot: OneBot V11 Bot 实例。
@@ -62,24 +63,19 @@ async def handle_refresh(bot: Bot, event: MessageEvent, matcher: Matcher) -> Non
             await matcher.finish("服务未就绪，请稍后再试")
             return
 
-        # 尝试获取全局索引更新锁
-        if not await index_manager.acquire_lock():
-            logger.info("用户 %s 的 /refresh 被拒绝：索引正在更新", user_id)
-            session_manager.deactivate_chat(user_id)
-            await matcher.finish("索引正在更新，请稍后再试")
-            return
-
         try:
             await bot.send(event, "正在刷新索引，请稍候...")
-            result = await index_manager.sync_with_filesystem()
+            result = await index_manager.refresh()
+        except RefreshInProgressError:
+            logger.info("用户 %s 触发刷新但已有任务在运行", user_id)
+            session_manager.deactivate_chat(user_id)
+            await matcher.finish("已有刷新任务在进行中，请稍后再试")
+            return
         except Exception:
-            logger.exception("sync_with_filesystem 执行失败")
+            logger.exception("索引刷新失败")
             session_manager.deactivate_chat(user_id)
             await matcher.finish("索引刷新失败，请查看日志")
             return
-        finally:
-            index_manager.release_lock()
-            session_manager.deactivate_chat(user_id)
 
         # 无任何条目且无新增 → 可能 memes/ 为空
         if index_manager.entry_count == 0 and result.added == 0:

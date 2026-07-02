@@ -59,3 +59,27 @@
 | **返回** | `str` | `"paddle"`（默认）或 `"deepseek"` |
 | **无效值** | — | 回退为 `"paddle"` |
 | **空白处理** | — | 值中的首尾空白自动去除，不区分大小写 |
+
+---
+
+### `read_read_lock_timeout() -> int`
+
+从环境变量 `READ_LOCK_TIMEOUT` 读取读锁等待超时秒数。
+
+| | 类型 | 说明 |
+|--|------|------|
+| **返回** | `int` | 超时秒数，默认 30 |
+| **格式** | — | 支持纯数字（秒）或 `HH:MM:SS` / `DD:HH:MM:SS` 等 pydantic timedelta 格式 |
+| **无效值** | — | 回退为 30 |
+
+---
+
+### `read_add_command_timeout() -> int`
+
+从环境变量 `ADD_COMMAND_TIMEOUT` 读取 `/add` 命令用户等待超时秒数。
+
+| | 类型 | 说明 |
+|--|------|------|
+| **返回** | `int` | 超时秒数，默认 60 |
+| **格式** | — | 支持纯数字（秒）或 `HH:MM:SS` / `DD:HH:MM:SS` 等 pydantic timedelta 格式 |
+| **无效值** | — | 回退为 60 |

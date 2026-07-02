@@ -4,6 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from bot.engine.ai_matcher import AIMatchResult
+
 # ---------------------------------------------------------------------------
 # 在导入插件前 mock nonebot.on_command，避免 NoneBot2 完整初始化。
 # ---------------------------------------------------------------------------
@@ -15,7 +17,7 @@ with (
     patch("nonebot.on_command", return_value=_mock_cmd),
 ):
     from bot.plugins import meme_ai
-    from bot.plugins.meme_ai import _do_match, handle_ai
+    from bot.plugins.meme_ai import handle_ai
 
 
 # ---------------------------------------------------------------------------
@@ -47,32 +49,20 @@ def _make_matcher() -> MagicMock:
     return matcher
 
 
-def _make_index_manager(
-    *, is_locked: bool = False, entry_count: int = 10
-) -> MagicMock:
-    """创建模拟的 IndexManager。"""
-    im = MagicMock()
-    im.is_locked = is_locked
-    im.entry_count = entry_count
-    return im
-
-
 _UNSET = object()
 
 
-def _make_ai_matcher(
-    *, result: object = _UNSET, side_effect: Exception | None = None
+def _make_index_manager(
+    *, ai_result: object = _UNSET, ai_side_effect: Exception | None = None
 ) -> MagicMock:
-    """创建模拟的 AIMatcher。"""
-    from bot.engine.ai_matcher import AIMatchResult
-
-    am = MagicMock()
-    if side_effect is not None:
-        am.match = AsyncMock(side_effect=side_effect)
-    elif result is not _UNSET:
-        am.match = AsyncMock(return_value=result)
+    """创建模拟的 IndexManager。"""
+    im = MagicMock()
+    if ai_side_effect is not None:
+        im.ai_match = AsyncMock(side_effect=ai_side_effect)
+    elif ai_result is not _UNSET:
+        im.ai_match = AsyncMock(return_value=ai_result)
     else:
-        am.match = AsyncMock(
+        im.ai_match = AsyncMock(
             return_value=AIMatchResult(
                 entry_id=1,
                 image_path="加班心累.jpg",
@@ -81,11 +71,10 @@ def _make_ai_matcher(
                 source="rerank",
             )
         )
-    return am
+    return im
 
 
-
-# ----------
+# ---------------------------------------------------------------------------
 # 测试：授权校验
 # ---------------------------------------------------------------------------
 
@@ -94,27 +83,24 @@ class TestHandleAiAuth:
     """授权校验测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_ai, "get_ai_matcher")
     @patch.object(meme_ai, "get_index_manager")
     @patch.object(meme_ai, "is_authorized", return_value=True)
     async def test_authorized_user_proceeds(
-        self, mock_auth: MagicMock, mock_get_im: MagicMock, mock_get_ai: MagicMock
+        self, mock_auth: MagicMock, mock_get_im: MagicMock
     ) -> None:
         """授权用户应正常执行。"""
         matcher = _make_matcher()
         mock_get_im.return_value = _make_index_manager()
-        mock_get_ai.return_value = _make_ai_matcher()
 
         await handle_ai(_make_bot(), _make_event(), matcher)
 
-        mock_get_ai.assert_called_once()
+        mock_get_im.return_value.ai_match.assert_awaited_once()
 
     @pytest.mark.asyncio
-    @patch.object(meme_ai, "get_ai_matcher")
     @patch.object(meme_ai, "get_index_manager")
     @patch.object(meme_ai, "is_authorized", return_value=False)
     async def test_unauthorized_user_ignored(
-        self, mock_auth: MagicMock, mock_get_im: MagicMock, mock_get_ai: MagicMock
+        self, mock_auth: MagicMock, mock_get_im: MagicMock
     ) -> None:
         """非授权用户应被静默忽略。"""
         matcher = _make_matcher()
@@ -123,17 +109,14 @@ class TestHandleAiAuth:
         await handle_ai(bot, _make_event("999"), matcher)
 
         mock_get_im.assert_not_called()
-        mock_get_ai.assert_not_called()
         matcher.finish.assert_not_awaited()
         bot.send.assert_not_awaited()
 
-
     @pytest.mark.asyncio
-    @patch.object(meme_ai, "get_ai_matcher")
     @patch.object(meme_ai, "get_index_manager")
     @patch.object(meme_ai, "is_authorized", return_value=True)
     async def test_group_chat_rejected(
-        self, mock_auth: MagicMock, mock_get_im: MagicMock, mock_get_ai: MagicMock
+        self, mock_auth: MagicMock, mock_get_im: MagicMock
     ) -> None:
         """群聊中调用 /ai 应回复仅限私聊提示。"""
         matcher = _make_matcher()
@@ -148,33 +131,34 @@ class TestHandleAiAuth:
         call_args = matcher.finish.call_args[0][0]
         assert "仅限私聊" in call_args
         mock_get_im.assert_not_called()
-        mock_get_ai.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
-# 测试：索引锁
+# 测试：读锁超时
 # ---------------------------------------------------------------------------
 
 
-class TestHandleAiLock:
-    """索引锁测试。"""
+class TestHandleAiTimeout:
+    """读锁超时测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_ai, "get_ai_matcher")
     @patch.object(meme_ai, "get_index_manager")
     @patch.object(meme_ai, "is_authorized", return_value=True)
-    async def test_lock_contention_replies(
-        self, mock_auth: MagicMock, mock_get_im: MagicMock, mock_get_ai: MagicMock
+    async def test_timeout_replies_slow_index(
+        self, mock_auth: MagicMock, mock_get_im: MagicMock
     ) -> None:
-        """索引锁占用时应回复提示。"""
+        """等待读锁超时应回复提示。"""
         matcher = _make_matcher()
-        mock_get_im.return_value = _make_index_manager(is_locked=True)
+        import asyncio
+
+        mock_get_im.return_value = _make_index_manager(
+            ai_side_effect=asyncio.TimeoutError()
+        )
 
         await handle_ai(_make_bot(), _make_event(), matcher)
 
         matcher.finish.assert_awaited_once()
-        assert "索引正在更新" in matcher.finish.call_args[0][0]
-        mock_get_ai.assert_not_called()
+        assert "索引更新较慢" in matcher.finish.call_args[0][0]
 
 
 # ---------------------------------------------------------------------------
@@ -186,11 +170,10 @@ class TestHandleAiEmptyDesc:
     """描述为空测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_ai, "get_ai_matcher")
     @patch.object(meme_ai, "get_index_manager")
     @patch.object(meme_ai, "is_authorized", return_value=True)
     async def test_empty_description_replies_usage(
-        self, mock_auth: MagicMock, mock_get_im: MagicMock, mock_get_ai: MagicMock
+        self, mock_auth: MagicMock, mock_get_im: MagicMock
     ) -> None:
         """/ai 无参数时应回复用法提示。"""
         matcher = _make_matcher()
@@ -212,20 +195,17 @@ class TestHandleAiSuccess:
 
     @pytest.mark.asyncio
     @patch.object(meme_ai, "MessageSegment")
-    @patch.object(meme_ai, "get_ai_matcher")
     @patch.object(meme_ai, "get_index_manager")
     @patch.object(meme_ai, "is_authorized", return_value=True)
     async def test_match_sends_image(
         self,
         mock_auth: MagicMock,
         mock_get_im: MagicMock,
-        mock_get_ai: MagicMock,
         mock_segment: MagicMock,
     ) -> None:
         """匹配成功时应发送图片。"""
         matcher = _make_matcher()
         mock_get_im.return_value = _make_index_manager()
-        mock_get_ai.return_value = _make_ai_matcher()
 
         await handle_ai(_make_bot(), _make_event("12345", "/ai 加班心累"), matcher)
 
@@ -234,20 +214,17 @@ class TestHandleAiSuccess:
 
     @pytest.mark.asyncio
     @patch.object(meme_ai, "MessageSegment")
-    @patch.object(meme_ai, "get_ai_matcher")
     @patch.object(meme_ai, "get_index_manager")
     @patch.object(meme_ai, "is_authorized", return_value=True)
     async def test_image_path_correct(
         self,
         mock_auth: MagicMock,
         mock_get_im: MagicMock,
-        mock_get_ai: MagicMock,
         mock_segment: MagicMock,
     ) -> None:
         """图片路径应为 file:/// URI 格式。"""
         matcher = _make_matcher()
         mock_get_im.return_value = _make_index_manager()
-        mock_get_ai.return_value = _make_ai_matcher()
 
         await handle_ai(_make_bot(), _make_event("12345", "/ai 加班心累"), matcher)
 
@@ -265,16 +242,14 @@ class TestHandleAiNoMatch:
     """无候选测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_ai, "get_ai_matcher")
     @patch.object(meme_ai, "get_index_manager")
     @patch.object(meme_ai, "is_authorized", return_value=True)
     async def test_none_result_replies_no_match(
-        self, mock_auth: MagicMock, mock_get_im: MagicMock, mock_get_ai: MagicMock
+        self, mock_auth: MagicMock, mock_get_im: MagicMock
     ) -> None:
-        """AIMatcher 返回 None 时应回复无匹配。"""
+        """ai_match 返回 None 时应回复无匹配。"""
         matcher = _make_matcher()
-        mock_get_im.return_value = _make_index_manager()
-        mock_get_ai.return_value = _make_ai_matcher(result=None)
+        mock_get_im.return_value = _make_index_manager(ai_result=None)
 
         await handle_ai(_make_bot(), _make_event(), matcher)
 
@@ -291,17 +266,15 @@ class TestHandleAiServiceError:
     """服务异常测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_ai, "get_ai_matcher")
     @patch.object(meme_ai, "get_index_manager")
     @patch.object(meme_ai, "is_authorized", return_value=True)
     async def test_value_error_replies_unavailable(
-        self, mock_auth: MagicMock, mock_get_im: MagicMock, mock_get_ai: MagicMock
+        self, mock_auth: MagicMock, mock_get_im: MagicMock
     ) -> None:
         """ValueError（embedding 无效）时应回复服务不可用。"""
         matcher = _make_matcher()
-        mock_get_im.return_value = _make_index_manager()
-        mock_get_ai.return_value = _make_ai_matcher(
-            side_effect=ValueError("embedding 为空")
+        mock_get_im.return_value = _make_index_manager(
+            ai_side_effect=ValueError("embedding 为空")
         )
 
         await handle_ai(_make_bot(), _make_event(), matcher)
@@ -310,104 +283,18 @@ class TestHandleAiServiceError:
         assert "AI 服务暂时不可用" in matcher.finish.call_args[0][0]
 
     @pytest.mark.asyncio
-    @patch.object(meme_ai, "get_ai_matcher")
     @patch.object(meme_ai, "get_index_manager")
     @patch.object(meme_ai, "is_authorized", return_value=True)
     async def test_generic_error_replies_unavailable(
-        self, mock_auth: MagicMock, mock_get_im: MagicMock, mock_get_ai: MagicMock
+        self, mock_auth: MagicMock, mock_get_im: MagicMock
     ) -> None:
         """通用异常时应回复服务不可用。"""
         matcher = _make_matcher()
-        mock_get_im.return_value = _make_index_manager()
-        mock_get_ai.return_value = _make_ai_matcher(
-            side_effect=RuntimeError("API 超时")
+        mock_get_im.return_value = _make_index_manager(
+            ai_side_effect=RuntimeError("API 超时")
         )
 
         await handle_ai(_make_bot(), _make_event(), matcher)
 
         matcher.finish.assert_awaited_once()
         assert "AI 服务暂时不可用" in matcher.finish.call_args[0][0]
-
-
-# ---------------------------------------------------------------------------
-# 测试：空索引
-# ---------------------------------------------------------------------------
-
-
-class TestHandleAiEmptyIndex:
-    """空索引测试。"""
-
-    @pytest.mark.asyncio
-    @patch.object(meme_ai, "get_ai_matcher")
-    @patch.object(meme_ai, "get_index_manager")
-    @patch.object(meme_ai, "is_authorized", return_value=True)
-    async def test_empty_index_replies_empty(
-        self, mock_auth: MagicMock, mock_get_im: MagicMock, mock_get_ai: MagicMock
-    ) -> None:
-        """索引为空时应回复表情包目录为空。"""
-        matcher = _make_matcher()
-        mock_get_im.return_value = _make_index_manager(entry_count=0)
-
-        await handle_ai(_make_bot(), _make_event(), matcher)
-
-        matcher.finish.assert_awaited_once()
-        assert "表情包目录为空" in matcher.finish.call_args[0][0]
-        mock_get_ai.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# 测试：_do_match 单元测试
-# ---------------------------------------------------------------------------
-
-
-class TestDoMatch:
-    """_do_match 函数单元测试。"""
-
-    @pytest.mark.asyncio
-    async def test_success_returns_result(self) -> None:
-        """匹配成功时返回 AIMatchResult。"""
-        from bot.engine.ai_matcher import AIMatchResult
-
-        expected = AIMatchResult(
-            entry_id=1,
-            image_path="test.jpg",
-            text="测试",
-            similarity=0.9,
-            source="embedding",
-        )
-        am = _make_ai_matcher(result=expected)
-
-        result = await _do_match(am, "测试描述")
-
-        assert result is expected
-        am.match.assert_awaited_once_with("测试描述")
-
-    @pytest.mark.asyncio
-    async def test_none_returns_error_text(self) -> None:
-        """无候选时返回错误提示文本。"""
-        am = _make_ai_matcher(result=None)
-
-        result = await _do_match(am, "找不到的描述")
-
-        assert isinstance(result, str)
-        assert "没有找到" in result
-
-    @pytest.mark.asyncio
-    async def test_value_error_returns_error_text(self) -> None:
-        """ValueError 时返回服务不可用提示。"""
-        am = _make_ai_matcher(side_effect=ValueError("embedding 失败"))
-
-        result = await _do_match(am, "测试")
-
-        assert isinstance(result, str)
-        assert "AI 服务暂时不可用" in result
-
-    @pytest.mark.asyncio
-    async def test_generic_error_returns_error_text(self) -> None:
-        """通用异常时返回服务不可用提示。"""
-        am = _make_ai_matcher(side_effect=RuntimeError("网络错误"))
-
-        result = await _do_match(am, "测试")
-
-        assert isinstance(result, str)
-        assert "AI 服务暂时不可用" in result
