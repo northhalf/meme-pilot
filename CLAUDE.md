@@ -4,7 +4,7 @@
 
 ## 严禁事项
 
-- 禁止自行 `git add` 或 `git commit`，提交必须经用户审核。
+- 禁止自行在**main分支**进行 `git add`、`git merge` 或 `git commit`，该分支上的提交和合并必须经用户审核。
 - 撰写 specs 后不可跳过用户审阅步骤。
 
 ## 必读文档
