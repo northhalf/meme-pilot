@@ -329,27 +329,6 @@ class TestHandleAdd:
 
         assert matcher.state["target_name"] == ""
 
-    @pytest.mark.asyncio
-    @patch.object(meme_add, "get_index_manager")
-    @patch.object(meme_add, "is_authorized", return_value=True)
-    @patch.object(meme_add, "session_manager")
-    async def test_init_error_replies(
-        self,
-        mock_sm: MagicMock,
-        mock_auth: MagicMock,
-        mock_get_im: MagicMock,
-    ) -> None:
-        """IndexManager 未初始化时应回复错误。"""
-        mock_sm.activate_chat.return_value = True
-        mock_get_im.side_effect = RuntimeError("未初始化")
-
-        matcher = _make_matcher()
-        await handle_add(_make_bot(), _make_event("111"), matcher)
-
-        matcher.finish.assert_awaited_once()
-        assert "未就绪" in matcher.finish.call_args[0][0]
-        mock_sm.deactivate_chat.assert_called_once_with("111")
-
 
 # ===========================================================================
 # got_image 测试
@@ -407,6 +386,26 @@ class TestGotImage:
         matcher.reject.assert_awaited_once()
         assert "图片" in matcher.reject.call_args[0][0]
         mock_sm.deactivate_chat.assert_not_called()  # reject 后不反激活
+
+    @pytest.mark.asyncio
+    @patch.object(meme_add, "session_manager")
+    @patch.object(meme_add, "got_intercept_bypass", return_value=False)
+    @patch.object(meme_add, "get_index_manager", side_effect=RuntimeError("未初始化"))
+    @patch.object(meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
+    async def test_get_index_manager_error(
+        self,
+        mock_extract: MagicMock,
+        mock_get_im: MagicMock,
+        mock_bypass: MagicMock,
+        mock_sm: MagicMock,
+    ) -> None:
+        """get_index_manager 抛出 RuntimeError 时应回复未就绪。"""
+        matcher = _make_matcher()
+        await got_image(_make_bot(), _make_event("111"), matcher, MagicMock())
+
+        matcher.finish.assert_awaited_once()
+        assert "未就绪" in matcher.finish.call_args[0][0]
+        mock_sm.deactivate_chat.assert_called_once_with("111")
 
     @pytest.mark.asyncio
     @patch.object(meme_add, "session_manager")

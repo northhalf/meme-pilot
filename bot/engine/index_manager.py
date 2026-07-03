@@ -11,6 +11,7 @@ import logging
 import shutil
 from collections import deque
 from dataclasses import dataclass, field
+from enum import Enum, auto
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
@@ -70,6 +71,55 @@ class RefreshInProgressError(RuntimeError):
 
 class IndexAddCancelledError(RuntimeError):
     """/add 任务因刷新或关闭而被取消。"""
+
+
+class WriteOp(Enum):
+    """Write Worker 操作类型枚举。"""
+
+    ADD = auto()
+    EDIT_TEXT = auto()
+
+
+@dataclass
+class _WriteRequest:
+    """写入任务单元，由 Write Worker 串行处理。
+
+    Attributes:
+        op: 操作类型（ADD / EDIT_TEXT）。
+        future: 用于返回结果的 asyncio.Future。
+        entry_id: EDIT_TEXT 时为目标 id；ADD 时为 0（store 自动分配）。
+        filename: ADD 时 memes/ 下文件名。
+        text: 写入的 text（ADD=OCR text，EDIT_TEXT=新文本）。
+        embedding: 对应的 embedding 向量。
+        old_text: EDIT_TEXT 旧 text（回滚用）。
+    """
+
+    op: WriteOp
+    future: "asyncio.Future[AddResult | EditTextResult]"
+    entry_id: int = 0
+    filename: str = ""
+    text: str = ""
+    embedding: list[float] | None = None
+    old_text: str = ""
+
+
+@dataclass
+class EditTextResult:
+    """edit_text() 的返回结果。
+
+    Attributes:
+        entry_id: 被修改的条目 id。
+        old_text: 修改前的 OCR 文本。
+        new_text: 修改后的 OCR 文本。
+    """
+
+    entry_id: int
+    old_text: str
+    new_text: str
+
+
+class DuplicateTextError(RuntimeError):
+    """edit_text 要修改的文本已被其他条目使用。"""
 
 
 class OcrProvider(Protocol):
@@ -268,6 +318,8 @@ class IndexManager:
         self._refresh_task: asyncio.Task | None = None
         self._add_workers: list[asyncio.Task] = []
         self._shutting_down = False
+        self._write_queue: asyncio.Queue[_WriteRequest] = asyncio.Queue()
+        self._write_worker_task: asyncio.Task | None = None
 
         concurrency = (
             sync_concurrency
@@ -367,10 +419,72 @@ class IndexManager:
 
             self._add_workers = [w for w in self._add_workers if not w.done()]
             while len(self._add_workers) < self._add_concurrency:
-                self._add_workers.append(
-                    asyncio.create_task(self._add_worker_loop())
-                )
+                self._add_workers.append(asyncio.create_task(self._add_worker_loop()))
 
+        return await future
+
+    async def edit_text(self, entry_id: int, new_text: str) -> EditTextResult:
+        """修改指定条目的 OCR 文本。
+
+        流程：校验 → embed(锁外) → 二次检查 refresh → put WriteRequest → await future。
+
+        Args:
+            entry_id: 要修改的索引 id。
+            new_text: 新的 OCR 文本（调用方已去空白）。
+
+        Returns:
+            EditTextResult 描述修改结果。
+
+        Raises:
+            IndexAddCancelledError: Bot 正在关闭。
+            RefreshInProgressError: 刷新进行中或 pending 中。
+            ValueError: entry_id 不存在。
+            DuplicateTextError: new_text 已被其他条目使用。
+            EmbeddingError: Embedding 生成失败。
+        """
+        # 检查①：shutting_down（最高优先级，避免浪费 embed API）
+        if self._shutting_down:
+            raise IndexAddCancelledError("Bot 正在关闭")
+
+        # 检查②：refresh 状态
+        if self._refresh_active or self._refresh_pending:
+            raise RefreshInProgressError("索引正在刷新，请稍后再试")
+
+        # 确保 Write Worker 已启动
+        self._ensure_write_worker()
+
+        # 校验 entry 存在 + 获取旧 text（用于回滚）
+        entry = await self._run_sync(self._metadata_store.get_entry, entry_id)
+        if entry is None:
+            raise ValueError(f"entry_id={entry_id} 不存在")
+        old_text = entry.text
+        if old_text == new_text:
+            return EditTextResult(
+                entry_id=entry_id, old_text=old_text, new_text=new_text
+            )
+
+        # 锁外生成新 embedding
+        assert self._embedding_provider is not None
+        new_embedding = await self._embedding_provider.embed(new_text)
+
+        # 检查③：TOCTOU 防护（embed 期间 shutting_down 或 refresh 可能已激活）
+        if self._shutting_down:
+            raise IndexAddCancelledError("Bot 正在关闭")
+        if self._refresh_active or self._refresh_pending:
+            raise RefreshInProgressError("索引正在刷新，请稍后再试")
+
+        # 提交写入任务
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        req = _WriteRequest(
+            op=WriteOp.EDIT_TEXT,
+            future=future,
+            entry_id=entry_id,
+            text=new_text,
+            embedding=new_embedding,
+            old_text=old_text,
+        )
+        await self._write_queue.put(req)
         return await future
 
     async def refresh(self) -> SyncResult:
@@ -396,7 +510,10 @@ class IndexManager:
         try:
             async with self._state_cond:
                 await self._state_cond.wait_for(
-                    lambda: self._add_in_flight == 0 or self._shutting_down
+                    lambda: (
+                        (self._add_in_flight == 0 and self._write_queue.empty())
+                        or self._shutting_down
+                    ),
                 )
                 if self._shutting_down:
                     self._refresh_pending = False
@@ -426,6 +543,124 @@ class IndexManager:
                 self._refresh_task = None
                 self._state_cond.notify_all()
 
+    def _ensure_write_worker(self) -> None:
+        """确保 Write Worker task 已启动（延迟启动）。"""
+        if self._write_worker_task is None or self._write_worker_task.done():
+            self._write_worker_task = asyncio.create_task(self._write_worker_loop())
+
+    async def _write_worker_loop(self) -> None:
+        """串行处理所有写入任务（写锁保护）。"""
+        while True:
+            try:
+                req = await self._write_queue.get()
+            except asyncio.CancelledError:
+                # 取消所有 pending future
+                while not self._write_queue.empty():
+                    try:
+                        pending = self._write_queue.get_nowait()
+                        if not pending.future.done():
+                            pending.future.set_exception(
+                                IndexAddCancelledError("写入工作线程已停止")
+                            )
+                    except asyncio.QueueEmpty:
+                        break
+                raise
+
+            try:
+                async with self._rwlock.write():
+                    try:
+                        if req.embedding is None:
+                            raise ValueError("req 中的 embedding 为 None")
+                        if req.op is WriteOp.ADD:
+                            result = await self._write_entry(
+                                req.filename,
+                                req.text,
+                                req.embedding,
+                            )
+                        elif req.op is WriteOp.EDIT_TEXT:
+                            result = await self._execute_edit_text(req)
+                        else:
+                            raise ValueError(f"未知写入操作: {req.op}")
+
+                        if not req.future.done():
+                            req.future.set_result(result)
+                    except asyncio.CancelledError:
+                        if not req.future.done():
+                            req.future.set_exception(
+                                IndexAddCancelledError("写入工作线程被取消")
+                            )
+                        raise
+                    except Exception as exc:
+                        if not req.future.done():
+                            req.future.set_exception(exc)
+                    finally:
+                        async with self._state_cond:
+                            self._state_cond.notify_all()
+            except asyncio.CancelledError:
+                if not req.future.done():
+                    req.future.set_exception(
+                        IndexAddCancelledError("写入工作线程被取消")
+                    )
+                raise
+
+    async def _execute_edit_text(self, req: _WriteRequest) -> EditTextResult:
+        """写锁内执行 edit_text 写入（先 sqlite 后 chroma，失败回滚）。
+
+        Args:
+            req: 写入任务单元。
+
+        Returns:
+            EditTextResult 描述修改结果。
+
+        Raises:
+            DuplicateTextError: new_text 已被其他条目使用。
+            ValueError: entry_id 不存在。
+            EmbeddingError: chroma upsert 失败，已回滚 sqlite。
+        """
+        # 写锁内 TOCTOU 检查 text 冲突
+        existing_id = await self._run_sync(
+            self._metadata_store.get_id_by_text,
+            req.text,
+        )
+        if existing_id is not None and existing_id != req.entry_id:
+            raise DuplicateTextError(
+                f"OCR 文本「{req.text}」已被 entry_id={existing_id} 使用",
+            )
+
+        # 先 sqlite
+        success = await self._run_sync(
+            self._metadata_store.update,
+            req.entry_id,
+            text=req.text,
+        )
+        if not success:
+            raise ValueError(f"entry_id={req.entry_id} 不存在")
+
+        # 后 chroma，失败回滚 sqlite
+        assert req.embedding is not None
+        try:
+            await self._vector_store.upsert(req.entry_id, req.embedding)
+        except Exception as exc:
+            try:
+                await self._run_sync(
+                    self._metadata_store.update,
+                    req.entry_id,
+                    text=req.old_text,
+                )
+            except Exception as rollback_exc:
+                logger.error(
+                    "edit_text 回滚失败: id=%s, error=%s", req.entry_id, rollback_exc
+                )
+            raise EmbeddingError(
+                f"edit_text upsert 失败，已回滚: entry_id={req.entry_id}",
+            ) from exc
+
+        return EditTextResult(
+            entry_id=req.entry_id,
+            old_text=req.old_text,
+            new_text=req.text,
+        )
+
     async def close(self) -> None:
         """安全关闭 IndexManager。
 
@@ -440,6 +675,10 @@ class IndexManager:
             self._state_cond.notify_all()
 
         tasks_to_wait: list[asyncio.Task] = []
+
+        if self._write_worker_task is not None and not self._write_worker_task.done():
+            self._write_worker_task.cancel()
+            tasks_to_wait.append(self._write_worker_task)
 
         if self._refresh_task is not None and not self._refresh_task.done():
             self._refresh_task.cancel()
@@ -456,9 +695,7 @@ class IndexManager:
         async with self._state_cond:
             for req in self._add_requests:
                 try:
-                    req.future.set_exception(
-                        IndexAddCancelledError("Bot 正在关闭")
-                    )
+                    req.future.set_exception(IndexAddCancelledError("Bot 正在关闭"))
                 except Exception:
                     pass
             self._add_requests.clear()
@@ -701,9 +938,20 @@ class IndexManager:
 
                 text, embedding = await self._process_image_pipeline(request.filename)
 
-                # 阶段 2：写锁保护跨库写入
-                async with self._rwlock.write():
-                    result = await self._write_entry(request.filename, text, embedding)
+                # 阶段 2：通过 Write Worker 串行写入
+                self._ensure_write_worker()
+                loop = asyncio.get_running_loop()
+                future = loop.create_future()
+                await self._write_queue.put(
+                    _WriteRequest(
+                        op=WriteOp.ADD,
+                        future=future,
+                        filename=request.filename,
+                        text=text,
+                        embedding=embedding,
+                    )
+                )
+                result = await future
                 request.future.set_result(result)
 
             except asyncio.CancelledError:

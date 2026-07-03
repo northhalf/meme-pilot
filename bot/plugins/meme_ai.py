@@ -102,6 +102,9 @@ async def handle_ai(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
         # 发送匹配图片（本地文件使用 file:/// URI）
         image_path = MEMES_DIR / match_result.image_path
         session_manager.deactivate_chat(user_id)
-        await matcher.finish(MessageSegment.image("file://" + str(image_path.resolve())))
+        await matcher.finish(
+            MessageSegment.image("file://" + str(image_path.resolve()))
+        )
     except asyncio.CancelledError:
+        session_manager.deactivate_chat(user_id)
         raise FinishedException

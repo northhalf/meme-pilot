@@ -41,6 +41,18 @@ OCR 识别失败时抛出。
 
 Embedding 生成失败时抛出。
 
+### `RefreshInProgressError(RuntimeError)`
+
+索引刷新进行中，新的写入请求应被拒绝。
+
+### `IndexAddCancelledError(RuntimeError)`
+
+/add 任务因刷新或关闭而被取消。
+
+### `DuplicateTextError(RuntimeError)`
+
+edit_text 要修改的文本已被其他条目使用。
+
 ---
 
 ## Protocol
@@ -154,6 +166,24 @@ class AddResult:
 
 ---
 
+### `EditTextResult`
+
+```python
+@dataclass
+class EditTextResult:
+    entry_id: int
+    old_text: str
+    new_text: str
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `entry_id` | `int` | 被修改的条目 id |
+| `old_text` | `str` | 修改前的 OCR 文本 |
+| `new_text` | `str` | 修改后的 OCR 文本 |
+
+---
+
 ## `IndexManager` 类
 
 ```python
@@ -186,7 +216,12 @@ class IndexManager:
     # 锁外 embed，持读锁调用 AIMatcher.match_with_vector()；超时抛 asyncio.TimeoutError
 
     async def add(self, filename: str) -> AddResult
-    # FIFO 入队；refresh 期间抛 RefreshInProgressError；关闭时抛 IndexAddCancelledError
+    # FIFO 入队；refresh 期间抛 RefreshInProgressError；关闭时抛 IndexAddCancelledError；
+    # 内部由 Add Worker 串行处理（压缩 → OCR → embed → Write Worker 写库）
+
+    async def edit_text(self, entry_id: int, new_text: str) -> EditTextResult
+    # 修改指定条目的 OCR 文本；锁外 embed，Write Worker 串行写入；
+    # raises RefreshInProgressError, DuplicateTextError, ValueError, EmbeddingError, IndexAddCancelledError
 
     async def refresh(self) -> SyncResult
     # 独占写锁执行同步；运行期间新的 add/refresh 被拒绝

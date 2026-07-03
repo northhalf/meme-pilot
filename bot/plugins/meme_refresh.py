@@ -98,4 +98,5 @@ async def handle_refresh(bot: Bot, event: MessageEvent, matcher: Matcher) -> Non
         session_manager.deactivate_chat(user_id)
         await matcher.finish("\n".join(lines))
     except asyncio.CancelledError:
+        session_manager.deactivate_chat(user_id)
         raise FinishedException

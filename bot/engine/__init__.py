@@ -15,6 +15,8 @@ from .embedding_service import EmbeddingService
 from .image_optimizer import ImageOptimizer, OptimizeResult
 from .index_manager import (
     AddResult,
+    DuplicateTextError,
+    EditTextResult,
     IndexCorruptedError,
     IndexManager,
     OcrProvider,
@@ -49,6 +51,8 @@ __all__ = [
     "OptimizeResult",
     # index_manager
     "AddResult",
+    "DuplicateTextError",
+    "EditTextResult",
     "IndexCorruptedError",
     "IndexManager",
     "OcrProvider",

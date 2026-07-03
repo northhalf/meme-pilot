@@ -240,6 +240,7 @@ async def got_image(
             # 捕获 CancelledError 转为 FinishedException，
             # 让 run() 正常收尾并抛出 StopPropagation，
             # 防止事件滑落到兜底处理器（如 catch_all）
+            session_manager.deactivate_chat(user_id)
             raise FinishedException
         except Exception:
             logger.exception("用户 %s 的 /add 处理异常", user_id)

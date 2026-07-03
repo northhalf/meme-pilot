@@ -9,10 +9,13 @@ from pathlib import Path
 
 import pytest
 
+from typing import cast
+
 from bot.engine.ai_matcher import AIMatcher
 from bot.engine.index_manager import (
     AddResult,
     CompressionError,
+    DuplicateTextError,
     EmbeddingError,
     IndexAddCancelledError,
     IndexCorruptedError,
@@ -25,7 +28,6 @@ from bot.engine.index_manager import (
 from bot.engine.image_optimizer import OptimizeResult
 from bot.engine.keyword_searcher import KeywordSearcher
 from bot.engine.metadata_store import MemeEntry
-
 
 # ---------------------------------------------------------------------------
 # Fake stores
@@ -97,7 +99,9 @@ class FakeMetadataStore:
         )
         return entry_id
 
-    def update(self, entry_id, *, image_path=None, text=None, speaker=None, tags=None) -> bool:
+    def update(
+        self, entry_id, *, image_path=None, text=None, speaker=None, tags=None
+    ) -> bool:
         e = self._entries.get(entry_id)
         if e is None:
             return False
@@ -329,6 +333,7 @@ async def test_add_fifo_order(index_manager: IndexManager) -> None:
     assert len(ids) == 3
     # 实际写入顺序应与提交顺序一致，验证 FIFO
     from typing import cast
+
     metadata_store = cast(FakeMetadataStore, index_manager._metadata_store)
     assert metadata_store.add_order == ids
 
@@ -408,6 +413,7 @@ async def test_close_cancels_pending_add(index_manager: IndexManager) -> None:
     entered = asyncio.Event()
 
     original = index_manager._process_image_pipeline
+
     async def slow_pipeline(filename: str) -> tuple[str, list[float]]:
         entered.set()
         await asyncio.sleep(10)
@@ -423,3 +429,158 @@ async def test_close_cancels_pending_add(index_manager: IndexManager) -> None:
 
     with pytest.raises(IndexAddCancelledError):
         await task
+
+
+# ---------------------------------------------------------------------------
+# edit_text 测试
+# ---------------------------------------------------------------------------
+
+
+class TestEditText:
+    """IndexManager.edit_text() 单元测试。"""
+
+    @pytest.mark.anyio
+    async def test_edit_text_normal(self, index_manager: IndexManager) -> None:
+        """正常修改：sqlite text 更新、chroma upsert 调用。"""
+        # 先 add 一条
+        (Path(index_manager._memes_dir) / "cat.jpg").write_bytes(b"fake")
+        add_result = await index_manager.add("cat.jpg")
+        assert add_result.entry_id is not None
+        eid = add_result.entry_id
+
+        result = await index_manager.edit_text(eid, "加班到崩溃")
+        assert result.entry_id == eid
+        assert result.old_text == "cat"
+        assert result.new_text == "加班到崩溃"
+
+        # 验证 sqlite 已更新
+        entry = index_manager._metadata_store.get_entry(eid)
+        assert entry is not None
+        assert entry.text == "加班到崩溃"
+
+        # 验证 chroma 已 upsert
+        vs = cast(FakeVectorStore, index_manager._vector_store)
+        assert vs.has(eid)
+
+    @pytest.mark.anyio
+    async def test_edit_text_same_text(self, index_manager: IndexManager) -> None:
+        """新文本与当前文本相同 → 直接返回，无写入。"""
+        (Path(index_manager._memes_dir) / "dog.jpg").write_bytes(b"fake")
+        add_result = await index_manager.add("dog.jpg")
+        eid = add_result.entry_id
+        assert eid is not None
+
+        result = await index_manager.edit_text(eid, "dog")
+        assert result.entry_id == eid
+        assert result.old_text == "dog"
+        assert result.new_text == "dog"
+
+    @pytest.mark.anyio
+    async def test_edit_text_entry_not_found(self, index_manager: IndexManager) -> None:
+        """entry_id 不存在 → ValueError。"""
+        with pytest.raises(ValueError, match="不存在"):
+            await index_manager.edit_text(999, "新文本")
+
+    @pytest.mark.anyio
+    async def test_edit_text_duplicate_text(self, index_manager: IndexManager) -> None:
+        """text 被其他条目使用 → DuplicateTextError。"""
+        (Path(index_manager._memes_dir) / "a.jpg").write_bytes(b"fake")
+        (Path(index_manager._memes_dir) / "b.jpg").write_bytes(b"fake")
+        r1 = await index_manager.add("a.jpg")
+        r2 = await index_manager.add("b.jpg")
+        assert r1.entry_id is not None and r2.entry_id is not None
+
+        with pytest.raises(DuplicateTextError, match="已被 entry_id="):
+            await index_manager.edit_text(r2.entry_id, "a")  # "a" 是 a.jpg 的 OCR 文本
+
+    @pytest.mark.anyio
+    async def test_edit_text_refresh_active(self, index_manager: IndexManager) -> None:
+        """refresh 进行中 → RefreshInProgressError。"""
+        index_manager._refresh_active = True
+
+        with pytest.raises(RefreshInProgressError):
+            await index_manager.edit_text(1, "新文本")
+
+    @pytest.mark.anyio
+    async def test_edit_text_refresh_pending(self, index_manager: IndexManager) -> None:
+        """refresh pending 中 → RefreshInProgressError。"""
+        index_manager._refresh_pending = True
+
+        with pytest.raises(RefreshInProgressError):
+            await index_manager.edit_text(1, "新文本")
+
+    @pytest.mark.anyio
+    async def test_edit_text_upsert_failure(self, index_manager: IndexManager) -> None:
+        """chroma upsert 失败 → sqlite 回滚到旧 text。"""
+        (Path(index_manager._memes_dir) / "rollback.jpg").write_bytes(b"fake")
+        add_result = await index_manager.add("rollback.jpg")
+        assert add_result.entry_id is not None
+        eid = add_result.entry_id
+
+        # 让 FakeVectorStore 对 eid 的 upsert 抛错
+        vs = cast(FakeVectorStore, index_manager._vector_store)
+        vs.upsert_error_for = eid
+
+        with pytest.raises(EmbeddingError, match="回滚"):
+            await index_manager.edit_text(eid, "加班到崩溃")
+
+        # 验证 sqlite 已回滚到旧文本
+        entry = index_manager._metadata_store.get_entry(eid)
+        assert entry is not None
+        assert entry.text == "rollback"  # MockOcrProvider 返回文件名(不含扩展名)
+
+    @pytest.mark.anyio
+    async def test_edit_text_toctou_after_embed(
+        self, index_manager: IndexManager
+    ) -> None:
+        """embed 期间 refresh 激活 → put 前拒绝。"""
+        (Path(index_manager._memes_dir) / "toctou.jpg").write_bytes(b"fake")
+        add_result = await index_manager.add("toctou.jpg")
+        assert add_result.entry_id is not None
+        eid = add_result.entry_id
+
+        assert index_manager._embedding_provider is not None
+        original_embed = index_manager._embedding_provider.embed
+        assert original_embed is not None
+
+        async def embed_and_activate(text: str) -> list[float]:
+            result = await original_embed(text)
+            index_manager._refresh_active = (
+                True  # 在 embed 返回后、TOCTOU 检查前激活 refresh
+            )
+            return result
+
+        index_manager._embedding_provider.embed = embed_and_activate  # type: ignore[method-assign]
+
+        with pytest.raises(RefreshInProgressError):
+            await index_manager.edit_text(eid, "加班")
+
+    @pytest.mark.anyio
+    async def test_edit_text_shutting_down(self, index_manager: IndexManager) -> None:
+        """shutting_down → IndexAddCancelledError，两次检查均生效。"""
+        (Path(index_manager._memes_dir) / "shut.jpg").write_bytes(b"fake")
+        add_result = await index_manager.add("shut.jpg")
+        assert add_result.entry_id is not None
+        eid = add_result.entry_id
+
+        # 第一次检查（entry 前）
+        index_manager._shutting_down = True
+        with pytest.raises(IndexAddCancelledError, match="Bot 正在关闭"):
+            await index_manager.edit_text(eid, "新文本")
+
+        # 第二次检查（embed 后）
+        index_manager._shutting_down = False
+        index_manager._refresh_active = False
+        assert index_manager._embedding_provider is not None
+        original_embed = index_manager._embedding_provider.embed
+        assert original_embed is not None
+
+        async def embed_and_shutdown(text: str) -> list[float]:
+            result = await original_embed(text)
+            index_manager._shutting_down = True  # 在 embed 返回后关闭
+            return result
+
+        index_manager._embedding_provider.embed = embed_and_shutdown  # type: ignore[method-assign]
+
+        with pytest.raises(IndexAddCancelledError, match="Bot 正在关闭"):
+            await index_manager.edit_text(eid, "新文本")

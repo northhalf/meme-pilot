@@ -218,6 +218,7 @@ async def handle_got_selection(
         except RejectedException:
             raise
         except asyncio.CancelledError:
+            session_manager.deactivate_chat(user_id)
             raise FinishedException
         except FinishedException:
             session_manager.deactivate_chat(user_id)

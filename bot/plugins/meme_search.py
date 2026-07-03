@@ -64,6 +64,7 @@ async def handle_search(bot: Bot, event: MessageEvent, matcher: Matcher) -> None
         logger.info("用户 %s 搜索关键词: %r", user_id, keyword)
         await execute_search(bot, event, matcher, keyword)
     except asyncio.CancelledError:
+        session_manager.deactivate_chat(user_id)
         raise FinishedException
 
 
