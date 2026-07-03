@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
+_UNSET = object()  # 哨兵值，区分「不修改字段」与显式的 None
 
 _SCHEMA = (
     "CREATE TABLE IF NOT EXISTS meme ("
@@ -370,9 +371,9 @@ class MetadataStore:
         self,
         entry_id: int,
         *,
-        image_path: str | None = None,
-        text: str | None = None,
-        speaker: str | None = None,
+        image_path: str | None = _UNSET,  # type: ignore[assignment]
+        text: str | None = _UNSET,  # type: ignore[assignment]
+        speaker: str | None = _UNSET,  # type: ignore[assignment]
         tags: list[str] | None = None,
     ) -> bool:
         """更新单条记录的可选字段。
@@ -382,9 +383,9 @@ class MetadataStore:
 
         Args:
             entry_id: 要更新的索引 id。
-            image_path: 新图片路径，None 表示不变。
-            text: 新 OCR 文本，None 表示不变。
-            speaker: 新说话人，None 表示不变。
+            image_path: 新图片路径，_UNSET 表示不变。
+            text: 新 OCR 文本，_UNSET 表示不变。
+            speaker: 新说话人，_UNSET 表示不变。
             tags: 新标记词列表，None 表示不变；非 None 时整体替换。
 
         Raises:
@@ -403,13 +404,13 @@ class MetadataStore:
 
             sets: list[str] = []
             params: list[object] = []
-            if image_path is not None:
+            if image_path is not _UNSET:
                 sets.append("image_path = ?")
                 params.append(image_path)
-            if text is not None:
+            if text is not _UNSET:
                 sets.append("text = ?")
                 params.append(text)
-            if speaker is not None:
+            if speaker is not _UNSET:
                 sets.append("speaker = ?")
                 params.append(speaker)
 
@@ -422,8 +423,8 @@ class MetadataStore:
                 except sqlite3.IntegrityError as exc:
                     conn.rollback()
                     conflicts = self._detect_conflicts(
-                        image_path=image_path,
-                        text=text,
+                        image_path=image_path if image_path is not _UNSET else None,
+                        text=text if text is not _UNSET else None,
                         exclude_id=entry_id,
                     )
                     raise DuplicateEntryError(conflicts) from exc
@@ -436,7 +437,7 @@ class MetadataStore:
 
             # 维护 _text_to_id
             old_text = row["text"]
-            new_text = text if text is not None else old_text
+            new_text: str = text if text is not _UNSET else old_text  # type: ignore[assignment]
             if old_text in self._text_to_id and self._text_to_id[old_text] == entry_id:
                 del self._text_to_id[old_text]
             self._text_to_id[new_text] = entry_id

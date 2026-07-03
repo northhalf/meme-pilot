@@ -30,7 +30,7 @@ class MemeEntry:
 | `id` | `int` | 必填 | 索引 id，与 `VectorStore` 向量 id 一一对应 |
 | `image_path` | `str` | 必填 | `memes/` 目录下相对路径（扁平结构下即文件名） |
 | `text` | `str` | 必填 | OCR 去除所有空白后的文本（无空格） |
-| `speaker` | `str \| None` | `None` | 说话人，可空（本次不填充） |
+| `speaker` | `str \| None` | `None` | 说话人，可空；可通过 `/setspeaker` 命令设置 |
 | `tags` | `list[str]` | `[]` | 标记词列表，从 `meme_tag` 组装（本次为空 `[]`） |
 
 ---
@@ -202,14 +202,14 @@ CREATE INDEX IF NOT EXISTS idx_meme_tag_tag ON meme_tag(tag);
 
 ---
 
-### `update(entry_id: int, *, image_path: str | None = None, text: str | None = None, speaker: str | None = None, tags: list[str] | None = None) -> bool`
+### `update(entry_id: int, *, image_path: str | None = _UNSET, text: str | None = _UNSET, speaker: str | None = _UNSET, tags: list[str] | None = None) -> bool`
 
 | 参数 | 类型 | 默认 | 说明 |
 |------|------|------|------|
 | `entry_id` | `int` | 必填 | 待更新 id（位置参数） |
-| `image_path` | `str \| None` | `None` | 仅在非 `None` 时更新 |
-| `text` | `str \| None` | `None` | 仅在非 `None` 时更新，并同步维护 `_text_to_id`（删旧键、加新键） |
-| `speaker` | `str \| None` | `None` | 仅在非 `None` 时更新 |
+| `image_path` | `str \| None` | `_UNSET` | 仅在显式传入时更新；传 `None` 表示清空 |
+| `text` | `str \| None` | `_UNSET` | 仅在显式传入时更新，并同步维护 `_text_to_id`（删旧键、加新键）；传 `None` 表示清空 |
+| `speaker` | `str \| None` | `_UNSET` | 仅在显式传入时更新；传 `None` 表示清空 |
 | `tags` | `list[str] \| None` | `None` | 非 `None` 时整体替换该条 tag 行（先删后写） |
 
 | | 类型 | 说明 |

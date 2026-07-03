@@ -106,6 +106,33 @@ class TestUpdate:
     def test_update_nonexistent_returns_false(self, store: MetadataStore) -> None:
         assert store.update(999, image_path="x.jpg") is False
 
+    def test_update_speaker_set(self, store: MetadataStore) -> None:
+        """设置 speaker。"""
+        eid = store.add("test.jpg", "text")
+        assert store.update(eid, speaker="张三") is True
+        entry = store.get_entry(eid)
+        assert entry is not None
+        assert entry.speaker == "张三"
+        assert entry.text == "text"  # 其他字段不变
+
+    def test_update_speaker_clear(self, store: MetadataStore) -> None:
+        """清空 speaker（设为 None）。"""
+        eid = store.add("test.jpg", "text", speaker="张三")
+        assert store.update(eid, speaker=None) is True
+        entry = store.get_entry(eid)
+        assert entry is not None
+        assert entry.speaker is None
+        assert entry.text == "text"  # 其他字段不变
+
+    def test_update_speaker_unchanged(self, store: MetadataStore) -> None:
+        """不传 speaker 参数时保持原值。"""
+        eid = store.add("test.jpg", "text", speaker="张三")
+        assert store.update(eid, text="新文本") is True
+        entry = store.get_entry(eid)
+        assert entry is not None
+        assert entry.speaker == "张三"  # speaker 不变
+        assert entry.text == "新文本"
+
 
 class TestRemove:
     def test_remove_deletes_row_and_text_to_id(self, store: MetadataStore) -> None:
@@ -221,7 +248,9 @@ class TestDuplicateEntryError:
             store.update(eid2, text="加班")
         assert exc_info.value.conflicts == [("text", "加班")]
 
-    def test_update_both_fields_collision_reports_both(self, store: MetadataStore) -> None:
+    def test_update_both_fields_collision_reports_both(
+        self, store: MetadataStore
+    ) -> None:
         """update 同时改 image_path+text 撞他行时 conflicts 含两字段。"""
         store.add(image_path="a.jpg", text="加班")
         eid2 = store.add(image_path="b.jpg", text="下班")
@@ -236,5 +265,6 @@ class TestDuplicateEntryError:
         """update 改成自身已有的值不报冲突（exclude_id 排除自身）。"""
         store.add(image_path="a.jpg", text="加班")
         eid = store.get_id_by_text("加班")
+        assert eid is not None
         # 改成自身 image_path/text 不应抛
         assert store.update(eid, image_path="a.jpg", text="加班") is True

@@ -23,7 +23,7 @@
 | **无文字目录** | `memes/` 同级的 `meme_no_text/` 目录；OCR 去除所有空白后为空的图片在此场景下不进入索引，被移动到该目录并由日志 warning 提示，本项目不处理该类表情包 |
 | **entry_id** | 索引 id，类型为 `int`，全栈统一（sqlite `meme.id` 与 chroma 向量 id 一一对应）；删除记录后保持其他已有 id 稳定，允许临时编号空洞，新增时复用最小空洞 id |
 | **image_path** | `memes/` 目录下相对路径（扁平结构下即文件名），存储在 sqlite `meme.image_path` 列；原 v1.0 早期称 `filename`，重构后改为相对路径语义 |
-| **speaker** | 说话人字段，sqlite `meme.speaker` 列，`NULL` 允许；v1.0 预留不填充，供后续「按角色搜索」扩展 |
+| **speaker** | 说话人字段，sqlite `meme.speaker` 列，`NULL` 允许；v1.0 可通过 /setspeaker 命令设置，供后续「按角色搜索」扩展 |
 | **标记词** | 表情包的多值标签，存储在 sqlite `meme_tag` 关联表（`meme_id` + `tag`，`ON DELETE CASCADE`）；v1.0 预留不填充，供后续手动标注扩展 |
 
 ### 技术组件

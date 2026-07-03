@@ -78,6 +78,7 @@ class WriteOp(Enum):
 
     ADD = auto()
     EDIT_TEXT = auto()
+    SET_SPEAKER = auto()
 
 
 @dataclass
@@ -95,10 +96,11 @@ class _WriteRequest:
     """
 
     op: WriteOp
-    future: "asyncio.Future[AddResult | EditTextResult]"
+    future: "asyncio.Future[AddResult | EditTextResult | SetSpeakerResult]"
     entry_id: int = 0
     filename: str = ""
     text: str = ""
+    speaker: str | None = None
     embedding: list[float] | None = None
     old_text: str = ""
 
@@ -116,6 +118,21 @@ class EditTextResult:
     entry_id: int
     old_text: str
     new_text: str
+
+
+@dataclass
+class SetSpeakerResult:
+    """set_speaker() 的返回结果。
+
+    Attributes:
+        entry_id: 被修改的条目 id。
+        old_speaker: 修改前的 speaker 值。
+        new_speaker: 修改后的 speaker 值。
+    """
+
+    entry_id: int
+    old_speaker: str | None
+    new_speaker: str | None
 
 
 class DuplicateTextError(RuntimeError):
@@ -153,7 +170,9 @@ class MetadataStoreProtocol(Protocol):
         *,
         image_path: str | None = None,
         text: str | None = None,
-        speaker: str | None = None,
+        speaker: (
+            str | None
+        ) = None,  # None means "clear speaker"; _UNSET=no-change internally
         tags: list[str] | None = None,
     ) -> bool: ...
     def remove(self, entry_id: int) -> bool: ...
@@ -487,6 +506,58 @@ class IndexManager:
         await self._write_queue.put(req)
         return await future
 
+    async def set_speaker(self, entry_id: int, speaker: str | None) -> SetSpeakerResult:
+        """设置或清空指定条目的 speaker。
+
+        流程：校验 → 读 entry → 无变更直接返回 → put WriteRequest → await future。
+
+        Args:
+            entry_id: 要修改的索引 id。
+            speaker: 新说话人值；None 表示清空。
+
+        Returns:
+            SetSpeakerResult 描述修改结果。
+
+        Raises:
+            IndexAddCancelledError: Bot 正在关闭。
+            RefreshInProgressError: 刷新进行中或 pending 中。
+            ValueError: entry_id 不存在。
+        """
+        # 检查①：shutting_down
+        if self._shutting_down:
+            raise IndexAddCancelledError("Bot 正在关闭")
+
+        # 检查②：refresh 状态
+        if self._refresh_active or self._refresh_pending:
+            raise RefreshInProgressError("索引正在刷新，请稍后再试")
+
+        # 确保 Write Worker 已启动
+        self._ensure_write_worker()
+
+        # 校验 entry 存在 + 获取 old_speaker
+        entry = await self._run_sync(self._metadata_store.get_entry, entry_id)
+        if entry is None:
+            raise ValueError(f"entry_id={entry_id} 不存在")
+        old_speaker = entry.speaker
+        if old_speaker == speaker:
+            return SetSpeakerResult(
+                entry_id=entry_id,
+                old_speaker=old_speaker,
+                new_speaker=speaker,
+            )
+
+        # 提交写入任务（不需要 embed，直接入队）
+        loop = asyncio.get_running_loop()
+        future: "asyncio.Future[SetSpeakerResult]" = loop.create_future()
+        req = _WriteRequest(
+            op=WriteOp.SET_SPEAKER,
+            future=future,  # type: ignore[arg-type]
+            entry_id=entry_id,
+            speaker=speaker,
+        )
+        await self._write_queue.put(req)
+        return await future
+
     async def refresh(self) -> SyncResult:
         """独占执行索引同步（refresh）。
 
@@ -569,9 +640,9 @@ class IndexManager:
             try:
                 async with self._rwlock.write():
                     try:
-                        if req.embedding is None:
-                            raise ValueError("req 中的 embedding 为 None")
                         if req.op is WriteOp.ADD:
+                            if req.embedding is None:
+                                raise ValueError("req 中的 embedding 为 None")
                             result = await self._write_entry(
                                 req.filename,
                                 req.text,
@@ -579,6 +650,8 @@ class IndexManager:
                             )
                         elif req.op is WriteOp.EDIT_TEXT:
                             result = await self._execute_edit_text(req)
+                        elif req.op is WriteOp.SET_SPEAKER:
+                            result = await self._execute_set_speaker(req)
                         else:
                             raise ValueError(f"未知写入操作: {req.op}")
 
@@ -659,6 +732,39 @@ class IndexManager:
             entry_id=req.entry_id,
             old_text=req.old_text,
             new_text=req.text,
+        )
+
+    async def _execute_set_speaker(self, req: _WriteRequest) -> SetSpeakerResult:
+        """写锁内执行 set_speaker 写入（仅 sqlite update，无 chroma 操作）。
+
+        Args:
+            req: 写入任务单元。
+
+        Returns:
+            SetSpeakerResult 描述修改结果。
+
+        Raises:
+            ValueError: entry_id 在写锁内已不存在。
+        """
+        # TOCTOU 防护：写锁内重新检查 entry 是否存在
+        entry = await self._run_sync(self._metadata_store.get_entry, req.entry_id)
+        if entry is None:
+            raise ValueError(f"entry_id={req.entry_id} 不存在（并发删除）")
+        old_speaker = entry.speaker
+
+        # 写 sqlite
+        success = await self._run_sync(
+            self._metadata_store.update,
+            req.entry_id,
+            speaker=req.speaker,
+        )
+        if not success:
+            raise ValueError(f"entry_id={req.entry_id} 不存在（update 返回 False）")
+
+        return SetSpeakerResult(
+            entry_id=req.entry_id,
+            old_speaker=old_speaker,
+            new_speaker=req.speaker,
         )
 
     async def close(self) -> None:

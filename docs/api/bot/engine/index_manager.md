@@ -80,11 +80,21 @@ class MetadataStoreProtocol(Protocol):
     def get_entry(self, entry_id: int) -> MemeEntry | None: ...
     def get_id_by_text(self, text: str) -> int | None: ...
     def add(self, image_path: str, text: str, speaker: str | None = None, tags: list[str] | None = None) -> int: ...
-    def update(self, entry_id: int, *, image_path: str | None = None, text: str | None = None, speaker: str | None = None, tags: list[str] | None = None) -> bool: ...
+    def update(
+        self,
+        entry_id: int,
+        *,
+        image_path: str | None = None,
+        text: str | None = None,
+        speaker: str | None = None,  # None means "clear speaker"; _UNSET=no-change internally
+        tags: list[str] | None = None,
+    ) -> bool: ...
     def remove(self, entry_id: int) -> bool: ...
 ```
 
 `IndexManager` 依赖此协议而非具体 `MetadataStore` 实现，便于测试用 Fake 替换。仅声明 `IndexManager` 实际调用的方法子集（load/entry_count/get_all_entries/get_entry/get_id_by_text/add/update/remove）。
+
+实现层面，`MetadataStore.update()` 使用内部哨兵 `_UNSET` 作为 `image_path`/`text`/`speaker` 的默认值以区分「不修改」与「清空为 NULL」；协议层保持 `None` 默认并以上述注释说明语义。
 
 ---
 
@@ -184,6 +194,24 @@ class EditTextResult:
 
 ---
 
+### `SetSpeakerResult`
+
+```python
+@dataclass
+class SetSpeakerResult:
+    entry_id: int
+    old_speaker: str | None
+    new_speaker: str | None
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `entry_id` | `int` | 被修改的条目 id |
+| `old_speaker` | `str \| None` | 修改前的说话人；为空时为 `None` |
+| `new_speaker` | `str \| None` | 修改后的说话人；为空时为 `None` |
+
+---
+
 ## `IndexManager` 类
 
 ```python
@@ -222,6 +250,10 @@ class IndexManager:
     async def edit_text(self, entry_id: int, new_text: str) -> EditTextResult
     # 修改指定条目的 OCR 文本；锁外 embed，Write Worker 串行写入；
     # raises RefreshInProgressError, DuplicateTextError, ValueError, EmbeddingError, IndexAddCancelledError
+
+    async def set_speaker(self, entry_id: int, speaker: str | None) -> SetSpeakerResult
+    # 设置或清空指定条目的 speaker；仅更新 sqlite 元数据，无需 embed；
+    # raises RefreshInProgressError, ValueError, IndexAddCancelledError
 
     async def refresh(self) -> SyncResult
     # 独占写锁执行同步；运行期间新的 add/refresh 被拒绝

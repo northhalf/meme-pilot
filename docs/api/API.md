@@ -33,6 +33,7 @@ api
         ├── meme_refresh.md
         ├── meme_add.md
         ├── meme_edit.md
+        ├── meme_setspeaker.md
         ├── meme_ai.md
         ├── meme_cancel.md
         ├── meme_plain_text.md
@@ -113,6 +114,12 @@ class EditTextResult:
     old_text: str
     new_text: str
 
+@dataclass
+class SetSpeakerResult:
+    entry_id: int
+    old_speaker: str | None
+    new_speaker: str | None
+
 class OcrProvider(Protocol):
     async def ocr(self, image_path: str) -> str
     # 返回去除所有空白后的文本
@@ -171,12 +178,16 @@ class IndexManager:
     # 修改指定条目的 OCR 文本；锁外 embed，Write Worker 串行写入；
     # raises RefreshInProgressError, DuplicateTextError, ValueError, EmbeddingError, IndexAddCancelledError
 
+    async def set_speaker(self, entry_id: int, speaker: str | None) -> SetSpeakerResult
+    # 设置或清空指定条目的 speaker；仅更新 sqlite 元数据，无需 embed；
+    # raises RefreshInProgressError, ValueError, IndexAddCancelledError
+
     async def close(self) -> None
     # 取消 workers，清空 pending，关闭两个 Store
 ```
 
 薄编排层：不直接写 SQL/Chroma，全部委托 `MetadataStore` + `VectorStore`。写入顺序统一「先 sqlite 后 chroma」，`upsert` 失败回滚 sqlite。去重键 = 去空白后的 `text`（经 `MetadataStore.get_id_by_text` 判定）。
-所有写入操作（ADD / EDIT_TEXT）通过异步 FIFO Write Worker 串行处理，持有写锁后执行跨库写入。
+所有写入操作（`ADD` / `EDIT_TEXT` / `SET_SPEAKER`）通过异步 FIFO Write Worker 串行处理，持有写锁后执行跨库写入。
 新增 `RefreshInProgressError`、`IndexAddCancelledError`、`DuplicateTextError` 用于拒绝刷新/关闭期间的写入与冲突检测。
 
 ### `docs/api/bot/engine/metadata_store.md`
@@ -229,11 +240,11 @@ class MetadataStore:
         self,
         entry_id: int,
         *,
-        image_path: str | None = None,
-        text: str | None = None,
-        speaker: str | None = None,
+        image_path: str | None = _UNSET,
+        text: str | None = _UNSET,
+        speaker: str | None = _UNSET,
         tags: list[str] | None = None,
-    ) -> bool  # Raises DuplicateEntryError
+    ) -> bool  # _UNSET 表示不变，显式 None 表示清空；tags 非 None 时整体替换；Raises DuplicateEntryError
 
     def remove(self, entry_id: int) -> bool
 ```
@@ -558,6 +569,16 @@ NoneBot2 命令插件，注册 `/edittext` 命令。
 - 管道：`IndexManager.edit_text() -> EditTextResult`
 - 流程：`/edittext <id> <新文本>` → 发送确认消息（含图片） → 用户回复「确认」后执行修改 → 更新 sqlite 元数据、chroma 向量、关键词搜索索引
 - 错误处理：索引刷新中抛 `RefreshInProgressError`，文本冲突抛 `DuplicateTextError`，id 不存在抛 `ValueError`
+- 群聊：授权用户群聊 @bot 调用时回复"此命令仅限私聊使用"
+
+### `bot/plugins/meme_setspeaker.py`
+
+NoneBot2 命令插件，注册 `/setspeaker` 命令。
+
+- 依赖：`app_state.get_index_manager()`、`app_state.get_metadata_store()`、`auth.is_authorized()`、`bot.session.session_manager`、`bot.session.timeout_session`、`bot.plugins._search_utils.got_intercept_bypass`、`bot.config.read_session_timeout()`
+- 管道：`IndexManager.set_speaker()`
+- 流程：`/setspeaker <id> [说话人]` → 发送图片与确认消息 → 用户回复「确认/yes」后执行修改 → 更新 sqlite 元数据；`[说话人]` 缺省时清空字段
+- 错误处理：索引刷新中抛 `RefreshInProgressError`，id 不存在抛 `ValueError`
 - 群聊：授权用户群聊 @bot 调用时回复"此命令仅限私聊使用"
 
 ### `bot/plugins/meme_ai.py`

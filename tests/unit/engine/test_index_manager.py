@@ -29,6 +29,10 @@ from bot.engine.image_optimizer import OptimizeResult
 from bot.engine.keyword_searcher import KeywordSearcher
 from bot.engine.metadata_store import MemeEntry
 
+# 哨兵值，区分「不修改字段」与显式的 None
+_UNSET = object()
+
+
 # ---------------------------------------------------------------------------
 # Fake stores
 # ---------------------------------------------------------------------------
@@ -100,20 +104,20 @@ class FakeMetadataStore:
         return entry_id
 
     def update(
-        self, entry_id, *, image_path=None, text=None, speaker=None, tags=None
+        self, entry_id, *, image_path=_UNSET, text=_UNSET, speaker=_UNSET, tags=None
     ) -> bool:
         e = self._entries.get(entry_id)
         if e is None:
             return False
-        new_image = image_path if image_path is not None else e.image_path
-        new_text = text if text is not None else e.text
-        new_speaker = speaker if speaker is not None else e.speaker
+        new_image = image_path if image_path is not _UNSET else e.image_path
+        new_text = text if text is not _UNSET else e.text
+        new_speaker = speaker if speaker is not _UNSET else e.speaker
         new_tags = tags if tags is not None else e.tags
         self._entries[entry_id] = MemeEntry(
             id=entry_id,
-            image_path=new_image,
-            text=new_text,
-            speaker=new_speaker,
+            image_path=new_image,  # type: ignore[arg-type]
+            text=new_text,  # type: ignore[arg-type]
+            speaker=new_speaker,  # type: ignore[arg-type]
             tags=new_tags,
         )
         return True
@@ -584,3 +588,125 @@ class TestEditText:
 
         with pytest.raises(IndexAddCancelledError, match="Bot 正在关闭"):
             await index_manager.edit_text(eid, "新文本")
+
+
+# ---------------------------------------------------------------------------
+# IndexManager.set_speaker()
+# ---------------------------------------------------------------------------
+
+
+class TestSetSpeaker:
+    """IndexManager.set_speaker() 单元测试。"""
+
+    @pytest.mark.anyio
+    async def test_set_speaker_normal(self, index_manager: IndexManager) -> None:
+        """正常设置 speaker。"""
+        (Path(index_manager._memes_dir) / "cat.jpg").write_bytes(b"fake")
+        add_result = await index_manager.add("cat.jpg")
+        assert add_result.entry_id is not None
+        eid = add_result.entry_id
+
+        result = await index_manager.set_speaker(eid, "张三")
+        assert result.entry_id == eid
+        assert result.old_speaker is None
+        assert result.new_speaker == "张三"
+
+        # 验证 sqlite 已更新
+        entry = index_manager._metadata_store.get_entry(eid)
+        assert entry is not None
+        assert entry.speaker == "张三"
+
+    @pytest.mark.anyio
+    async def test_set_speaker_clear(self, index_manager: IndexManager) -> None:
+        """清空 speaker（设为 None）。"""
+        (Path(index_manager._memes_dir) / "dog.jpg").write_bytes(b"fake")
+        add_result = await index_manager.add("dog.jpg")
+        assert add_result.entry_id is not None
+        eid = add_result.entry_id
+
+        # 先设置
+        await index_manager.set_speaker(eid, "李四")
+        # 再清空
+        result = await index_manager.set_speaker(eid, None)
+        assert result.entry_id == eid
+        assert result.old_speaker == "李四"
+        assert result.new_speaker is None
+
+        entry = index_manager._metadata_store.get_entry(eid)
+        assert entry is not None
+        assert entry.speaker is None
+
+    @pytest.mark.anyio
+    async def test_set_speaker_no_change(self, index_manager: IndexManager) -> None:
+        """speaker 无变化 → 直接返回，不进队列。"""
+        (Path(index_manager._memes_dir) / "nochange.jpg").write_bytes(b"fake")
+        add_result = await index_manager.add("nochange.jpg")
+        assert add_result.entry_id is not None
+        eid = add_result.entry_id
+
+        result = await index_manager.set_speaker(eid, "王五")
+        assert result.new_speaker == "王五"
+
+        # 再次设置相同值
+        result2 = await index_manager.set_speaker(eid, "王五")
+        assert result2.entry_id == eid
+        assert result2.old_speaker == "王五"
+        assert result2.new_speaker == "王五"
+
+    @pytest.mark.anyio
+    async def test_set_speaker_entry_not_found(
+        self, index_manager: IndexManager
+    ) -> None:
+        """entry_id 不存在 → ValueError。"""
+        with pytest.raises(ValueError, match="不存在"):
+            await index_manager.set_speaker(999, "张三")
+
+    @pytest.mark.anyio
+    async def test_set_speaker_refresh_active(
+        self, index_manager: IndexManager
+    ) -> None:
+        """refresh 进行中 → RefreshInProgressError。"""
+        index_manager._refresh_active = True
+        with pytest.raises(RefreshInProgressError):
+            await index_manager.set_speaker(1, "张三")
+
+    @pytest.mark.anyio
+    async def test_set_speaker_refresh_pending(
+        self, index_manager: IndexManager
+    ) -> None:
+        """refresh pending 中 → RefreshInProgressError。"""
+        index_manager._refresh_pending = True
+        with pytest.raises(RefreshInProgressError):
+            await index_manager.set_speaker(1, "张三")
+
+    @pytest.mark.anyio
+    async def test_set_speaker_shutting_down(self, index_manager: IndexManager) -> None:
+        """shutting_down → IndexAddCancelledError。"""
+        index_manager._shutting_down = True
+        with pytest.raises(IndexAddCancelledError, match="Bot 正在关闭"):
+            await index_manager.set_speaker(1, "张三")
+
+    @pytest.mark.anyio
+    async def test_set_speaker_entry_deleted_concurrently(
+        self, index_manager: IndexManager
+    ) -> None:
+        """_execute_set_speaker 内 entry 被并发删除 → ValueError。"""
+        (Path(index_manager._memes_dir) / "race.jpg").write_bytes(b"fake")
+        add_result = await index_manager.add("race.jpg")
+        assert add_result.entry_id is not None
+        eid = add_result.entry_id
+
+        # 启用手动模式：让 _execute_set_speaker 的 TOCTOU 检查命中不存在
+        store = index_manager._metadata_store
+        original_get_entry = store.get_entry
+
+        def get_entry_and_delete(eid2: int) -> MemeEntry | None:
+            entry = original_get_entry(eid2)
+            if entry is not None and eid2 == eid:
+                store.remove(eid2)  # 在 TOCTOU 窗口内删除
+            return entry
+
+        store.get_entry = get_entry_and_delete  # type: ignore[method-assign]
+
+        with pytest.raises(ValueError, match="不存在"):
+            await index_manager.set_speaker(eid, "张三")

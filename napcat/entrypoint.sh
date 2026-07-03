@@ -6,8 +6,7 @@ CONFIG_FILE="/app/napcat/config/onebot11_${ACCOUNT}.json"
 WEBUI_FILE="/app/napcat/config/webui.json"
 
 # 生成 WebUI 配置（固定 Token，避免每次从日志查找）
-if [ ! -f "$WEBUI_FILE" ]; then
-  cat > "$WEBUI_FILE" << WEBCFGEOF
+cat > "$WEBUI_FILE" << WEBCFGEOF
 {
   "host": "::",
   "port": 6099,
@@ -23,8 +22,7 @@ if [ ! -f "$WEBUI_FILE" ]; then
   "totpSecret": ""
 }
 WEBCFGEOF
-  echo "[memepilot] 已生成 WebUI 配置: $WEBUI_FILE (token: ${NAPCAT_WEBUI_TOKEN:-memepilot})"
-fi
+echo "[memepilot] 已生成 WebUI 配置: $WEBUI_FILE (token: ${NAPCAT_WEBUI_TOKEN:-memepilot})"
 
 # 生成 OneBot v11 反向 WebSocket 配置
 if [ ! -f "$CONFIG_FILE" ]; then
