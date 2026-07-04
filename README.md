@@ -118,7 +118,7 @@ cp .env.example .env
 #   ADD_COMMAND_TIMEOUT=00:01:00  # 可选，/add 从提交到结果返回的超时
 #   SESSION_EXPIRE_TIMEOUT=00:01:00  # 可选，会话超时时间
 #   OCR_PROVIDER=paddle  # 可选，OCR 引擎：paddle（默认，需 PADDLEOCR_ACCESS_TOKEN）或 deepseek（需 SILICONFLOW_API_KEY）
-#   PADDLEOCR_BASE_URL=https://aip.baidubce.com  # 可选，百度 OCR API 地址
+#   PADDLEOCR_BASE_URL=https://paddleocr.aistudio-app.com  # 可选，百度 OCR API 地址
 
 # 3. 放入表情包
 # 把你的 .jpg/.jpeg/.png/.gif/.webp/.bmp 放到 memes/ 目录
