@@ -84,19 +84,17 @@ async def _on_startup() -> None:
     provider = read_ocr_provider()
     if provider == "paddle":
         ocr_service = PaddleOcrClientService(
-            concurrency=read_int_env("OCR_CONCURRENCY", 5)
+            concurrency=read_int_env("OCR_CONCURRENCY")
         )
         logger.info("OCR 引擎: PaddleOCR 云 API")
     else:
-        ocr_service = DeepSeekOcrService(concurrency=read_int_env("OCR_CONCURRENCY", 5))
+        ocr_service = DeepSeekOcrService(concurrency=read_int_env("OCR_CONCURRENCY"))
         logger.info("OCR 引擎: DeepSeek-OCR（硅基流动）")
     embedding_service = EmbeddingService(
-        concurrency=read_int_env("EMBEDDING_CONCURRENCY", 5)
+        concurrency=read_int_env("EMBEDDING_CONCURRENCY")
     )
-    rerank_service = RerankService(concurrency=read_int_env("RERANK_CONCURRENCY", 5))
-    image_optimizer = ImageOptimizer(
-        concurrency=read_int_env("COMPRESS_CONCURRENCY", 5)
-    )
+    rerank_service = RerankService(concurrency=read_int_env("RERANK_CONCURRENCY"))
+    image_optimizer = ImageOptimizer(concurrency=read_int_env("COMPRESS_CONCURRENCY"))
 
     # 3. 创建 MetadataStore 与 VectorStore
     metadata_store = MetadataStore(str(INDEX_DB_PATH))

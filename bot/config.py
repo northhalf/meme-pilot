@@ -23,7 +23,7 @@ def read_bot_port() -> int:
         return 8080
 
 
-def read_int_env(key: str, default: int) -> int | None:
+def read_int_env(key: str) -> int | None:
     """从环境变量读取可选整数值。
 
     读取指定环境变量的值并转为 int，无效值或缺失时返回 None。
@@ -32,7 +32,7 @@ def read_int_env(key: str, default: int) -> int | None:
     Returns:
         有效正整数或 None。
     """
-    raw = os.environ.get(key, default)
+    raw = os.environ.get(key)
     if not raw:
         return None
     try:

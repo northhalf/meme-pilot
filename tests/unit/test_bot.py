@@ -13,34 +13,34 @@ class TestReadIntEnv:
     def test_returns_none_when_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """环境变量未设置时返回 None。"""
         monkeypatch.delenv("TEST_CONCURRENCY", raising=False)
-        assert read_int_env("TEST_CONCURRENCY", 5) is None
+        assert read_int_env("TEST_CONCURRENCY") is None
 
     def test_returns_none_when_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """环境变量为空字符串时返回 None。"""
         monkeypatch.setenv("TEST_CONCURRENCY", "")
-        assert read_int_env("TEST_CONCURRENCY", 5) is None
+        assert read_int_env("TEST_CONCURRENCY") is None
 
     def test_returns_value_when_valid(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """环境变量为有效正整数时返回该值。"""
         monkeypatch.setenv("TEST_CONCURRENCY", "10")
-        assert read_int_env("TEST_CONCURRENCY", 5) == 10
+        assert read_int_env("TEST_CONCURRENCY") == 10
 
     def test_returns_none_when_zero(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """环境变量为 0 时返回 None。"""
         monkeypatch.setenv("TEST_CONCURRENCY", "0")
-        assert read_int_env("TEST_CONCURRENCY", 5) is None
+        assert read_int_env("TEST_CONCURRENCY") is None
 
     def test_returns_none_when_negative(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """环境变量为负数时返回 None。"""
         monkeypatch.setenv("TEST_CONCURRENCY", "-3")
-        assert read_int_env("TEST_CONCURRENCY", 5) is None
+        assert read_int_env("TEST_CONCURRENCY") is None
 
     def test_returns_none_when_not_integer(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """环境变量非整数时返回 None。"""
         monkeypatch.setenv("TEST_CONCURRENCY", "abc")
-        assert read_int_env("TEST_CONCURRENCY", 5) is None
+        assert read_int_env("TEST_CONCURRENCY") is None
 
 
 class TestReadBotPort:
