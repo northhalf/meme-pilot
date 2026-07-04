@@ -110,7 +110,10 @@ cp .env.example .env
 #   SILICONFLOW_API_KEY=sk-你的SiliconFlowKey  # 当 OCR_PROVIDER=deepseek 时必填
 #   BOT_PORT=8080  # 可选，Bot 监听端口
 #   NAPCAT_WEBUI_TOKEN=你的密码  # 可选，WebUI 登录密钥
-#   SYNC_CONCURRENCY=5  # 可选，索引同步并发上限
+#   EMBEDDING_CONCURRENCY=5  # 可选，Embedding API 并发上限
+#   OCR_CONCURRENCY=5  # 可选，OCR API 并发上限
+#   RERANK_CONCURRENCY=5  # 可选，LLM 精排并发上限
+#   COMPRESS_CONCURRENCY=5  # 可选，图片压缩并发上限
 #   READ_LOCK_TIMEOUT=00:00:30  # 可选，search/ai_match 等待写锁释放的超时
 #   ADD_COMMAND_TIMEOUT=00:01:00  # 可选，/add 从提交到结果返回的超时
 #   SESSION_EXPIRE_TIMEOUT=00:01:00  # 可选，会话超时时间

@@ -20,6 +20,8 @@ from bot.config import (
     INDEX_DB_PATH,
     MEMES_DIR,
     PROJECT_ROOT,
+    read_bot_port,
+    read_int_env,
     read_ocr_provider,
 )
 from bot.engine import (
@@ -37,31 +39,6 @@ from bot.engine import (
 from bot.logging_config import setup_logging
 
 logger = logging.getLogger("bot")
-
-
-def _read_sync_concurrency() -> int | None:
-    """从环境变量读取索引同步并发上限。
-
-    Returns:
-        有效正整数或 None（使用默认值）。
-    """
-    raw = os.environ.get("SYNC_CONCURRENCY", "")
-    if not raw:
-        return None
-    try:
-        value = int(raw)
-        return value if value > 0 else None
-    except ValueError:
-        return None
-
-
-def _read_bot_port() -> int:
-    """从环境变量读取 Bot 监听端口，无效值回退为 8080。"""
-    raw = os.environ.get("BOT_PORT", "8080")
-    try:
-        return int(raw)
-    except (ValueError, TypeError):
-        return 8080
 
 
 async def _background_sync(index_manager: IndexManager) -> None:
@@ -106,14 +83,20 @@ async def _on_startup() -> None:
     # 2. 根据 OCR_PROVIDER 环境变量选择 OCR 引擎
     provider = read_ocr_provider()
     if provider == "paddle":
-        ocr_service = PaddleOcrClientService()
+        ocr_service = PaddleOcrClientService(
+            concurrency=read_int_env("OCR_CONCURRENCY", 5)
+        )
         logger.info("OCR 引擎: PaddleOCR 云 API")
     else:
-        ocr_service = DeepSeekOcrService()
+        ocr_service = DeepSeekOcrService(concurrency=read_int_env("OCR_CONCURRENCY", 5))
         logger.info("OCR 引擎: DeepSeek-OCR（硅基流动）")
-    embedding_service = EmbeddingService()
-    rerank_service = RerankService()
-    image_optimizer = ImageOptimizer()
+    embedding_service = EmbeddingService(
+        concurrency=read_int_env("EMBEDDING_CONCURRENCY", 5)
+    )
+    rerank_service = RerankService(concurrency=read_int_env("RERANK_CONCURRENCY", 5))
+    image_optimizer = ImageOptimizer(
+        concurrency=read_int_env("COMPRESS_CONCURRENCY", 5)
+    )
 
     # 3. 创建 MetadataStore 与 VectorStore
     metadata_store = MetadataStore(str(INDEX_DB_PATH))
@@ -130,7 +113,6 @@ async def _on_startup() -> None:
 
     # 5. 创建 IndexManager 并加载索引
     memes_dir = str(MEMES_DIR)
-    sync_concurrency = _read_sync_concurrency()
 
     index_manager = IndexManager(
         metadata_store=metadata_store,
@@ -141,7 +123,6 @@ async def _on_startup() -> None:
         optimizer=image_optimizer,
         keyword_searcher=keyword_searcher,
         ai_matcher=ai_matcher,
-        sync_concurrency=sync_concurrency,
     )
     index_manager.load()
 
@@ -187,7 +168,7 @@ def main() -> None:
     nonebot.init(
         driver="~fastapi",
         host=os.environ.get("BOT_HOST", "0.0.0.0"),
-        port=_read_bot_port(),
+        port=read_bot_port(),
         env_file=str(PROJECT_ROOT / ".env"),
     )
 

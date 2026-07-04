@@ -59,15 +59,21 @@ class ImageOptimizer:
         self,
         jpeg_quality: int = 95,
         webp_quality: int = 80,
+        concurrency: int | None = None,
     ) -> None:
         """初始化 ImageOptimizer。
 
         Args:
             jpeg_quality: JPEG 重编码质量（1-100），默认 95。
             webp_quality: WebP 无损压缩质量（0-100），默认 80。
+            concurrency: 并发数，默认从 COMPRESS_CONCURRENCY 环境变量读取，
+                         回退为 5。
         """
         self._jpeg_quality = jpeg_quality
         self._webp_quality = webp_quality
+
+        c = concurrency or int(os.environ.get("COMPRESS_CONCURRENCY", 5))
+        self._semaphore = asyncio.Semaphore(c)
 
     async def optimize(self, image_path: str | Path) -> OptimizeResult:
         """尝试无损压缩图片，成功后覆盖原文件。
@@ -102,53 +108,54 @@ class ImageOptimizer:
             raise ValueError(f"不支持的图片格式: {suffix}")
 
         # 分发到各格式压缩方法
-        original_size = path.stat().st_size
-        try:
-            if suffix in (".jpg", ".jpeg"):
-                optimized_size = await asyncio.to_thread(
-                    self._compress_jpeg, path, original_size
-                )
-            elif suffix == ".png":
-                optimized_size = await asyncio.to_thread(
-                    self._compress_png, path, original_size
-                )
-            elif suffix == ".webp":
-                optimized_size = await asyncio.to_thread(
-                    self._compress_webp, path, original_size
-                )
-            else:
-                optimized_size = await asyncio.to_thread(
-                    self._compress_gif, path, original_size
-                )
-        except (ValueError, RuntimeError):
-            raise
-        except Exception as exc:
-            raise RuntimeError(f"图片压缩失败: {path.name}") from exc
+        async with self._semaphore:
+            original_size = path.stat().st_size
+            try:
+                if suffix in (".jpg", ".jpeg"):
+                    optimized_size = await asyncio.to_thread(
+                        self._compress_jpeg, path, original_size
+                    )
+                elif suffix == ".png":
+                    optimized_size = await asyncio.to_thread(
+                        self._compress_png, path, original_size
+                    )
+                elif suffix == ".webp":
+                    optimized_size = await asyncio.to_thread(
+                        self._compress_webp, path, original_size
+                    )
+                else:
+                    optimized_size = await asyncio.to_thread(
+                        self._compress_gif, path, original_size
+                    )
+            except (ValueError, RuntimeError):
+                raise
+            except Exception as exc:
+                raise RuntimeError(f"图片压缩失败: {path.name}") from exc
 
-        # 压缩后反而变大
-        saved = original_size - optimized_size
-        if saved <= 0:
-            logger.debug("跳过压缩: %s (压缩后反而变大)", path.name)
+            # 压缩后反而变大
+            saved = original_size - optimized_size
+            if saved <= 0:
+                logger.debug("跳过压缩: %s (压缩后反而变大)", path.name)
+                return OptimizeResult(
+                    original_size=original_size,
+                    optimized_size=optimized_size,
+                    saved=0,
+                    skipped=True,
+                )
+
+            pct = saved / original_size * 100
+            logger.debug(
+                "压缩完成: %s (%d → %d, 节省 %.1f%%)",
+                path.name,
+                original_size,
+                optimized_size,
+                pct,
+            )
             return OptimizeResult(
                 original_size=original_size,
                 optimized_size=optimized_size,
-                saved=0,
-                skipped=True,
+                saved=saved,
             )
-
-        pct = saved / original_size * 100
-        logger.debug(
-            "压缩完成: %s (%d → %d, 节省 %.1f%%)",
-            path.name,
-            original_size,
-            optimized_size,
-            pct,
-        )
-        return OptimizeResult(
-            original_size=original_size,
-            optimized_size=optimized_size,
-            saved=saved,
-        )
 
     def _compress_jpeg(self, path: Path, original_size: int) -> int:
         """压缩 JPEG 文件。

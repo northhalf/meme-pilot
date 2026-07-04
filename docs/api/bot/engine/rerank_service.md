@@ -19,6 +19,7 @@ class RerankService:
         api_key: str | None = None,
         base_url: str | None = None,
         model: str | None = None,
+        concurrency: int | None = None,
     ) -> None
 
     async def rerank(
@@ -32,13 +33,14 @@ class RerankService:
 
 ## 构造函数
 
-### `__init__(api_key=None, base_url=None, model=None) -> None`
+### `__init__(api_key=None, base_url=None, model=None, concurrency=None) -> None`
 
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `api_key` | `str \| None` | `None` | API Key，默认从 `DEEPSEEK_API_KEY` 环境变量读取 |
 | `base_url` | `str \| None` | `None` | API 地址，默认从 `DEEPSEEK_BASE_URL` 环境变量读取，回退为 `https://api.deepseek.com` |
 | `model` | `str \| None` | `None` | 精排模型名，默认从 `DEEPSEEK_MODEL` 环境变量读取，回退为 `deepseek-v4-flash` |
+| `concurrency` | `int \| None` | `None` | LLM 精排并发上限，默认从 `RERANK_CONCURRENCY` 环境变量读取，回退为 5。使用 `asyncio.Semaphore` 限制并发 rerank() 调用数。 |
 
 参数优先级：构造参数 > 环境变量 > 默认值。
 
@@ -75,3 +77,4 @@ class RerankService:
 | `DEEPSEEK_API_KEY` | API Key | `""` |
 | `DEEPSEEK_BASE_URL` | API 地址 | `https://api.deepseek.com` |
 | `DEEPSEEK_MODEL` | 模型名 | `deepseek-v4-flash` |
+| `RERANK_CONCURRENCY` | LLM 精排并发上限 | `5` |

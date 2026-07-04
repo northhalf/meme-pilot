@@ -1,5 +1,7 @@
 """PaddleOcrClientService 单元测试。"""
 
+import asyncio
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -211,7 +213,9 @@ class TestOcr:
         mock_ocr_result.pages = [mock_page]
         mock_client.ocr = AsyncMock(return_value=mock_ocr_result)
 
-        service = PaddleOcrClientService(access_token="test-token", text_rec_score_thresh=0.9)
+        service = PaddleOcrClientService(
+            access_token="test-token", text_rec_score_thresh=0.9
+        )
         service._client = mock_client
 
         result = await service.ocr("/path/to/image.png")
@@ -249,7 +253,9 @@ class TestOcr:
         mock_ocr_result.pages = [mock_page]
         mock_client.ocr = AsyncMock(return_value=mock_ocr_result)
 
-        service = PaddleOcrClientService(access_token="test-token", text_rec_score_thresh=0.9)
+        service = PaddleOcrClientService(
+            access_token="test-token", text_rec_score_thresh=0.9
+        )
         service._client = mock_client
 
         result = await service.ocr("/path/to/image.png")
@@ -296,3 +302,52 @@ class TestOcr:
 
         result = await service.ocr("/path/to/image.png")
         assert result == "加班心累"
+
+
+class TestPaddleOcrSemaphore:
+    """验证 PaddleOcrClientService 的 Semaphore 并发控制。"""
+
+    @pytest.mark.asyncio
+    async def test_default_concurrency(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """不传 concurrency 时使用环境变量默认值 (5)。"""
+        monkeypatch.delenv("OCR_CONCURRENCY", raising=False)
+        service = PaddleOcrClientService(access_token="test")
+        assert service._semaphore._value == 5
+
+    @pytest.mark.asyncio
+    async def test_custom_concurrency(self) -> None:
+        """传 concurrency=2 时 Semaphore 值为 2。"""
+        service = PaddleOcrClientService(access_token="test", concurrency=2)
+        assert service._semaphore._value == 2
+
+    @pytest.mark.asyncio
+    async def test_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """设置 OCR_CONCURRENCY 环境变量时生效。"""
+        monkeypatch.setenv("OCR_CONCURRENCY", "3")
+        service = PaddleOcrClientService(access_token="test")
+        assert service._semaphore._value == 3
+
+    @pytest.mark.asyncio
+    async def test_semaphore_blocks_concurrent(self) -> None:
+        """concurrency=1 时第二个并发调用应阻塞。"""
+        service = PaddleOcrClientService(access_token="test", concurrency=1)
+
+        async def slow_ocr(*args: object, **kwargs: object) -> MagicMock:
+            await asyncio.sleep(10)
+            mock_result = MagicMock()
+            mock_result.pages = []
+            return mock_result
+
+        service._client.ocr = AsyncMock(side_effect=slow_ocr)
+
+        task1 = asyncio.create_task(service.ocr("/fake/path1.png"))
+        await asyncio.sleep(0.05)
+
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(service.ocr("/fake/path2.png"), timeout=0.1)
+
+        task1.cancel()
+        try:
+            await task1
+        except asyncio.CancelledError:
+            pass

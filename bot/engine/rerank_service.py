@@ -6,6 +6,7 @@
 实现 ai_matcher.RerankProvider 协议。
 """
 
+import asyncio
 import logging
 import os
 import re
@@ -101,6 +102,7 @@ class RerankService:
         api_key: str | None = None,
         base_url: str | None = None,
         model: str | None = None,
+        concurrency: int | None = None,
     ) -> None:
         """初始化 RerankService。
 
@@ -110,6 +112,8 @@ class RerankService:
                       回退为 https://api.deepseek.com。
             model: 精排模型名，默认从 DEEPSEEK_MODEL 环境变量读取，
                    回退为 deepseek-v4-flash。
+            concurrency: 并发数，默认从 RERANK_CONCURRENCY 环境变量读取，
+                         回退为 5。
         """
         self._api_key = api_key or os.environ.get("DEEPSEEK_API_KEY", "")
         self._base_url = base_url or os.environ.get(
@@ -122,6 +126,9 @@ class RerankService:
             base_url=self._base_url,
             timeout=5.0,
         )
+
+        c = concurrency or int(os.environ.get("RERANK_CONCURRENCY", 5))
+        self._semaphore = asyncio.Semaphore(c)
 
     async def rerank(
         self,
@@ -153,30 +160,33 @@ class RerankService:
             candidates=candidates_text,
         )
 
-        logger.debug(
-            "调用 DeepSeek 精排: model=%s, candidates=%d, desc_len=%d",
-            self._model,
-            len(candidates),
-            len(description),
-        )
-        try:
-            response = await self._client.chat.completions.create(
-                model=self._model,
-                messages=[
-                    {"role": "system", "content": _SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0,
+        async with self._semaphore:
+            logger.debug(
+                "调用 DeepSeek 精排: model=%s, candidates=%d, desc_len=%d",
+                self._model,
+                len(candidates),
+                len(description),
             )
-        except Exception as exc:
-            raise RuntimeError(f"DeepSeek 精排 API 调用失败: {exc}") from exc
+            try:
+                response = await self._client.chat.completions.create(
+                    model=self._model,
+                    messages=[
+                        {"role": "system", "content": _SYSTEM_PROMPT},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=0,
+                )
+            except Exception as exc:
+                raise RuntimeError(f"DeepSeek 精排 API 调用失败: {exc}") from exc
 
-        raw = response.choices[0].message.content or ""
-        rank = _parse_rank(raw, max_rank=len(candidates))
+            raw = response.choices[0].message.content or ""
+            rank = _parse_rank(raw, max_rank=len(candidates))
 
-        if rank is None:
-            logger.warning("DeepSeek 精排返回无法解析: raw=%r，返回 0 放弃精排", raw)
-            return 0
+            if rank is None:
+                logger.warning(
+                    "DeepSeek 精排返回无法解析: raw=%r，返回 0 放弃精排", raw
+                )
+                return 0
 
-        logger.debug("DeepSeek 精排完成: rank=%d", rank)
-        return rank
+            logger.debug("DeepSeek 精排完成: rank=%d", rank)
+            return rank

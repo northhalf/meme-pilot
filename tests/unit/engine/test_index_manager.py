@@ -233,7 +233,6 @@ def index_manager(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         optimizer=MockOptimizer(),
         keyword_searcher=keyword_searcher,
         ai_matcher=ai_matcher,
-        sync_concurrency=1,
     )
     manager.load()
     return manager
@@ -344,7 +343,7 @@ async def test_add_fifo_order(index_manager: IndexManager) -> None:
 
 @pytest.mark.anyio
 async def test_refresh_rejects_pending_add(index_manager: IndexManager) -> None:
-    # 通过 monkeypatch _process_image_pipeline 使其挂住，保证 in_flight > 0
+    # 通过 monkeypatch _process_image_pipeline 使其挂住，模拟管道阻塞
     original = index_manager._process_image_pipeline
     started = asyncio.Event()
 
@@ -359,21 +358,20 @@ async def test_refresh_rejects_pending_add(index_manager: IndexManager) -> None:
     add_task = asyncio.create_task(index_manager.add("hold.jpg"))
     await started.wait()
 
-    # 提交第二个 add，它会在 pending 队列中
+    # 提交第二个 add——此时 refresh 尚未激活，也会进入 pipeline
     (Path(index_manager._memes_dir) / "drop.jpg").write_bytes(b"fake")
     pending_task = asyncio.create_task(index_manager.add("drop.jpg"))
     await asyncio.sleep(0.05)
 
-    # 触发 refresh
+    # 触发 refresh；新行为：add_task 和 pending_task 完成 pipeline 后，
+    # TOCTOU 检查发现 _refresh_active → 均抛 RefreshInProgressError
     refresh_task = asyncio.create_task(index_manager.refresh())
+    await asyncio.sleep(0.05)
+
+    with pytest.raises(RefreshInProgressError):
+        await add_task
     with pytest.raises(RefreshInProgressError):
         await pending_task
-
-    add_task.cancel()
-    try:
-        await add_task
-    except (asyncio.CancelledError, IndexAddCancelledError):
-        pass
     await refresh_task
 
 
@@ -501,14 +499,6 @@ class TestEditText:
     async def test_edit_text_refresh_active(self, index_manager: IndexManager) -> None:
         """refresh 进行中 → RefreshInProgressError。"""
         index_manager._refresh_active = True
-
-        with pytest.raises(RefreshInProgressError):
-            await index_manager.edit_text(1, "新文本")
-
-    @pytest.mark.anyio
-    async def test_edit_text_refresh_pending(self, index_manager: IndexManager) -> None:
-        """refresh pending 中 → RefreshInProgressError。"""
-        index_manager._refresh_pending = True
 
         with pytest.raises(RefreshInProgressError):
             await index_manager.edit_text(1, "新文本")
@@ -671,15 +661,6 @@ class TestSetSpeaker:
             await index_manager.set_speaker(1, "张三")
 
     @pytest.mark.anyio
-    async def test_set_speaker_refresh_pending(
-        self, index_manager: IndexManager
-    ) -> None:
-        """refresh pending 中 → RefreshInProgressError。"""
-        index_manager._refresh_pending = True
-        with pytest.raises(RefreshInProgressError):
-            await index_manager.set_speaker(1, "张三")
-
-    @pytest.mark.anyio
     async def test_set_speaker_shutting_down(self, index_manager: IndexManager) -> None:
         """shutting_down → IndexAddCancelledError。"""
         index_manager._shutting_down = True
@@ -710,3 +691,96 @@ class TestSetSpeaker:
 
         with pytest.raises(ValueError, match="不存在"):
             await index_manager.set_speaker(eid, "张三")
+
+
+# ---------------------------------------------------------------------------
+# 并发控制与 Write Queue drain 行为测试
+# ---------------------------------------------------------------------------
+
+
+class TestConcurrencyAndDrain:
+    """IndexManager 并发控制与 Write Queue drain 行为测试。"""
+
+    @pytest.mark.anyio
+    async def test_add_direct_pipeline(self, index_manager: IndexManager) -> None:
+        """add() 直接调用 _process_image_pipeline（mock 验证调用一次）。"""
+        call_count = 0
+        original = index_manager._process_image_pipeline
+
+        async def counting_pipeline(filename: str) -> tuple[str, list[float]]:
+            nonlocal call_count
+            call_count += 1
+            return await original(filename)
+
+        index_manager._process_image_pipeline = counting_pipeline
+
+        (Path(index_manager._memes_dir) / "test.jpg").write_bytes(b"fake")
+        result = await index_manager.add("test.jpg")
+        assert result.entry_id is not None
+        assert call_count == 1
+
+    @pytest.mark.anyio
+    async def test_refresh_drains_write_queue(self, index_manager: IndexManager) -> None:
+        """refresh 等待 write_queue 排空后才获取写锁。"""
+        original_write = index_manager._write_entry
+        in_flight = asyncio.Event()
+
+        async def slow_write(
+            filename: str, text: str, embedding: list[float]
+        ) -> AddResult:
+            in_flight.set()
+            await asyncio.sleep(0.3)
+            return await original_write(filename, text, embedding)
+
+        index_manager._write_entry = slow_write
+
+        (Path(index_manager._memes_dir) / "a.jpg").write_bytes(b"fake")
+        task_a = asyncio.create_task(index_manager.add("a.jpg"))
+        await in_flight.wait()
+
+        # Worker 正在处理 a.jpg，此时入队 b.jpg
+        (Path(index_manager._memes_dir) / "b.jpg").write_bytes(b"fake")
+        task_b = asyncio.create_task(index_manager.add("b.jpg"))
+        await asyncio.sleep(0.02)
+
+        # refresh 应观察到非空队列，等待 drain
+        refresh_task = asyncio.create_task(index_manager.refresh())
+        await asyncio.sleep(0.05)
+        assert not refresh_task.done(), "refresh 应在等待 write_queue drain"
+
+        await asyncio.wait_for(refresh_task, timeout=5.0)
+
+    @pytest.mark.anyio
+    async def test_write_queue_empty_no_wait(self, index_manager: IndexManager) -> None:
+        """write_queue 为空时 refresh 不等待 drain。"""
+        assert index_manager._write_queue.empty()
+        result = await index_manager.refresh()
+        assert isinstance(result, SyncResult)
+
+    @pytest.mark.anyio
+    async def test_write_worker_drain_signal(self, index_manager: IndexManager) -> None:
+        """Write Worker 处理完最后一条后 _write_drained.set()。"""
+        index_manager._write_drained.clear()
+        (Path(index_manager._memes_dir) / "drain.jpg").write_bytes(b"fake")
+        await index_manager.add("drain.jpg")
+        await asyncio.sleep(0.02)
+        assert index_manager._write_drained.is_set()
+
+    @pytest.mark.anyio
+    async def test_no_concurrency_params_in_init(self) -> None:
+        """IndexManager 不再接受 sync_concurrency 参数。"""
+        from bot.engine.index_manager import IndexManager
+
+        md = FakeMetadataStore()
+        vs = FakeVectorStore()
+        m = IndexManager(metadata_store=md, vector_store=vs, memes_dir="/tmp/memes")
+        assert not hasattr(m, "_add_concurrency")
+        assert not hasattr(m, "_sync_semaphore")
+
+    @pytest.mark.anyio
+    async def test_deleted_attrs_not_present(
+        self, index_manager: IndexManager
+    ) -> None:
+        """验证已删除属性不存在（_add_concurrency, _sync_semaphore 等）。"""
+        assert not hasattr(index_manager, "_add_concurrency")
+        assert not hasattr(index_manager, "_sync_semaphore")

@@ -11,6 +11,7 @@ DeepSeek 等），只需配置 base_url 和 model 即可。
 实现 ai_matcher.EmbeddingProvider 协议。
 """
 
+import asyncio
 import logging
 import os
 
@@ -35,6 +36,7 @@ class EmbeddingService:
         api_key: str | None = None,
         base_url: str | None = None,
         model: str | None = None,
+        concurrency: int | None = None,
     ) -> None:
         """初始化 EmbeddingService。
 
@@ -44,6 +46,8 @@ class EmbeddingService:
                       回退为 https://api.siliconflow.cn/v1。
             model: Embedding 模型名，默认从 EMBEDDING_MODEL 环境变量读取，
                    回退为 BAAI/bge-m3（1024 维向量）。
+            concurrency: 并发数，默认从 EMBEDDING_CONCURRENCY 环境变量读取，
+                         回退为 5。
         """
         self._api_key = api_key or os.environ.get("EMBEDDING_API_KEY", "")
         self._base_url = base_url or os.environ.get(
@@ -55,6 +59,9 @@ class EmbeddingService:
             api_key=self._api_key,
             base_url=self._base_url,
         )
+
+        c = concurrency or int(os.environ.get("EMBEDDING_CONCURRENCY", 5))
+        self._semaphore = asyncio.Semaphore(c)
 
     async def embed(self, text: str) -> list[float]:
         """生成文本 embedding 向量。
@@ -76,24 +83,25 @@ class EmbeddingService:
         if not text:
             raise ValueError("待向量化文本不能为空")
 
-        logger.debug(
-            "调用 Embedding API: model=%s, text_len=%d",
-            self._model,
-            len(text),
-        )
-        try:
-            response = await self._client.embeddings.create(
-                model=self._model,
-                input=text,
+        async with self._semaphore:
+            logger.debug(
+                "调用 Embedding API: model=%s, text_len=%d",
+                self._model,
+                len(text),
             )
-        except Exception as exc:
-            logger.info("Embedding API 调用失败: %s", exc)
-            raise RuntimeError(f"Embedding API 调用失败: {exc}") from exc
+            try:
+                response = await self._client.embeddings.create(
+                    model=self._model,
+                    input=text,
+                )
+            except Exception as exc:
+                logger.info("Embedding API 调用失败: %s", exc)
+                raise RuntimeError(f"Embedding API 调用失败: {exc}") from exc
 
-        if not response.data:
-            logger.info("Embedding API 返回为空")
-            raise RuntimeError("Embedding API 返回为空")
+            if not response.data:
+                logger.info("Embedding API 返回为空")
+                raise RuntimeError("Embedding API 返回为空")
 
-        embedding = response.data[0].embedding
-        logger.debug("Embedding 完成: %d 维", len(embedding))
-        return embedding
+            embedding = response.data[0].embedding
+            logger.debug("Embedding 完成: %d 维", len(embedding))
+            return embedding

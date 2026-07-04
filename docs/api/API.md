@@ -142,7 +142,6 @@ class AddResult:
 
 class IndexManager:
     SUPPORTED_EXTENSIONS: frozenset[str]
-    DEFAULT_SYNC_CONCURRENCY: int
     read_timeout: float
     add_user_timeout: float
 
@@ -157,7 +156,6 @@ class IndexManager:
         optimizer: ImageOptimizer | None = None,
         keyword_searcher: KeywordSearcher | None = None,
         ai_matcher: AIMatcher | None = None,
-        sync_concurrency: int | None = None,
     ) -> None
 
     def load(self) -> None
@@ -169,10 +167,10 @@ class IndexManager:
     # 锁外 embed，持读锁调用 AIMatcher.match_with_vector()；超时抛 asyncio.TimeoutError
 
     async def add(self, filename: str) -> AddResult
-    # FIFO 入队；refresh 期间抛 RefreshInProgressError；关闭时抛 IndexAddCancelledError
+    # 直接执行压缩-OCR-Embedding 管道后通过 Write Worker 串行写入；pipeline 期间抛 TOCTOU 异常
 
     async def refresh(self) -> SyncResult
-    # 独占写锁执行同步；运行期间新的 add/refresh 被拒绝
+    # Event drain 等待 Write Worker 排空后获取写锁；同步期间 _refresh_active=true 阻止新写入
 
     async def edit_text(self, entry_id: int, new_text: str) -> EditTextResult
     # 修改指定条目的 OCR 文本；锁外 embed，Write Worker 串行写入；
@@ -312,10 +310,14 @@ class EmbeddingService:
         api_key: str | None = None,
         base_url: str | None = None,
         model: str | None = None,
+        concurrency: int | None = None,
     ) -> None
 
     async def embed(self, text: str) -> list[float]  # 1024 维
 ```
+
+并发控制：使用 asyncio.Semaphore 限制 embed() 并发数。
+concurrency 默认读取 EMBEDDING_CONCURRENCY 环境变量，回退为 5。
 
 ### `docs/api/bot/engine/deepseek_ocr.md`
 
@@ -323,12 +325,14 @@ class EmbeddingService:
 class DeepSeekOcrService:
     MIME_MAP: dict[str, str]
     OCR_PROMPT: str
+    concurrency: int  # OCR 并发上限，默认读取 OCR_CONCURRENCY 环境变量，回退为 5
 
     def __init__(
         self,
         api_key: str | None = None,
         base_url: str | None = None,
         model: str | None = None,
+        concurrency: int | None = None,
     ) -> None
 
     async def ocr(self, image_path: str) -> str
@@ -346,6 +350,7 @@ class PaddleOcrClientService:
         request_timeout: float = 300.0,
         poll_timeout: float = 600.0,
         text_rec_score_thresh: float = 0.9,
+        concurrency: int | None = None,
     ) -> None
 
     async def ocr(self, image_path: str) -> str
@@ -355,6 +360,7 @@ class PaddleOcrClientService:
 - `access_token` 默认从 `PADDLEOCR_ACCESS_TOKEN` 环境变量读取
 - `base_url` 默认从 `PADDLEOCR_BASE_URL` 环境变量读取
 - `model` 默认 `Model.PP_OCRV6`
+- `concurrency` OCR 并发上限，默认读取 `OCR_CONCURRENCY` 环境变量，回退为 5
 - `text_rec_score_thresh` 置信度阈值（0~1），低于此值的文本行被过滤；设为 0 关闭过滤
 - `ocr()` 返回识别文本（已去除所有空白字符，空字符串表示无结果）；支持新版 API dict 格式（`rec_texts`）与旧版格式自动适配
 - `close()` 释放 HTTP 会话
@@ -369,6 +375,7 @@ class RerankService:
         api_key: str | None = None,
         base_url: str | None = None,
         model: str | None = None,
+        concurrency: int | None = None,
     ) -> None
 
     async def rerank(
@@ -377,6 +384,8 @@ class RerankService:
         candidates: list[AIMatchCandidate],
     ) -> int  # 1-based 序号，0 表示放弃精排
 ```
+
+并发控制：使用 asyncio.Semaphore 限制 rerank() 并发数，默认读取 RERANK_CONCURRENCY 环境变量，回退为 5。
 
 ### `docs/api/bot/engine/image_optimizer.md`
 
@@ -396,11 +405,14 @@ class ImageOptimizer:
         self,
         jpeg_quality: int = 95,
         webp_quality: int = 80,
+        concurrency: int | None = None,
     ) -> None
 
     async def optimize(self, image_path: str | Path) -> OptimizeResult
     # Raises: FileNotFoundError, ValueError, RuntimeError
 ```
+
+并发控制：使用 asyncio.Semaphore 限制 optimize() 并发数，默认读取 COMPRESS_CONCURRENCY 环境变量，回退为 5。
 
 ### `docs/api/bot/bot.md`
 
@@ -410,7 +422,7 @@ NoneBot2 应用入口，详见 `docs/api/bot/bot.md`。
 - Startup hook：`_on_startup()` — 创建 OCR/Embedding/Rerank/ImageOptimizer 服务，创建 `MetadataStore(INDEX_DB_PATH)` + `VectorStore(CHROMA_DIR)` 并注入 `IndexManager`，`load()` 后注册到 `app_state`、后台执行索引同步；根据 `OCR_PROVIDER` 环境变量选择 OCR 引擎（`paddle`/`deepseek`）
 - Shutdown hook：`_on_shutdown()` — 关闭 OCR 服务 HTTP 会话，并 `close()` 两个 Store（sqlite 连接 + chroma PersistentClient）
 - `_background_sync()` — 后台同步任务，调用 `IndexManager.refresh()` 以独占写锁执行同步；同步失败时记录日志，Bot 继续运行
-- 环境变量：`BOT_HOST`（默认 `0.0.0.0`）、`BOT_PORT`（默认 `8080`，无效值回退 8080）、`SYNC_CONCURRENCY`（默认 5）、`READ_LOCK_TIMEOUT`（默认 `00:00:30`）、`ADD_COMMAND_TIMEOUT`（默认 `00:01:00`）
+- 环境变量：`BOT_HOST`（默认 `0.0.0.0`）、`BOT_PORT`（默认 `8080`，无效值回退 8080）、`READ_LOCK_TIMEOUT`（默认 `00:00:30`）、`ADD_COMMAND_TIMEOUT`（默认 `00:01:00`）、`EMBEDDING_CONCURRENCY`（默认 5）、`OCR_CONCURRENCY`（默认 5）、`RERANK_CONCURRENCY`（默认 5）、`COMPRESS_CONCURRENCY`（默认 5）
 
 ### `docs/api/bot/logging_config.md`
 

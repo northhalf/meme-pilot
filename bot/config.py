@@ -14,6 +14,34 @@ INDEX_DB_PATH = DATA_DIR / "index.db"
 CHROMA_DIR = DATA_DIR / "chroma"
 
 
+def read_bot_port() -> int:
+    """从环境变量读取 Bot 监听端口，无效值回退为 8080。"""
+    raw = os.environ.get("BOT_PORT", "8080")
+    try:
+        return int(raw)
+    except (ValueError, TypeError):
+        return 8080
+
+
+def read_int_env(key: str, default: int) -> int | None:
+    """从环境变量读取可选整数值。
+
+    读取指定环境变量的值并转为 int，无效值或缺失时返回 None。
+    Service 收到 None 后会回退到自身的默认值（通常是 5）。
+
+    Returns:
+        有效正整数或 None。
+    """
+    raw = os.environ.get(key, default)
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+        return value if value > 0 else None
+    except ValueError:
+        return None
+
+
 def read_session_timeout() -> int:
     """从环境变量读取会话超时秒数。
 

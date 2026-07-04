@@ -8,7 +8,7 @@
 
 ---
 
-### `__init__(access_token: str | None = None, base_url: str | None = None, model: Model | str | None = None, request_timeout: float = 300.0, poll_timeout: float = 600.0, text_rec_score_thresh: float = 0.9) -> None`
+### `__init__(access_token: str | None = None, base_url: str | None = None, model: Model | str | None = None, request_timeout: float = 300.0, poll_timeout: float = 600.0, text_rec_score_thresh: float = 0.9, concurrency: int | None = None) -> None`
 
 | 参数 | 类型 | 默认 | 说明 |
 |------|------|------|------|
@@ -18,6 +18,7 @@
 | `request_timeout` | `float` | `300.0` | 请求超时秒数 |
 | `poll_timeout` | `float` | `600.0` | 轮询超时秒数 |
 | `text_rec_score_thresh` | `float` | `0.9` | 置信度阈值（0~1），低于此值的文本行被过滤；设为 0 关闭过滤 |
+| `concurrency` | `int \| None` | `None` | OCR API 并发上限，默认从 `OCR_CONCURRENCY` 环境变量读取，回退为 5。使用 `asyncio.Semaphore` 限制并发 ocr() 调用数。 |
 
 ---
 

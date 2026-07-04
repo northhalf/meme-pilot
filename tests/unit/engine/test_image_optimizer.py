@@ -162,3 +162,57 @@ class TestCompressGif:
         with Image.open(gif) as optimized:
             assert optimized.format == "GIF"
             assert getattr(optimized, "n_frames", 0) == 3
+
+
+class TestImageOptimizerSemaphore:
+    """验证 ImageOptimizer 的 Semaphore 并发控制。"""
+
+    @pytest.mark.asyncio
+    async def test_default_concurrency(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """不传 concurrency 时使用环境变量默认值 (5)。"""
+        monkeypatch.delenv("COMPRESS_CONCURRENCY", raising=False)
+        service = ImageOptimizer()
+        assert service._semaphore._value == 5
+
+    @pytest.mark.asyncio
+    async def test_custom_concurrency(self) -> None:
+        """传 concurrency=2 时 Semaphore 值为 2。"""
+        service = ImageOptimizer(concurrency=2)
+        assert service._semaphore._value == 2
+
+    @pytest.mark.asyncio
+    async def test_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """设置 COMPRESS_CONCURRENCY 环境变量时生效。"""
+        monkeypatch.setenv("COMPRESS_CONCURRENCY", "3")
+        service = ImageOptimizer()
+        assert service._semaphore._value == 3
+
+    @pytest.mark.asyncio
+    async def test_semaphore_blocks_concurrent(self, tmp_path: Path) -> None:
+        """concurrency=1 时第二个并发调用应阻塞。"""
+        import time
+
+        service = ImageOptimizer(concurrency=1)
+
+        img1 = tmp_path / "test1.jpg"
+        img1.write_text("1234")
+        img2 = tmp_path / "test2.jpg"
+        img2.write_text("5678")
+
+        def slow_compress(path: Path, original_size: int) -> int:
+            time.sleep(10)
+            return 100
+
+        service._compress_jpeg = slow_compress  # type: ignore[method-assign]
+
+        task1 = asyncio.create_task(service.optimize(str(img1)))
+        await asyncio.sleep(0.05)
+
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(service.optimize(str(img2)), timeout=0.1)
+
+        task1.cancel()
+        try:
+            await task1
+        except (asyncio.CancelledError, RuntimeError):
+            pass

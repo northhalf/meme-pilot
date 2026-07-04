@@ -6,6 +6,7 @@ deepseek-ai/DeepSeek-OCR 视觉模型进行图片文字识别。
 实现 index_manager.OcrProvider 协议。
 """
 
+import asyncio
 import base64
 import logging
 import os
@@ -68,6 +69,7 @@ class DeepSeekOcrService:
         api_key: str | None = None,
         base_url: str | None = None,
         model: str | None = None,
+        concurrency: int | None = None,
     ) -> None:
         """初始化 DeepSeekOcrService。
 
@@ -77,6 +79,8 @@ class DeepSeekOcrService:
                       回退为 https://api.siliconflow.cn/v1。
             model: OCR 模型名，默认从 SILICONFLOW_OCR_MODEL 环境变量读取，
                    回退为 deepseek-ai/DeepSeek-OCR。
+            concurrency: 并发数，默认从 OCR_CONCURRENCY 环境变量读取，
+                         回退为 5。
         """
         self._api_key = api_key or os.environ.get("SILICONFLOW_API_KEY", "")
         self._base_url = base_url or os.environ.get(
@@ -90,6 +94,9 @@ class DeepSeekOcrService:
             api_key=self._api_key,
             base_url=self._base_url,
         )
+
+        c = concurrency or int(os.environ.get("OCR_CONCURRENCY", 5))
+        self._semaphore = asyncio.Semaphore(c)
 
     async def ocr(self, image_path: str) -> str:
         """对图片执行 OCR 识别。
@@ -123,33 +130,34 @@ class DeepSeekOcrService:
         data_url = f"data:{mime_type};base64,{base64_data}"
 
         # 调用 vision API
-        logger.debug("调用 DeepSeek-OCR: %s", path.name)
-        try:
-            response = await self._client.chat.completions.create(
-                model=self._model,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image_url",
-                                "image_url": {"url": data_url},
-                            },
-                            {
-                                "type": "text",
-                                "text": self.OCR_PROMPT,
-                            },
-                        ],
-                    }
-                ],
-            )
-        except Exception as exc:
-            raise RuntimeError(f"DeepSeek-OCR API 调用失败: {exc}") from exc
+        async with self._semaphore:
+            logger.debug("调用 DeepSeek-OCR: %s", path.name)
+            try:
+                response = await self._client.chat.completions.create(
+                    model=self._model,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "image_url",
+                                    "image_url": {"url": data_url},
+                                },
+                                {
+                                    "type": "text",
+                                    "text": self.OCR_PROMPT,
+                                },
+                            ],
+                        }
+                    ],
+                )
+            except Exception as exc:
+                raise RuntimeError(f"DeepSeek-OCR API 调用失败: {exc}") from exc
 
-        raw = response.choices[0].message.content or ""
-        text = "".join(_clean_ocr_result(raw).split())
-        logger.debug("OCR 完成: %s → %d 字符", path.name, len(text))
-        return text
+            raw = response.choices[0].message.content or ""
+            text = "".join(_clean_ocr_result(raw).split())
+            logger.debug("OCR 完成: %s → %d 字符", path.name, len(text))
+            return text
 
     async def close(self) -> None:
         """释放 AsyncOpenAI HTTP 客户端会话。"""

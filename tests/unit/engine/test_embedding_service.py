@@ -1,5 +1,7 @@
 """EmbeddingService 单元测试。"""
 
+import asyncio
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -102,3 +104,58 @@ class TestEmbed:
 
         with pytest.raises(RuntimeError, match="返回为空"):
             await service.embed("test text")
+
+
+class TestEmbeddingSemaphore:
+    """验证 EmbeddingService 的 Semaphore 并发控制。"""
+
+    @pytest.mark.asyncio
+    async def test_default_concurrency(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """不传 concurrency 时使用环境变量默认值 (5)。"""
+        monkeypatch.delenv("EMBEDDING_CONCURRENCY", raising=False)
+        service = EmbeddingService(api_key="sk-test", base_url="http://test")
+        assert service._semaphore._value == 5
+
+    @pytest.mark.asyncio
+    async def test_custom_concurrency(self) -> None:
+        """传 concurrency=2 时 Semaphore 值为 2。"""
+        service = EmbeddingService(
+            api_key="sk-test", base_url="http://test", concurrency=2
+        )
+        assert service._semaphore._value == 2
+
+    @pytest.mark.asyncio
+    async def test_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """设置 EMBEDDING_CONCURRENCY 环境变量时生效。"""
+        monkeypatch.setenv("EMBEDDING_CONCURRENCY", "3")
+        service = EmbeddingService(api_key="sk-test", base_url="http://test")
+        assert service._semaphore._value == 3
+
+    @pytest.mark.asyncio
+    async def test_semaphore_blocks_concurrent(self) -> None:
+        """concurrency=1 时第二个并发调用应阻塞。"""
+        from unittest.mock import AsyncMock, MagicMock
+
+        service = EmbeddingService(
+            api_key="sk-test", base_url="http://test", concurrency=1
+        )
+
+        async def slow_create(*args: object, **kwargs: object) -> MagicMock:
+            await asyncio.sleep(10)
+            mock_r = MagicMock()
+            mock_r.data = [MagicMock(embedding=[0.1])]
+            return mock_r
+
+        service._client.embeddings.create = AsyncMock(side_effect=slow_create)
+
+        task1 = asyncio.create_task(service.embed("text1"))
+        await asyncio.sleep(0.05)  # 确保 task1 进入 semaphore
+
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(service.embed("text2"), timeout=0.1)
+
+        task1.cancel()
+        try:
+            await task1
+        except asyncio.CancelledError:
+            pass

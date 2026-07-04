@@ -1,5 +1,7 @@
 """rerank_service 单元测试。"""
 
+import asyncio
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,9 +14,15 @@ from bot.engine.rerank_service import RerankService, _build_candidates_text, _pa
 def sample_candidates() -> list[AIMatchCandidate]:
     """创建测试用候选列表。"""
     return [
-        AIMatchCandidate(rank=1, entry_id=1, image_path="a.jpg", text="开心", similarity=0.9),
-        AIMatchCandidate(rank=2, entry_id=2, image_path="b.jpg", text="难过", similarity=0.8),
-        AIMatchCandidate(rank=3, entry_id=3, image_path="c.jpg", text="生气", similarity=0.7),
+        AIMatchCandidate(
+            rank=1, entry_id=1, image_path="a.jpg", text="开心", similarity=0.9
+        ),
+        AIMatchCandidate(
+            rank=2, entry_id=2, image_path="b.jpg", text="难过", similarity=0.8
+        ),
+        AIMatchCandidate(
+            rank=3, entry_id=3, image_path="c.jpg", text="生气", similarity=0.7
+        ),
     ]
 
 
@@ -29,7 +37,9 @@ def mock_openai():
 class TestBuildCandidatesText:
     """_build_candidates_text 测试。"""
 
-    def test_build_candidates_text(self, sample_candidates: list[AIMatchCandidate]) -> None:
+    def test_build_candidates_text(
+        self, sample_candidates: list[AIMatchCandidate]
+    ) -> None:
         """测试候选列表格式化。"""
         result = _build_candidates_text(sample_candidates)
         expected = "1. 开心\n2. 难过\n3. 生气"
@@ -138,3 +148,59 @@ class TestRerankService:
 
         with pytest.raises(ValueError, match="候选列表不能为空"):
             await service.rerank("开心的表情", [])
+
+
+class TestRerankSemaphore:
+    """验证 RerankService 的 Semaphore 并发控制。"""
+
+    @pytest.mark.asyncio
+    async def test_default_concurrency(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """不传 concurrency 时使用环境变量默认值 (5)。"""
+        monkeypatch.delenv("RERANK_CONCURRENCY", raising=False)
+        service = RerankService(api_key="sk-test")
+        assert service._semaphore._value == 5
+
+    @pytest.mark.asyncio
+    async def test_custom_concurrency(self) -> None:
+        """传 concurrency=2 时 Semaphore 值为 2。"""
+        service = RerankService(api_key="sk-test", concurrency=2)
+        assert service._semaphore._value == 2
+
+    @pytest.mark.asyncio
+    async def test_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """设置 RERANK_CONCURRENCY 环境变量时生效。"""
+        monkeypatch.setenv("RERANK_CONCURRENCY", "3")
+        service = RerankService(api_key="sk-test")
+        assert service._semaphore._value == 3
+
+    @pytest.mark.asyncio
+    async def test_semaphore_blocks_concurrent(
+        self, sample_candidates: list[AIMatchCandidate]
+    ) -> None:
+        """concurrency=1 时第二个并发调用应阻塞。"""
+        service = RerankService(
+            api_key="sk-test", base_url="http://test", concurrency=1
+        )
+
+        async def slow_create(*args: object, **kwargs: object) -> MagicMock:
+            await asyncio.sleep(10)
+            mock_r = MagicMock()
+            mock_r.choices = [MagicMock()]
+            mock_r.choices[0].message.content = "1"
+            return mock_r
+
+        service._client.chat.completions.create = AsyncMock(side_effect=slow_create)
+
+        task1 = asyncio.create_task(service.rerank("desc1", sample_candidates))
+        await asyncio.sleep(0.05)
+
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(
+                service.rerank("desc2", sample_candidates), timeout=0.1
+            )
+
+        task1.cancel()
+        try:
+            await task1
+        except asyncio.CancelledError:
+            pass

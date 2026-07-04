@@ -32,12 +32,13 @@
 
 ---
 
-### `__init__(jpeg_quality: int = 95, webp_quality: int = 80) -> None`
+### `__init__(jpeg_quality: int = 95, webp_quality: int = 80, concurrency: int | None = None) -> None`
 
 | 参数 | 类型 | 默认 | 说明 |
 |------|------|------|------|
 | `jpeg_quality` | `int` | `95` | JPEG 重编码质量（1-100） |
 | `webp_quality` | `int` | `80` | WebP 无损压缩质量（0-100） |
+| `concurrency` | `int \| None` | `None` | 图片压缩并发上限，默认从 `COMPRESS_CONCURRENCY` 环境变量读取，回退为 5。使用 `asyncio.Semaphore` 限制并发 optimize() 调用数，防止 `asyncio.to_thread` 线程池耗尽。 |
 
 ---
 

@@ -1,5 +1,7 @@
 """DeepSeekOcrService 单元测试。"""
 
+import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -153,7 +155,9 @@ class TestOcr:
 
         mock_response = MagicMock()
         mock_choice = MagicMock()
-        mock_choice.message.content = "<|ref|>加 班\t心 累<|/ref|><|det|>[[1,2]]<|/det|>"
+        mock_choice.message.content = (
+            "<|ref|>加 班\t心 累<|/ref|><|det|>[[1,2]]<|/det|>"
+        )
         mock_response.choices = [mock_choice]
 
         service = DeepSeekOcrService(api_key="test-key")
@@ -161,3 +165,60 @@ class TestOcr:
 
         result = await service.ocr(str(img))
         assert result == "加班心累"
+
+
+class TestDeepSeekOcrSemaphore:
+    """验证 DeepSeekOcrService 的 Semaphore 并发控制。"""
+
+    @pytest.mark.asyncio
+    async def test_default_concurrency(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """不传 concurrency 时使用环境变量默认值 (5)。"""
+        monkeypatch.delenv("OCR_CONCURRENCY", raising=False)
+        service = DeepSeekOcrService(api_key="sk-test")
+        assert service._semaphore._value == 5
+
+    @pytest.mark.asyncio
+    async def test_custom_concurrency(self) -> None:
+        """传 concurrency=2 时 Semaphore 值为 2。"""
+        service = DeepSeekOcrService(api_key="sk-test", concurrency=2)
+        assert service._semaphore._value == 2
+
+    @pytest.mark.asyncio
+    async def test_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """设置 OCR_CONCURRENCY 环境变量时生效。"""
+        monkeypatch.setenv("OCR_CONCURRENCY", "3")
+        service = DeepSeekOcrService(api_key="sk-test")
+        assert service._semaphore._value == 3
+
+    @pytest.mark.asyncio
+    async def test_semaphore_blocks_concurrent(self, tmp_path: Path) -> None:
+        """concurrency=1 时第二个并发调用应阻塞。"""
+        service = DeepSeekOcrService(
+            api_key="sk-test", base_url="http://test", concurrency=1
+        )
+
+        img1 = tmp_path / "test1.png"
+        img1.write_text("fake-data")
+        img2 = tmp_path / "test2.png"
+        img2.write_text("fake-data")
+
+        async def slow_create(*args: object, **kwargs: object) -> MagicMock:
+            await asyncio.sleep(10)
+            mock_r = MagicMock()
+            mock_r.choices = [MagicMock()]
+            mock_r.choices[0].message.content = "text"
+            return mock_r
+
+        service._client.chat.completions.create = AsyncMock(side_effect=slow_create)
+
+        task1 = asyncio.create_task(service.ocr(str(img1)))
+        await asyncio.sleep(0.05)
+
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(service.ocr(str(img2)), timeout=0.1)
+
+        task1.cancel()
+        try:
+            await task1
+        except asyncio.CancelledError:
+            pass

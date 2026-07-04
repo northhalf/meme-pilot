@@ -217,7 +217,6 @@ class SetSpeakerResult:
 ```python
 class IndexManager:
     SUPPORTED_EXTENSIONS: frozenset[str]
-    DEFAULT_SYNC_CONCURRENCY: int
     read_timeout: float
     add_user_timeout: float
 
@@ -232,7 +231,6 @@ class IndexManager:
         optimizer: ImageOptimizer | None = None,
         keyword_searcher: KeywordSearcher | None = None,
         ai_matcher: AIMatcher | None = None,
-        sync_concurrency: int | None = None,
     ) -> None
 
     def load(self) -> None

@@ -19,6 +19,7 @@ class EmbeddingService:
         api_key: str | None = None,
         base_url: str | None = None,
         model: str | None = None,
+        concurrency: int | None = None,
     ) -> None
 
     async def embed(self, text: str) -> list[float]
@@ -28,13 +29,14 @@ class EmbeddingService:
 
 ## 构造函数
 
-### `__init__(api_key=None, base_url=None, model=None) -> None`
+### `__init__(api_key=None, base_url=None, model=None, concurrency=None) -> None`
 
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `api_key` | `str \| None` | `None` | API Key，默认从 `EMBEDDING_API_KEY` 环境变量读取 |
 | `base_url` | `str \| None` | `None` | API 地址，默认从 `EMBEDDING_BASE_URL` 环境变量读取，回退为 `https://api.siliconflow.cn/v1` |
 | `model` | `str \| None` | `None` | Embedding 模型名，默认从 `EMBEDDING_MODEL` 环境变量读取，回退为 `BAAI/bge-m3` |
+| `concurrency` | `int \| None` | `None` | Embedding API 并发上限，默认从 `EMBEDDING_CONCURRENCY` 环境变量读取，回退为 5。使用 `asyncio.Semaphore` 限制并发 embed() 调用数。 |
 
 参数优先级：构造参数 > 环境变量 > 默认值。
 
@@ -70,3 +72,4 @@ class EmbeddingService:
 | `EMBEDDING_API_KEY` | API Key | `""` |
 | `EMBEDDING_BASE_URL` | API 地址 | `https://api.siliconflow.cn/v1` |
 | `EMBEDDING_MODEL` | 模型名 | `BAAI/bge-m3` |
+| `EMBEDDING_CONCURRENCY` | Embedding API 并发上限 | `5` |

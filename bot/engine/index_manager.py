@@ -9,7 +9,6 @@ import asyncio
 import itertools
 import logging
 import shutil
-from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
@@ -243,14 +242,6 @@ class AddResult:
     moved_to: str | None = None
 
 
-@dataclass
-class _AddRequest:
-    """Add Worker 任务单元。"""
-
-    filename: str
-    future: asyncio.Future[AddResult]
-
-
 class IndexManager:
     """索引管理薄编排层。
 
@@ -265,25 +256,17 @@ class IndexManager:
         _keyword_searcher: 关键词搜索器，由 IndexManager 持锁后调用。
         _ai_matcher: AI 匹配器，由 IndexManager 持锁后调用。
         _rwlock: 读写锁，写者优先。
-        _state_cond: add worker 与 refresh 的协调 Condition。
-        _add_requests: 等待处理的 /add 任务 FIFO 队列。
-        _add_in_flight: 当前正在执行 _process_image_pipeline 或 _write_entry 的任务数。
-        _refresh_pending: 是否有 refresh 正在等待 in_flight add 完成。
         _refresh_active: 是否有 refresh 正在执行写锁内的同步。
-        _add_workers: add worker task 列表。
         _shutting_down: 是否正在关闭。
-        _add_concurrency: add worker 并发上限。
-        _sync_semaphore: sync 阶段2 的 OCR/embed 并发信号量。
+        _write_drained: 写队列排空 Event（初始已 set；refresh 等待它之后获取写锁）。
 
     Class Attributes:
         SUPPORTED_EXTENSIONS: 支持的图片扩展名集合。
-        DEFAULT_SYNC_CONCURRENCY: 并行同步默认并发上限。
     """
 
     SUPPORTED_EXTENSIONS: frozenset[str] = frozenset(
         {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
     )
-    DEFAULT_SYNC_CONCURRENCY: int = 5
 
     def __init__(
         self,
@@ -296,7 +279,6 @@ class IndexManager:
         optimizer: ImageOptimizerProtocol | None = None,
         keyword_searcher: KeywordSearcher | None = None,
         ai_matcher: AIMatcher | None = None,
-        sync_concurrency: int | None = None,
     ) -> None:
         """初始化 IndexManager。
 
@@ -310,7 +292,6 @@ class IndexManager:
             optimizer: 图片压缩器。
             keyword_searcher: 关键词搜索器，由 IndexManager 持锁后调用。
             ai_matcher: AI 匹配器，由 IndexManager 持锁后调用。
-            sync_concurrency: 并发上限，None/非正用默认值。
         """
         self._metadata_store = metadata_store
         self._vector_store = vector_store
@@ -329,24 +310,13 @@ class IndexManager:
         self.add_user_timeout = float(read_add_command_timeout())
 
         self._rwlock = IndexRwLock()
-        self._state_cond = asyncio.Condition()
-        self._add_requests: deque[_AddRequest] = deque()
-        self._add_in_flight = 0
-        self._refresh_pending = False
         self._refresh_active = False
         self._refresh_task: asyncio.Task | None = None
-        self._add_workers: list[asyncio.Task] = []
         self._shutting_down = False
         self._write_queue: asyncio.Queue[_WriteRequest] = asyncio.Queue()
         self._write_worker_task: asyncio.Task | None = None
-
-        concurrency = (
-            sync_concurrency
-            if isinstance(sync_concurrency, int) and sync_concurrency > 0
-            else self.DEFAULT_SYNC_CONCURRENCY
-        )
-        self._add_concurrency = concurrency
-        self._sync_semaphore = asyncio.Semaphore(concurrency)
+        self._write_drained = asyncio.Event()
+        self._write_drained.set()
 
     # ------------------------------------------------------------------
     # load / 查询
@@ -412,7 +382,7 @@ class IndexManager:
             return await self._ai_matcher.match_with_vector(description, query_vector)
 
     async def add(self, filename: str) -> AddResult:
-        """提交 /add 任务到 FIFO 队列，等待执行完成。
+        """提交 /add 任务并等待执行完成。
 
         Args:
             filename: memes/ 下的文件名。
@@ -421,25 +391,34 @@ class IndexManager:
             AddResult 描述添加结果。
 
         Raises:
-            RefreshInProgressError: 当前有刷新任务在运行或等待中。
+            RefreshInProgressError: 当前有刷新任务在运行。
             IndexAddCancelledError: Bot 正在关闭。
         """
+        if self._shutting_down:
+            raise IndexAddCancelledError("Bot 正在关闭")
+        if self._refresh_active:
+            raise RefreshInProgressError("索引正在批量刷新，请稍后再试")
+
+        text, embedding = await self._process_image_pipeline(filename)
+
+        # TOCTOU 防护
+        if self._shutting_down:
+            raise IndexAddCancelledError("Bot 正在关闭")
+        if self._refresh_active:
+            raise RefreshInProgressError("索引正在批量刷新，请稍后再试")
+
+        self._ensure_write_worker()
         loop = asyncio.get_running_loop()
         future = loop.create_future()
-
-        async with self._state_cond:
-            if self._shutting_down:
-                raise IndexAddCancelledError("Bot 正在关闭")
-            if self._refresh_active or self._refresh_pending:
-                raise RefreshInProgressError("索引正在批量刷新，请稍后再试")
-
-            self._add_requests.append(_AddRequest(filename, future))
-            self._state_cond.notify_all()
-
-            self._add_workers = [w for w in self._add_workers if not w.done()]
-            while len(self._add_workers) < self._add_concurrency:
-                self._add_workers.append(asyncio.create_task(self._add_worker_loop()))
-
+        await self._write_queue.put(
+            _WriteRequest(
+                op=WriteOp.ADD,
+                future=future,
+                filename=filename,
+                text=text,
+                embedding=embedding,
+            )
+        )
         return await future
 
     async def edit_text(self, entry_id: int, new_text: str) -> EditTextResult:
@@ -466,7 +445,7 @@ class IndexManager:
             raise IndexAddCancelledError("Bot 正在关闭")
 
         # 检查②：refresh 状态
-        if self._refresh_active or self._refresh_pending:
+        if self._refresh_active:
             raise RefreshInProgressError("索引正在刷新，请稍后再试")
 
         # 确保 Write Worker 已启动
@@ -489,7 +468,7 @@ class IndexManager:
         # 检查③：TOCTOU 防护（embed 期间 shutting_down 或 refresh 可能已激活）
         if self._shutting_down:
             raise IndexAddCancelledError("Bot 正在关闭")
-        if self._refresh_active or self._refresh_pending:
+        if self._refresh_active:
             raise RefreshInProgressError("索引正在刷新，请稍后再试")
 
         # 提交写入任务
@@ -528,7 +507,7 @@ class IndexManager:
             raise IndexAddCancelledError("Bot 正在关闭")
 
         # 检查②：refresh 状态
-        if self._refresh_active or self._refresh_pending:
+        if self._refresh_active:
             raise RefreshInProgressError("索引正在刷新，请稍后再试")
 
         # 确保 Write Worker 已启动
@@ -536,6 +515,13 @@ class IndexManager:
 
         # 校验 entry 存在 + 获取 old_speaker
         entry = await self._run_sync(self._metadata_store.get_entry, entry_id)
+
+        # TOCTOU 防护（get_entry 期间 shutting_down 或 refresh 可能已激活）
+        if self._shutting_down:
+            raise IndexAddCancelledError("Bot 正在关闭")
+        if self._refresh_active:
+            raise RefreshInProgressError("索引正在刷新，请稍后再试")
+
         if entry is None:
             raise ValueError(f"entry_id={entry_id} 不存在")
         old_speaker = entry.speaker
@@ -565,54 +551,23 @@ class IndexManager:
             SyncResult 描述同步结果。
 
         Raises:
-            RefreshInProgressError: 已有刷新任务在运行、等待中或 Bot 正在关闭。
+            RefreshInProgressError: 已有刷新任务在运行或 Bot 正在关闭。
         """
-        async with self._state_cond:
-            if self._shutting_down:
-                raise RefreshInProgressError("Bot 正在关闭")
-            if self._refresh_active:
-                raise RefreshInProgressError("已有刷新任务在运行")
-            if self._refresh_pending:
-                raise RefreshInProgressError("已有刷新任务在等待中")
-            self._refresh_pending = True
-            self._refresh_task = asyncio.current_task()
-            self._state_cond.notify_all()
+        if self._shutting_down:
+            raise RefreshInProgressError("Bot 正在关闭")
+        if self._refresh_active:
+            raise RefreshInProgressError("已有刷新任务在运行")
 
+        self._refresh_active = True
         try:
-            async with self._state_cond:
-                await self._state_cond.wait_for(
-                    lambda: (
-                        (self._add_in_flight == 0 and self._write_queue.empty())
-                        or self._shutting_down
-                    ),
-                )
-                if self._shutting_down:
-                    self._refresh_pending = False
-                    self._state_cond.notify_all()
-                    raise RefreshInProgressError("Bot 正在关闭")
+            if not self._write_queue.empty():
+                self._write_drained.clear()
+                await self._write_drained.wait()
 
-                for req in self._add_requests:
-                    try:
-                        req.future.set_exception(
-                            RefreshInProgressError("索引正在刷新，已取消等待中的添加")
-                        )
-                    except Exception:
-                        pass
-                self._add_requests.clear()
-
-                self._refresh_pending = False
-                self._refresh_active = True
-                self._state_cond.notify_all()
-
-            # in_flight 已为 0，且新 add/worker 被 _refresh_active 阻塞，安全获取写锁
             async with self._rwlock.write():
                 return await self._run_sync_internal()
         finally:
-            async with self._state_cond:
-                self._refresh_active = False
-                self._refresh_pending = False
-                self._refresh_task = None
-                self._state_cond.notify_all()
+            self._refresh_active = False
 
     def _ensure_write_worker(self) -> None:
         """确保 Write Worker task 已启动（延迟启动）。"""
@@ -667,8 +622,8 @@ class IndexManager:
                         if not req.future.done():
                             req.future.set_exception(exc)
                     finally:
-                        async with self._state_cond:
-                            self._state_cond.notify_all()
+                        if self._write_queue.empty():
+                            self._write_drained.set()
             except asyncio.CancelledError:
                 if not req.future.done():
                     req.future.set_exception(
@@ -771,14 +726,11 @@ class IndexManager:
         """安全关闭 IndexManager。
 
         1. 设置 shutting_down，拒绝新的 add/refresh。
-        2. 取消正在运行的 refresh 与 add worker tasks。
+        2. 取消正在运行的 Write Worker 与 refresh task。
         3. 等待它们实际结束。
-        4. 清空 pending add 队列。
-        5. 关闭 MetadataStore 和 VectorStore。
+        4. 关闭 MetadataStore 和 VectorStore。
         """
-        async with self._state_cond:
-            self._shutting_down = True
-            self._state_cond.notify_all()
+        self._shutting_down = True
 
         tasks_to_wait: list[asyncio.Task] = []
 
@@ -790,22 +742,8 @@ class IndexManager:
             self._refresh_task.cancel()
             tasks_to_wait.append(self._refresh_task)
 
-        for worker in self._add_workers:
-            if not worker.done():
-                worker.cancel()
-                tasks_to_wait.append(worker)
-
         if tasks_to_wait:
             await asyncio.gather(*tasks_to_wait, return_exceptions=True)
-
-        async with self._state_cond:
-            for req in self._add_requests:
-                try:
-                    req.future.set_exception(IndexAddCancelledError("Bot 正在关闭"))
-                except Exception:
-                    pass
-            self._add_requests.clear()
-            self._state_cond.notify_all()
 
         try:
             self._metadata_store.close()
@@ -976,7 +914,7 @@ class IndexManager:
 
         logger.info("开始并行处理 %d 张新增图片", len(new_files))
         raw = await asyncio.gather(
-            *(self._process_new_file(fn) for fn in new_files),
+            *(self._process_image_pipeline(fn) for fn in new_files),
             return_exceptions=True,
         )
 
@@ -986,7 +924,7 @@ class IndexManager:
                 logger.error("处理图片失败: filename=%s, error=%s", filename, result)
                 failed.append(filename)
             else:
-                _, text, embedding = result
+                text, embedding = result
                 success[filename] = (text, embedding)
 
         # winner_keys 初始 = 已有条目的 text 集合
@@ -1018,69 +956,6 @@ class IndexManager:
             logger.info("新增图片已加入索引: id=%s, filename=%s", eid, filename)
 
         return (added, deduped, no_text_moved)
-
-    # ------------------------------------------------------------------
-    # add worker
-    # ------------------------------------------------------------------
-
-    async def _add_worker_loop(self) -> None:
-        """Add Worker 主循环：串行取任务 → 并行 OCR/embed → 写锁写入。"""
-        while True:
-            request: _AddRequest | None = None
-            incremented = False
-            try:
-                async with self._state_cond:
-                    await self._state_cond.wait_for(
-                        lambda: (
-                            not self._shutting_down
-                            and not self._refresh_pending
-                            and not self._refresh_active
-                            and self._add_requests
-                        )
-                    )
-                    request = self._add_requests.popleft()
-                    self._add_in_flight += 1
-                    incremented = True
-
-                text, embedding = await self._process_image_pipeline(request.filename)
-
-                # 阶段 2：通过 Write Worker 串行写入
-                self._ensure_write_worker()
-                loop = asyncio.get_running_loop()
-                future = loop.create_future()
-                await self._write_queue.put(
-                    _WriteRequest(
-                        op=WriteOp.ADD,
-                        future=future,
-                        filename=request.filename,
-                        text=text,
-                        embedding=embedding,
-                    )
-                )
-                result = await future
-                request.future.set_result(result)
-
-            except asyncio.CancelledError:
-                if request is not None:
-                    try:
-                        request.future.set_exception(
-                            IndexAddCancelledError("添加任务被取消")
-                        )
-                    except Exception:
-                        pass
-                raise
-            except Exception as exc:
-                logger.exception("Add worker 异常")
-                if request is not None:
-                    try:
-                        request.future.set_exception(exc)
-                    except Exception:
-                        pass
-            finally:
-                if incremented:
-                    async with self._state_cond:
-                        self._add_in_flight -= 1
-                        self._state_cond.notify_all()
 
     async def _write_entry(
         self, filename: str, text: str, embedding: list[float]
@@ -1206,19 +1081,6 @@ class IndexManager:
         except Exception as exc:
             raise EmbeddingError(f"Embedding 调用失败: {filename}") from exc
         return text, embedding
-
-    async def _process_new_file(self, filename: str) -> tuple[str, str, list[float]]:
-        """处理单张新增图片（受 _sync_semaphore 约束）。
-
-        Args:
-            filename: memes/ 下的文件名。
-
-        Returns:
-            (filename, text, embedding) 三元组，供阶段2 串行分类使用。
-        """
-        async with self._sync_semaphore:
-            text, embedding = await self._process_image_pipeline(filename)
-        return filename, text, embedding
 
     def _move_to_no_text(self, filename: str) -> str:
         """将无文字图片移动到 meme_no_text/ 目录。

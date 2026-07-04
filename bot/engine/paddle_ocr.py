@@ -6,6 +6,7 @@ PaddleOCR 官方云 API 进行图片文字识别。
 实现 index_manager.OcrProvider 协议。
 """
 
+import asyncio
 import logging
 import os
 
@@ -115,6 +116,7 @@ class PaddleOcrClientService:
         request_timeout: float = 300.0,
         poll_timeout: float = 600.0,
         text_rec_score_thresh: float = 0.9,
+        concurrency: int | None = None,
     ) -> None:
         """初始化 PaddleOcrClientService。
 
@@ -127,6 +129,8 @@ class PaddleOcrClientService:
             poll_timeout: 轮询超时秒数，默认 600。
             text_rec_score_thresh: rec_scores 置信度阈值（0~1），低于此值的
                 文本行被过滤。默认 0.9，设为 0 关闭过滤。
+            concurrency: 并发数，默认从 OCR_CONCURRENCY 环境变量读取，
+                         回退为 5。
         """
         token = access_token or os.environ.get("PADDLEOCR_ACCESS_TOKEN", "")
         api_base_url = base_url or os.environ.get("PADDLEOCR_BASE_URL")
@@ -147,6 +151,9 @@ class PaddleOcrClientService:
             poll_timeout=poll_timeout,
         )
 
+        c = concurrency or int(os.environ.get("OCR_CONCURRENCY", 5))
+        self._semaphore = asyncio.Semaphore(c)
+
     async def ocr(self, image_path: str) -> str:
         """对图片执行 OCR 识别。
 
@@ -162,32 +169,33 @@ class PaddleOcrClientService:
         Raises:
             RuntimeError: API 调用失败。
         """
-        logger.debug("调用 PaddleOCR API: %s", image_path)
-        try:
-            result = await self._client.ocr(
-                file_path=image_path,
-                model=self._model,
-                options=self._ocr_options,
-            )
-        except PaddleOCRAPIError as exc:
-            raise RuntimeError(f"PaddleOCR API 调用失败: {exc}") from exc
-        except Exception as exc:
-            raise RuntimeError(f"PaddleOCR 调用异常: {exc}") from exc
+        async with self._semaphore:
+            logger.debug("调用 PaddleOCR API: %s", image_path)
+            try:
+                result = await self._client.ocr(
+                    file_path=image_path,
+                    model=self._model,
+                    options=self._ocr_options,
+                )
+            except PaddleOCRAPIError as exc:
+                raise RuntimeError(f"PaddleOCR API 调用失败: {exc}") from exc
+            except Exception as exc:
+                raise RuntimeError(f"PaddleOCR 调用异常: {exc}") from exc
 
-        # 提取文本
-        if not result.pages:
-            logger.debug("PaddleOCR 无识别结果: %s", image_path)
-            return ""
+            # 提取文本
+            if not result.pages:
+                logger.debug("PaddleOCR 无识别结果: %s", image_path)
+                return ""
 
-        texts: list[str] = []
-        for page in result.pages:
-            text = _extract_text(page.pruned_result, self._text_rec_score_thresh)
-            if text:
-                texts.append(text)
+            texts: list[str] = []
+            for page in result.pages:
+                text = _extract_text(page.pruned_result, self._text_rec_score_thresh)
+                if text:
+                    texts.append(text)
 
-        full_text = "".join(" ".join(texts).split())
-        logger.debug("PaddleOCR 完成: %s → %s", image_path, full_text)
-        return full_text
+            full_text = "".join(" ".join(texts).split())
+            logger.debug("PaddleOCR 完成: %s → %s", image_path, full_text)
+            return full_text
 
     async def close(self) -> None:
         """释放 AsyncPaddleOCRClient 内部 HTTP 会话。"""
