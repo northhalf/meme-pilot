@@ -85,11 +85,13 @@ class _WriteRequest:
     """写入任务单元，由 Write Worker 串行处理。
 
     Attributes:
-        op: 操作类型（ADD / EDIT_TEXT）。
+        op: 操作类型（ADD / EDIT_TEXT / SET_SPEAKER）。
         future: 用于返回结果的 asyncio.Future。
-        entry_id: EDIT_TEXT 时为目标 id；ADD 时为 0（store 自动分配）。
+        entry_id: EDIT_TEXT / SET_SPEAKER 时为目标 id；ADD 时为 0（store 自动分配）。
         filename: ADD 时 memes/ 下文件名。
         text: 写入的 text（ADD=OCR text，EDIT_TEXT=新文本）。
+        speaker: SET_SPEAKER 或 ADD 时使用的说话人。
+        tags: ADD 时使用的标签列表。
         embedding: 对应的 embedding 向量。
         old_text: EDIT_TEXT 旧 text（回滚用）。
     """
@@ -100,6 +102,7 @@ class _WriteRequest:
     filename: str = ""
     text: str = ""
     speaker: str | None = None
+    tags: list[str] | None = None
     embedding: list[float] | None = None
     old_text: str = ""
 
@@ -233,6 +236,8 @@ class AddResult:
         text: OCR 文本（无空格）。
         replaced_image_path: reason="replaced" 时为被删旧图路径，否则 None。
         moved_to: reason="no_text" 时为移入 meme_no_text/ 的完整路径，否则 None。
+        speaker: ADD 时写入的说话人（无文字移图时为 None）。
+        tags: ADD 时写入的标签列表（无文字移图时为空列表）。
     """
 
     entry_id: int | None
@@ -240,6 +245,8 @@ class AddResult:
     text: str = ""
     replaced_image_path: str | None = None
     moved_to: str | None = None
+    speaker: str | None = None
+    tags: list[str] = field(default_factory=list)
 
 
 class IndexManager:
@@ -381,11 +388,18 @@ class IndexManager:
         async with self._rwlock.read(timeout=self.read_timeout):
             return await self._ai_matcher.match_with_vector(description, query_vector)
 
-    async def add(self, filename: str) -> AddResult:
+    async def add(
+        self,
+        filename: str,
+        speaker: str | None = None,
+        tags: list[str] | None = None,
+    ) -> AddResult:
         """提交 /add 任务并等待执行完成。
 
         Args:
             filename: memes/ 下的文件名。
+            speaker: 可选说话人。
+            tags: 可选标签列表。
 
         Returns:
             AddResult 描述添加结果。
@@ -416,6 +430,8 @@ class IndexManager:
                 future=future,
                 filename=filename,
                 text=text,
+                speaker=speaker,
+                tags=tags,
                 embedding=embedding,
             )
         )
@@ -602,6 +618,8 @@ class IndexManager:
                                 req.filename,
                                 req.text,
                                 req.embedding,
+                                req.speaker,
+                                req.tags,
                             )
                         elif req.op is WriteOp.EDIT_TEXT:
                             result = await self._execute_edit_text(req)
@@ -958,7 +976,12 @@ class IndexManager:
         return (added, deduped, no_text_moved)
 
     async def _write_entry(
-        self, filename: str, text: str, embedding: list[float]
+        self,
+        filename: str,
+        text: str,
+        embedding: list[float],
+        speaker: str | None = None,
+        tags: list[str] | None = None,
     ) -> AddResult:
         """三分类写入：无文字移图 / 去重替换 / 正常新增。
 
@@ -968,6 +991,8 @@ class IndexManager:
             filename: memes/ 下的文件名。
             text: OCR 去除所有空白后的文本（空串表示无文字）。
             embedding: 与 text 对应的 embedding 向量。
+            speaker: 可选说话人。
+            tags: 可选标签列表。
 
         Returns:
             AddResult 描述本次写入结果（added / replaced / no_text）。
@@ -979,16 +1004,28 @@ class IndexManager:
         if not text:
             moved_to = await self._run_sync(self._move_to_no_text, filename)
             logger.info("OCR 无文字，已移至无文字目录: filename=%s", filename)
-            return AddResult(entry_id=None, reason="no_text", moved_to=moved_to)
+            return AddResult(
+                entry_id=None,
+                reason="no_text",
+                moved_to=moved_to,
+                speaker=None,
+                tags=[],
+            )
 
         # 2. 去重命中已有条目 → update image_path + upsert，删旧图
         old_id = await self._run_sync(self._metadata_store.get_id_by_text, text)
         if old_id is not None:
             old_entry = await self._run_sync(self._metadata_store.get_entry, old_id)
             old_image_path = old_entry.image_path if old_entry else ""
+            old_speaker = old_entry.speaker if old_entry else None
+            old_tags = old_entry.tags if old_entry else []
             # 顺序：先改 sqlite 指向新图，再 upsert 向量，最后删旧图
             await self._run_sync(
-                self._metadata_store.update, old_id, image_path=filename
+                self._metadata_store.update,
+                old_id,
+                image_path=filename,
+                speaker=speaker,
+                tags=tags,
             )
             try:
                 await self._vector_store.upsert(old_id, embedding)
@@ -997,7 +1034,11 @@ class IndexManager:
                     "去重替换 upsert 失败，回滚 update: id=%s, error=%s", old_id, exc
                 )
                 await self._run_sync(
-                    self._metadata_store.update, old_id, image_path=old_image_path
+                    self._metadata_store.update,
+                    old_id,
+                    image_path=old_image_path,
+                    speaker=old_speaker,
+                    tags=old_tags,
                 )
                 (self._memes_dir / filename).unlink(missing_ok=True)
                 raise EmbeddingError(f"去重替换 upsert 失败: {filename}") from exc
@@ -1012,10 +1053,14 @@ class IndexManager:
                 reason="replaced",
                 text=text,
                 replaced_image_path=old_image_path,
+                speaker=speaker,
+                tags=tags or [],
             )
 
         # 3. 正常新增：先 sqlite 后 chroma；upsert 失败回滚 sqlite + 删图
-        eid = await self._run_sync(self._metadata_store.add, filename, text)
+        eid = await self._run_sync(
+            self._metadata_store.add, filename, text, speaker, tags
+        )
         try:
             await self._vector_store.upsert(eid, embedding)
         except Exception as exc:
@@ -1026,7 +1071,13 @@ class IndexManager:
             (self._memes_dir / filename).unlink(missing_ok=True)
             raise EmbeddingError(f"新增 upsert 失败: {filename}") from exc
         logger.info("已添加索引记录: id=%s, filename=%s", eid, filename)
-        return AddResult(entry_id=eid, reason="added", text=text)
+        return AddResult(
+            entry_id=eid,
+            reason="added",
+            text=text,
+            speaker=speaker,
+            tags=tags or [],
+        )
 
     # ------------------------------------------------------------------
     # 管道与工具

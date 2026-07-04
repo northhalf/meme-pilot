@@ -4,9 +4,23 @@
 
 ## 函数
 
+### `format_metadata_line(entry_id, speaker, tags) -> str`
+
+格式化表情包的元数据行。
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `entry_id` | `int` | 索引 id |
+| `speaker` | `str | None` | 说话人，可能为 None |
+| `tags` | `list[str]` | 标记词列表 |
+
+| 返回 | 说明 |
+|------|------|
+| `str` | `tags` 为空时为 `id, 无/说话人`；否则为 `id, 无/说话人, tag1, tag2, ...`（speaker 缺失时显示为 `"无"`） |
+
 ### `execute_search(bot, event, cmd_matcher, keyword) -> None`
 
-核心搜索逻辑。流程：执行搜索 → 结果分支。多结果时注册 session 并启动超时任务。
+核心搜索逻辑。流程：执行搜索 → 结果分支。单结果或用户完成选择时，先发送图片再发送 `format_metadata_line()` 元数据文本消息；多结果时注册 session 并启动超时任务。
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
@@ -52,7 +66,7 @@
 |------|------|
 | `None` | 通过 `matcher.finish()` 直接回复 |
 
-逻辑：got 入口通过 `handler_context` 更新 current_task → `/help`/`/cancel` 旁路拦截 → 选择会话检查 → `handle_selection` → 发送图片 → 清理会话。
+逻辑：got 入口通过 `handler_context` 更新 current_task → `/help`/`/cancel` 旁路拦截 → 选择会话检查 → `handle_selection` → 发送图片 → 发送 `format_metadata_line()` 元数据行 → 清理会话。
 
 ### `got_intercept_bypass(user_id, matcher, text, help_text) -> bool`
 

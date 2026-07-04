@@ -202,9 +202,9 @@ class TestRerank:
             VectorHit(entry_id=3, similarity=0.7),
         ]
         entries = {
-            1: MemeEntry(id=1, image_path="first.jpg", text="第一张"),
-            2: MemeEntry(id=2, image_path="second.jpg", text="第二张"),
-            3: MemeEntry(id=3, image_path="third.jpg", text="第三张"),
+            1: MemeEntry(id=1, image_path="first.jpg", text="第一张", speaker="小明", tags=["搞笑"]),
+            2: MemeEntry(id=2, image_path="second.jpg", text="第二张", speaker="小红", tags=["吐槽"]),
+            3: MemeEntry(id=3, image_path="third.jpg", text="第三张", speaker="小刚", tags=["惊讶"]),
         }
         return AIMatcher(
             MockMetadataStore(entries),
@@ -257,3 +257,20 @@ class TestRerank:
         assert result is not None
         assert result.entry_id == 1
         assert result.source == "embedding"
+
+
+@pytest.mark.anyio
+async def test_candidate_carries_speaker_and_tags() -> None:
+    """召回候选应携带 speaker/tags。"""
+    entries = {
+        1: MemeEntry(id=1, image_path="first.jpg", text="第一张", speaker="小明", tags=["搞笑"]),
+    }
+    matcher = AIMatcher(
+        MockMetadataStore(entries),
+        MockVectorStore(hits=[VectorHit(entry_id=1, similarity=0.9)], count=1),
+        MockEmbeddingProvider(),
+    )
+    result = await matcher.match_with_vector("选第一张", _make_query_vector())
+    assert result is not None
+    assert result.speaker == "小明"
+    assert result.tags == ["搞笑"]

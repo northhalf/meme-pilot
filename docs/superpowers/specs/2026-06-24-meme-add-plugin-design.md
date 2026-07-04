@@ -6,7 +6,7 @@
 
 ## 1. 概述
 
-实现 `/add [目标命名]` 命令，允许授权用户通过 QQ 私聊发送图片添加表情包到本地库。图片经过压缩、OCR、Embedding 后写入索引。
+实现 `/add [speaker <tags...>]` 命令，允许授权用户通过 QQ 私聊发送图片添加表情包到本地库。图片经过压缩、OCR、Embedding 后写入索引。
 
 ## 2. 模块结构
 
@@ -58,7 +58,7 @@ Handlers:
 ### 3.1 Handler 链
 
 ```
-用户: /add [目标命名]
+用户: /add [speaker <tags...>]
   ↓
 handle_add (priority=5, rule=to_me)
   ├─ 授权校验 → 非授权静默忽略

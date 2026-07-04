@@ -131,7 +131,7 @@ class FakeVectorStore:
 
     def __init__(self) -> None:
         self._vecs: dict[int, list[float]] = {}
-        self.upsert_error_for: int | None = None  # 触发某 id upsert 抛错
+        self.upsert_error_for: set[int] | None = None  # 触发这些 id 的 upsert 抛错
 
     def load(self) -> None:
         pass
@@ -143,7 +143,7 @@ class FakeVectorStore:
         return len(self._vecs)
 
     async def upsert(self, entry_id, embedding) -> None:
-        if self.upsert_error_for == entry_id:
+        if self.upsert_error_for is not None and entry_id in self.upsert_error_for:
             raise RuntimeError(f"upsert failed for {entry_id}")
         self._vecs[entry_id] = list(embedding)
 
@@ -434,6 +434,81 @@ async def test_close_cancels_pending_add(index_manager: IndexManager) -> None:
 
 
 # ---------------------------------------------------------------------------
+# add 测试
+# ---------------------------------------------------------------------------
+
+
+class TestAdd:
+    """IndexManager.add() 单元测试。"""
+
+    @pytest.mark.anyio
+    async def test_add_passes_speaker_and_tags(
+        self, index_manager: IndexManager
+    ) -> None:
+        """/add 应把 speaker/tags 写入 sqlite。"""
+        (Path(index_manager._memes_dir) / "text.jpg").write_bytes(b"fake")
+        await index_manager.add("text.jpg", speaker="小明", tags=["吐槽"])
+        metadata_store = cast(FakeMetadataStore, index_manager._metadata_store)
+        entry = metadata_store.get_by_filename("text.jpg")
+        assert entry is not None
+        assert entry.speaker == "小明"
+        assert entry.tags == ["吐槽"]
+
+    @pytest.mark.anyio
+    async def test_add_duplicate_replaces_speaker_and_tags(
+        self, index_manager: IndexManager
+    ) -> None:
+        """去重替换时应覆盖旧 speaker/tags。"""
+
+        class ConstantOcrProvider:
+            async def ocr(self, image_path: str) -> str:
+                return "相同文本"
+
+        # 让两次 add 的 OCR 文本相同，触发去重替换
+        index_manager._ocr_provider = ConstantOcrProvider()
+        (Path(index_manager._memes_dir) / "old.jpg").write_bytes(b"fake")
+        (Path(index_manager._memes_dir) / "new.jpg").write_bytes(b"fake")
+        await index_manager.add("old.jpg", speaker="旧说话人", tags=["旧标签"])
+        await index_manager.add("new.jpg", speaker="新说话人", tags=["新标签"])
+        entry = index_manager._metadata_store.get_entry(1)
+        assert entry is not None
+        assert entry.speaker == "新说话人"
+        assert entry.tags == ["新标签"]
+
+    @pytest.mark.anyio
+    async def test_add_duplicate_upsert_failure_rolls_back_speaker_and_tags(
+        self, index_manager: IndexManager
+    ) -> None:
+        """去重替换时 chroma upsert 失败，sqlite 应回滚到旧 speaker/tags。"""
+
+        class ConstantOcrProvider:
+            async def ocr(self, image_path: str) -> str:
+                return "相同文本"
+
+        index_manager._ocr_provider = ConstantOcrProvider()
+        (Path(index_manager._memes_dir) / "old.jpg").write_bytes(b"fake")
+        (Path(index_manager._memes_dir) / "new.jpg").write_bytes(b"fake")
+
+        # 第一次添加，建立旧 speaker/tags
+        first = await index_manager.add("old.jpg", speaker="旧说话人", tags=["旧标签"])
+        assert first.entry_id is not None
+        old_id = first.entry_id
+
+        # 让去重替换时的 upsert 失败
+        vs = cast(FakeVectorStore, index_manager._vector_store)
+        vs.upsert_error_for = {old_id}
+
+        with pytest.raises(EmbeddingError, match="去重替换 upsert 失败"):
+            await index_manager.add("new.jpg", speaker="新说话人", tags=["新标签"])
+
+        # 验证 sqlite 已回滚到旧 speaker/tags
+        entry = index_manager._metadata_store.get_entry(old_id)
+        assert entry is not None
+        assert entry.speaker == "旧说话人"
+        assert entry.tags == ["旧标签"]
+
+
+# ---------------------------------------------------------------------------
 # edit_text 测试
 # ---------------------------------------------------------------------------
 
@@ -513,7 +588,7 @@ class TestEditText:
 
         # 让 FakeVectorStore 对 eid 的 upsert 抛错
         vs = cast(FakeVectorStore, index_manager._vector_store)
-        vs.upsert_error_for = eid
+        vs.upsert_error_for = {eid}
 
         with pytest.raises(EmbeddingError, match="回滚"):
             await index_manager.edit_text(eid, "加班到崩溃")
@@ -726,11 +801,15 @@ class TestConcurrencyAndDrain:
         in_flight = asyncio.Event()
 
         async def slow_write(
-            filename: str, text: str, embedding: list[float]
+            filename: str,
+            text: str,
+            embedding: list[float],
+            speaker: str | None = None,
+            tags: list[str] | None = None,
         ) -> AddResult:
             in_flight.set()
             await asyncio.sleep(0.3)
-            return await original_write(filename, text, embedding)
+            return await original_write(filename, text, embedding, speaker, tags)
 
         index_manager._write_entry = slow_write
 

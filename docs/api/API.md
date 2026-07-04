@@ -59,6 +59,8 @@ class AIMatchCandidate:
     image_path: str
     text: str
     similarity: float
+    speaker: str | None = None
+    tags: list[str] = field(default_factory=list)
 
 class RerankProvider(Protocol):
     async def rerank(
@@ -74,6 +76,8 @@ class AIMatchResult:
     text: str
     similarity: float
     source: str
+    speaker: str | None = None
+    tags: list[str] = field(default_factory=list)
 
 class AIMatcher:
     def __init__(
@@ -139,6 +143,8 @@ class AddResult:
     text: str = ""
     replaced_image_path: str | None = None
     moved_to: str | None = None
+    speaker: str | None = None
+    tags: list[str] = field(default_factory=list)
 
 class IndexManager:
     SUPPORTED_EXTENSIONS: frozenset[str]
@@ -166,7 +172,7 @@ class IndexManager:
     async def ai_match(self, description: str) -> AIMatchResult | None
     # 锁外 embed，持读锁调用 AIMatcher.match_with_vector()；超时抛 asyncio.TimeoutError
 
-    async def add(self, filename: str) -> AddResult
+    async def add(self, filename: str, speaker: str | None = None, tags: list[str] | None = None) -> AddResult
     # 直接执行压缩-OCR-Embedding 管道后通过 Write Worker 串行写入；pipeline 期间抛 TOCTOU 异常
 
     async def refresh(self) -> SyncResult
@@ -289,6 +295,8 @@ class SearchResult:
     image_path: str
     text: str
     similarity: float
+    speaker: str | None = None
+    tags: list[str] = field(default_factory=list)
 
 class KeywordSearcher:
     def __init__(
@@ -475,10 +483,16 @@ NoneBot2 命令插件，注册 `/refresh` 命令。
 搜索核心逻辑模块，以下划线开头避免 NoneBot2 自动加载为插件。
 
 ```python
+def format_metadata_line(
+    entry_id: int, speaker: str | None, tags: list[str]
+) -> str
+# 格式化表情包元数据行：id, 无/说话人, tag1, tag2, ...；speaker 缺失显示"无"，空 tags 省略
+
 async def execute_search(
     bot: Bot, event: MessageEvent, cmd_matcher: Matcher, keyword: str
 ) -> None
 # 核心搜索逻辑：执行搜索 → 结果分支
+# 单结果/选择命中时先发送图片，再发送 format_metadata_line() 元数据文本消息
 # 多结果时注册 session 并启动超时任务
 # 读锁等待超时时回复"索引更新较慢，请稍后再试"
 
@@ -490,7 +504,7 @@ def handle_selection(
 async def handle_got_selection(
     bot: Bot, event: MessageEvent, matcher: Matcher, selection_msg: Message, error_label: str = "搜索",
 ) -> None
-# got 选择编号共享逻辑（旁路拦截 → 会话检查 → handle_selection → 发送图片）
+# got 选择编号共享逻辑（旁路拦截 → 会话检查 → handle_selection → 发送图片 → 发送元数据行）
 
 async def got_intercept_bypass(
     user_id: str, matcher: Matcher, text: str, HELP_TEXT: str,
@@ -507,7 +521,7 @@ async def got_intercept_bypass(
 帮助文本常量模块，下划线开头避免 NoneBot2 自动加载为插件。
 
 ```python
-_HELP_TEXT: str  # 命令帮助摘要文本
+HELP_TEXT: str  # 命令帮助摘要文本
 ```
 
 - 供 `meme_help.py` 和 `meme_plain_text.py` 共享
@@ -564,9 +578,10 @@ NoneBot2 命令插件，注册 `/cancel` 命令。
 NoneBot2 命令插件，注册 `/add` 命令。
 
 - 依赖：`app_state.get_index_manager()`、`auth.is_authorized()`、`bot.session.session_manager`、`bot.session.timeout_session`、`bot.plugins._search_utils.got_intercept_bypass`、`bot.config.read_session_timeout()`
-- 管道：`IndexManager.add() -> AddResult`
+- 管道：`IndexManager.add(filename, speaker=speaker, tags=tags) -> AddResult`
 - 图片下载：`httpx.AsyncClient`，30s 超时
-- 文件名：`_sanitize_filename()` 安全化 / `_auto_filename()` 自动生成
+- 参数解析：`/add` 后的 token 第一个作为 `speaker`，剩余作为 `tags`，存入 `matcher.state`
+- 文件名：`_auto_filename()` 自动生成 `meme_<YYYYMMDDHHMMSS>_<hash8>`，不再使用用户输入作为文件名基名
 - 文件冲突：`resolve_unique_filename()`
 - 超时：`handle_add` 中创建 selection_id 并注册 `timeout_session` 超时任务；`got` prompt 由 `read_session_timeout()` 动态生成
 - 群聊：授权用户群聊 @bot 调用时回复"此命令仅限私聊使用"
@@ -599,6 +614,7 @@ NoneBot2 命令插件，注册 `/ai` 命令。
 
 - 依赖：`app_state.get_index_manager()`、`auth.is_authorized()`
 - 匹配：`index_manager.ai_match()` 内部持读锁；`asyncio.gather()` 并发执行 send 与 match
+- 命中后先 `matcher.send(...)` 发送图片，再 `matcher.finish(format_metadata_line(...))` 发送文本消息 `id, 无/说话人, tag1, tag2, ...`
 - 错误处理：读锁等待超时回复"索引更新较慢，请稍后再试"
 - 图片：`MessageSegment.image("file://" + str(image_path.resolve()))`
 - 群聊：授权用户群聊 @bot 调用时回复"此命令仅限私聊使用"
@@ -609,7 +625,7 @@ NoneBot2 命令插件，注册 `/search` 命令（薄包装，核心逻辑委托
 
 - 依赖：`auth.is_authorized()`、`_search_utils.execute_search`、`_search_utils.handle_got_selection`、`bot.session.session_manager`
 - 流程：`handle_search` — 授权校验 → 会话检查 → 提取关键词 → `execute_search`
-- 选择：`got_selection` — 薄包装，委托 `_search_utils.handle_got_selection()`
+- 选择：`got_selection` — 薄包装，委托 `_search_utils.handle_got_selection()`；命中后先发送图片，再发送 `format_metadata_line()` 元数据文本消息
 
 ### `bot/config.py`
 

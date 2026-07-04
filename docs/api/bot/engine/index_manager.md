@@ -164,6 +164,8 @@ class AddResult:
     text: str = ""
     replaced_image_path: str | None = None
     moved_to: str | None = None
+    speaker: str | None = None
+    tags: list[str] = field(default_factory=list)
 ```
 
 | 字段 | 类型 | 默认 | 说明 |
@@ -173,6 +175,8 @@ class AddResult:
 | `text` | `str` | `""` | OCR 识别文本（无空格）；无文字时为空字符串 |
 | `replaced_image_path` | `str \| None` | `None` | `reason="replaced"` 时为被删旧图路径，否则为 `None` |
 | `moved_to` | `str \| None` | `None` | `reason="no_text"` 时为移入 `meme_no_text/` 的完整路径，否则为 `None` |
+| `speaker` | `str \| None` | `None` | `reason="added"/"replaced"` 时写入的说话人；无文字移图时为 `None` |
+| `tags` | `list[str]` | `[]` | `reason="added"/"replaced"` 时写入的标签列表；无文字移图时为空列表 |
 
 ---
 
@@ -241,7 +245,7 @@ class IndexManager:
     async def ai_match(self, description: str) -> AIMatchResult | None
     # 锁外 embed，持读锁调用 AIMatcher.match_with_vector()；超时抛 asyncio.TimeoutError
 
-    async def add(self, filename: str) -> AddResult
+    async def add(self, filename: str, speaker: str | None = None, tags: list[str] | None = None) -> AddResult
     # FIFO 入队；refresh 期间抛 RefreshInProgressError；关闭时抛 IndexAddCancelledError；
     # 内部由 Add Worker 串行处理（压缩 → OCR → embed → Write Worker 写库）
 

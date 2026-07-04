@@ -5,7 +5,7 @@
 
 import logging
 import math
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Protocol
 
 from bot.engine.metadata_store import MemeEntry
@@ -25,6 +25,8 @@ class AIMatchCandidate:
         image_path: memes/ 目录下相对路径。
         text: OCR 文本。
         similarity: 余弦相似度。
+        speaker: 说话人，可能为 None。
+        tags: 标记词列表。
     """
 
     rank: int
@@ -32,6 +34,8 @@ class AIMatchCandidate:
     image_path: str
     text: str
     similarity: float
+    speaker: str | None = None
+    tags: list[str] = field(default_factory=list)
 
 
 class MetadataEntryProvider(Protocol):
@@ -107,6 +111,8 @@ class AIMatchResult:
         text: OCR 文本。
         similarity: embedding 余弦相似度。
         source: 结果来源，取值为 "embedding" 或 "rerank"。
+        speaker: 说话人，可能为 None。
+        tags: 标记词列表。
     """
 
     entry_id: int
@@ -114,6 +120,8 @@ class AIMatchResult:
     text: str
     similarity: float
     source: str
+    speaker: str | None = None
+    tags: list[str] = field(default_factory=list)
 
 
 class AIMatcher:
@@ -242,6 +250,8 @@ class AIMatcher:
                     image_path=entry.image_path,
                     text=entry.text,
                     similarity=hit.similarity,
+                    speaker=entry.speaker,
+                    tags=entry.tags,
                 )
             )
         return [
@@ -258,6 +268,8 @@ def _candidate_to_result(candidate: AIMatchCandidate, source: str) -> AIMatchRes
         text=candidate.text,
         similarity=candidate.similarity,
         source=source,
+        speaker=candidate.speaker,
+        tags=candidate.tags,
     )
 
 

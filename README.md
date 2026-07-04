@@ -1,6 +1,6 @@
 # MemePilot
 
-MemePilot 是一个部署在 Docker 中的 QQ 表情包机器人，帮你从本地表情包库中快速找到想要的表情包。/search、/help 和普通文本支持群聊 @bot 使用；/add、/refresh、/ai、/setspeaker 仅限私聊。/cancel 私聊和群聊均可使用。
+MemePilot 是一个部署在 Docker 中的 QQ 表情包机器人，帮你从本地表情包库中快速找到想要的表情包。/search、/help 和普通文本支持群聊 @bot 使用；/add、/refresh、/ai、/edittext、/setspeaker 仅限私聊。/cancel 私聊和群聊均可使用。
 
 隐私说明：表情包图片始终本地存储；OCR 文本会按 `OCR_PROVIDER` 配置发送给对应服务（默认 `paddle` 时使用百度 PaddleOCR 云 API，`deepseek` 时使用 SiliconFlow DeepSeek-OCR）；Embedding 调用由 `EMBEDDING_API_KEY` 指定的服务；LLM 精排调用 DeepSeek。
 
@@ -13,9 +13,9 @@ Bot: 当前可用命令：
      /help：查看命令帮助
      /search <关键词>：按 OCR 文本关键词搜索表情包
      /ai <自然语言描述>：按自然语言描述匹配表情包
-     /add [目标命名]：通过聊天添加一张表情包
-     /edittext <id> <新文本>：修改 OCR 文本
-     /setspeaker <id> [说话人]：修改说话人
+     /add [speaker <tags...>]：通过聊天添加一张表情包
+     /edittext <id> <新文本>：修改指定表情包的 OCR 文本
+     /setspeaker <id> [说话人]：设置或清空表情包的说话人
      /refresh：扫描 memes/ 并增量更新索引
      /cancel：取消当前正在执行的命令
 ```
@@ -26,12 +26,15 @@ Bot: 当前可用命令：
 ```
 你: /search 加班
 Bot: (直接发送匹配的表情包)
-或: 找到多个匹配的表情包，请选择：
-    1. 当你的老板说今天要加班
-    2. 加班到凌晨三点的我
-    回复编号即可 (1-2)，（默认 60 秒内有效，由 SESSION_EXPIRE_TIMEOUT 控制）
+Bot: 42, 无, 吐槽, 加班
+或：
+找到多个匹配的表情包，请选择：
+    1. 当你的老板说今天要加班 -- 12, 无
+    2. 加班到凌晨三点的我 -- 23, 小明, 吐槽, 加班
+    回复编号即可 (1-2)
 你: 2
 Bot: (发送对应表情包)
+Bot: 23, 小明, 吐槽, 加班
 ```
 
 ### 🤖 AI 描述匹配 `/ai`
@@ -39,19 +42,22 @@ Bot: (发送对应表情包)
 你: /ai 一张表达心累的加班表情包
 Bot: 正在根据你的描述搜索表情包，请稍候...
 Bot: (发送最匹配的表情包)
+Bot: 42, 无, 吐槽, 加班
 ```
 
 ### ➕ 聊天添加 `/add`
 ```
-授权用户: /add 加班心累
-Bot: 请发送图片，{SESSION_EXPIRE_TIMEOUT} 秒内有效
+授权用户: /add 小明 吐槽 加班
+Bot: 请发送图片，60 秒内有效
 授权用户: (发送一张图片)
-Bot: 新增表情包✅，识别到的文字为：加班心累时的表情包
+Bot: 新增表情包✅，id：42，识别到的文字为：
+「加班心累时的表情包」
+Bot: 42, 小明, 吐槽, 加班
 ```
 
 OCR 识别到的文字会展示给用户，超 50 字时自动截断并标注总长度。
 
-`/add` 中的目标命名会作为保存到 `memes/` 的文件名基名；搜索文本仍来自 OCR 结果。目标命名会被安全化：路径分隔符、不安全字符和空白会替换为 `_`。如果只发送 `/add` 不带命名，Bot 会根据发送时间和图片内容 hash 自动生成文件名。
+`/add` 后的参数按空白切分，第一个词作为 `speaker`（说话人），剩余词作为 `tags`（标记词）；不填参数时 `speaker` 为空，`tags` 为空列表。文件名始终由 Bot 按 `meme_<YYYYMMDDHHMMSS>_<hash8>` 规则自动生成，不再使用用户输入作为文件名基名。
 
 新增图片会按格式执行无损压缩：`.jpg/.jpeg/.png/.webp/.gif` 会尝试压缩并覆盖原文件，`.bmp` 不压缩。不支持的扩展名不会作为表情包处理。
 
@@ -76,10 +82,10 @@ Bot: 索引更新完成 ✅
 
 `/refresh` 扫描时同样会对新增图片做去重与无文字排除：OCR 文本去重键命中已有条目或其他新图的新增图片会被删除（保留已有或文件名靠前者），无文字图片移至 `meme_no_text/`；完成回复包含新增、删除、去重、无文字移走、失败五项数量。
 
-`/help`、`/search`、`/ai`、`/add`、`/setspeaker`、`/refresh`、`/cancel` 使用同一组授权用户白名单。非授权用户的私聊和群聊消息都会被静默忽略。
+`/help`、`/search`、`/ai`、`/add`、`/edittext`、`/setspeaker`、`/refresh`、`/cancel` 使用同一组授权用户白名单。非授权用户的私聊和群聊消息都会被静默忽略。
 
 ### 群聊支持
-`/search`、`/help` 和普通文本支持在群聊中 @bot 触发。`/add`、`/ai`、`/refresh`、`/setspeaker` 在群聊中 @bot 调用时会回复"此命令仅限私聊使用"。`/cancel` 私聊和群聊均可使用。
+`/search`、`/help` 和普通文本支持在群聊中 @bot 触发。`/add`、`/ai`、`/refresh`、`/edittext`、`/setspeaker` 在群聊中 @bot 调用时会回复"此命令仅限私聊使用"。`/cancel` 私聊和群聊均可使用。
 
 ## 🚀 快速开始
 
@@ -89,7 +95,7 @@ Bot: 索引更新完成 ✅
 - DeepSeek API Key（用于 LLM 精排，[点此获取](https://platform.deepseek.com)）
 - Embedding API Key（任意 OpenAI 兼容服务，默认配置使用 SiliconFlow，[点此获取](https://siliconflow.cn)）
 - OCR 凭证（二选一）：
-  - `OCR_PROVIDER=paddle`（默认）：百度 PaddleOCR 云 API Access Token（[点此获取](https://ai.baidu.com/tech/ocr/general)）
+  - `OCR_PROVIDER=paddle`（默认）：百度 PaddleOCR 云 API Access Token（[点此获取](https://aistudio.baidu.com/paddleocr)）
   - `OCR_PROVIDER=deepseek`：SiliconFlow API Key（与 DeepSeek-OCR 共用同一账户）
 
 ### 部署步骤

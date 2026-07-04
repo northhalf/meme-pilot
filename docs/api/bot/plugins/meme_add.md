@@ -6,7 +6,7 @@
 
 | 命令 | 格式 | 说明 |
 |------|------|------|
-| `/add` | `/add [目标命名]` | 通过聊天添加表情包到索引 |
+| `/add` | `/add [speaker <tags...>]` | 通过聊天添加表情包到索引 |
 
 ## 依赖
 
@@ -17,6 +17,7 @@
 | `session_manager` | `bot.session` | 会话状态管理（activate/deactivate/create_selection/remove_selection/reset_current_task） |
 | `timeout_session()` | `bot.session` | 会话超时检查任务 |
 | `got_intercept_bypass()` | `bot.plugins._search_utils` | Got 入口旁路拦截 /help 和 /cancel |
+| `format_metadata_line()` | `bot.plugins._search_utils` | 格式化成功回复后的元数据行 |
 | `read_session_timeout()` | `bot.config` | 读取会话超时秒数，用于动态 prompt |
 | `extract_image_urls()` | `nonebot.adapters.onebot.v11.helpers` | 从消息提取图片 URL |
 | `resolve_unique_filename()` | `bot.engine.index_manager` | 文件名冲突自动编号 |
@@ -29,7 +30,7 @@
 2. 群聊拦截：非 `"private"` 消息类型回复"此命令仅限私聊使用"
 3. 激活聊天会话（`session_manager.activate_chat`），已有活跃会话则拒绝（回复"已有命令在处理中，请先 /cancel"）
 4. 获取 `IndexManager`，未初始化则回复"服务未就绪"
-5. 捕获目标命名（`/add` 后的文本）存入 `matcher.state`
+5. `/add` 后的参数按空白切分，第一个词作为 `speaker`，剩余词作为 `tags`，存入 `matcher.state`
 6. 创建选择会话（`selection_id` + `session_manager.create_selection`）并启动超时任务（`timeout_session`）
 7. 调用 `session_manager.reset_current_task(user_id)` 清除已结束的 handle task 引用
 8. 回复"请发送图片"并等待用户图片
@@ -47,21 +48,21 @@
 5. **清理选择会话**：收到有效图片后调用 `session_manager.remove_selection(user_id)` 清除选择会话
 6. 获取 `IndexManager`
 7. 下载图片（httpx，30s 超时）
-9. 确定扩展名（URL 路径 → Content-Type），不支持则回复错误
-10. 构建文件名：有目标命名用 `_sanitize_filename()`，否则 `_auto_filename()`（`meme_<时间戳>_<hash8>`）
-11. `resolve_unique_filename()` 处理文件名冲突
-12. 保存图片到 `memes/`
-13. `try/except/else`：
+8. 确定扩展名（URL 路径 → Content-Type），不支持则回复错误
+9. 构建文件名：始终由 `_auto_filename()` 自动生成，格式为 `meme_<YYYYMMDDHHMMSS>_<hash8>`
+10. `resolve_unique_filename()` 处理文件名冲突
+11. 保存图片到 `memes/`
+12. `try/except/else`：
     - `try`：`IndexManager.add()` 执行压缩→OCR→Embedding 管道
     - `except CompressionError/OcrError/EmbeddingError`：分别回复对应错误消息，`deactivate_chat`
-    - `else`：回复成功（`added`/`replaced` 分支附 OCR 文字，`no_text` 分支不变），`deactivate_chat`
-14. `except` 分支：删除刚下载的图片文件（`filepath.unlink(missing_ok=True)`），`deactivate_chat`
+    - `else`：回复成功（`added`/`replaced` 分支附 OCR 文字和 `format_metadata_line()` 元数据行，`no_text` 分支不变），`deactivate_chat`
+13. `except` 分支：删除刚下载的图片文件（`filepath.unlink(missing_ok=True)`），`deactivate_chat`
 
 ## 回复格式
 
-**成功添加：** `新增表情包✅，识别到的文字为：\n「{OCR 文本}」`
+**成功添加：** `新增表情包✅，id：{id}，识别到的文字为：\n「{OCR 文本}」\n{id}, 无/说话人, tag1, tag2, ...`
 
-**替换旧图：** `替换旧图✅，识别到的文字为：\n「{OCR 文本}」`
+**替换旧图：** `替换旧图✅，id：{id}，识别到的文字为：\n「{OCR 文本}」\n{id}, 无/说话人, tag1, tag2, ...`
 
 **无文字：** `未识别到文字，已移至 meme_no_text/`
 

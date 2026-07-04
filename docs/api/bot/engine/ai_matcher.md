@@ -69,6 +69,8 @@ class AIMatchCandidate:
     image_path: str
     text: str
     similarity: float
+    speaker: str | None = None
+    tags: list[str] = field(default_factory=list)
 ```
 
 | 字段 | 类型 | 说明 |
@@ -78,6 +80,8 @@ class AIMatchCandidate:
 | `image_path` | `str` | `memes/` 目录下相对路径 |
 | `text` | `str` | OCR 文本 |
 | `similarity` | `float` | 与用户描述 embedding 的余弦相似度 |
+| `speaker` | `str \| None` | 说话人，可能为 `None` |
+| `tags` | `list[str]` | 标记词列表 |
 
 ---
 
@@ -91,6 +95,8 @@ class AIMatchResult:
     text: str
     similarity: float
     source: str
+    speaker: str | None = None
+    tags: list[str] = field(default_factory=list)
 ```
 
 | 字段 | 类型 | 说明 |
@@ -100,6 +106,8 @@ class AIMatchResult:
 | `text` | `str` | OCR 文本 |
 | `similarity` | `float` | embedding 余弦相似度 |
 | `source` | `str` | 结果来源：`"embedding"` 或 `"rerank"` |
+| `speaker` | `str \| None` | 说话人，可能为 `None` |
+| `tags` | `list[str]` | 标记词列表 |
 
 ---
 

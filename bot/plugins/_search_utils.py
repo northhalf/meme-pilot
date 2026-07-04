@@ -28,6 +28,25 @@ from bot.session import session_manager, timeout_session
 logger = logging.getLogger(__name__)
 
 
+def format_metadata_line(entry_id: int, speaker: str | None, tags: list[str]) -> str:
+    """格式化表情包的元数据行。
+
+    输出格式：id, speaker, tag1, tag2, ...
+    speaker 缺失时显示为"无"；tags 为空时省略 tags 段。
+
+    Args:
+        entry_id: 索引 id。
+        speaker: 说话人，可能为 None。
+        tags: 标记词列表。
+
+    Returns:
+        格式化后的元数据行字符串。
+    """
+    parts = [str(entry_id), speaker if speaker else "无"]
+    parts.extend(tags)
+    return ", ".join(parts)
+
+
 def handle_selection(
     matcher: Matcher,
     candidates: list[SearchResult],
@@ -138,16 +157,19 @@ async def execute_search(
 
     if len(results) == 1:
         session_manager.deactivate_chat(user_id)
-        image_path = MEMES_DIR / results[0].image_path
-        await cmd_matcher.finish(
+        result = results[0]
+        image_path = MEMES_DIR / result.image_path
+        await cmd_matcher.send(
             MessageSegment.image("file://" + str(image_path.resolve()))
         )
+        await cmd_matcher.finish(format_metadata_line(result.entry_id, result.speaker, result.tags))
         return
 
     # 多个结果：格式化选择列表
     lines = ["找到多个匹配的表情包，请选择："]
     for i, r in enumerate(results, 1):
-        lines.append(f"{i}. {r.text}")
+        meta = format_metadata_line(r.entry_id, r.speaker, r.tags)
+        lines.append(f"{i}. {r.text} -- {meta}")
     lines.append(f"回复编号即可 (1-{len(results)})")
 
     # 存储候选、创建选择会话
@@ -211,8 +233,11 @@ async def handle_got_selection(
             # 有效选择：清除选择会话
             session_manager.remove_selection(user_id)
             image_path = MEMES_DIR / result.image_path
-            await matcher.finish(
+            await matcher.send(
                 MessageSegment.image("file://" + str(image_path.resolve()))
+            )
+            await matcher.finish(
+                format_metadata_line(result.entry_id, result.speaker, result.tags)
             )
 
         except RejectedException:

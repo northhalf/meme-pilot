@@ -27,8 +27,9 @@ async def handle_ai(bot: Bot, event: MessageEvent) -> None
 3. 群聊拦截：非 `"private"` 消息类型回复"此命令仅限私聊使用"
 4. 提取描述（去除 `/ai` 前缀）
 5. **并发**：`asyncio.gather()` 同时执行发送进度提示和 `index_manager.ai_match()`
-6. 根据 `ai_match()` 返回值发送结果图片或错误提示
-7. 读锁等待超时时回复"索引更新较慢，请稍后再试"
+6. 命中时先 `matcher.send(...)` 发送匹配图片
+7. 再 `matcher.finish(format_metadata_line(...))` 发送文本消息 `id, 无/说话人, tag1, tag2, ...`（speaker 缺失显示"无"，空 tags 省略）
+8. 读锁等待超时时回复"索引更新较慢，请稍后再试"
 
 ## 错误处理
 

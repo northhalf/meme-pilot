@@ -22,9 +22,8 @@ with (
 ):
     from bot.plugins import meme_add
     from bot.plugins.meme_add import (
-        _build_filename,
+        _auto_filename,
         _get_extension,
-        _sanitize_filename,
         got_image,
         handle_add,
     )
@@ -87,48 +86,53 @@ def _make_response(content_type: str = "image/jpeg") -> MagicMock:
 
 
 # ===========================================================================
-# 辅助函数测试
+# /add 参数解析测试
 # ===========================================================================
 
 
-class TestSanitizeFilename:
-    """_sanitize_filename 测试。"""
+class TestParseAddArgs:
+    """/add 参数解析测试。"""
 
-    def test_unsafe_chars_replaced(self) -> None:
-        """非法字符替换为下划线。"""
-        result = _sanitize_filename('a/b:c*d?"f')
-        assert "/" not in result
-        assert ":" not in result
-        assert "*" not in result
-        assert "?" not in result
-        assert '"' not in result
+    @pytest.mark.asyncio
+    @patch.object(meme_add, "get_index_manager")
+    @patch.object(meme_add, "is_authorized", return_value=True)
+    @patch.object(meme_add, "session_manager")
+    async def test_no_args(self, mock_sm, mock_auth, mock_get_im) -> None:
+        mock_sm.activate_chat.return_value = True
+        mock_get_im.return_value = _make_index_manager()
+        matcher = _make_matcher()
+        await handle_add(_make_bot(), _make_event("111", "/add"), matcher)
+        assert matcher.state["speaker"] is None
+        assert matcher.state["tags"] == []
 
-    def test_whitespace_merged(self) -> None:
-        """连续空白合并为单个下划线。"""
-        result = _sanitize_filename("a   b\t\tc")
-        assert "__" not in result
-        assert "_" in result
+    @pytest.mark.asyncio
+    @patch.object(meme_add, "get_index_manager")
+    @patch.object(meme_add, "is_authorized", return_value=True)
+    @patch.object(meme_add, "session_manager")
+    async def test_speaker_only(self, mock_sm, mock_auth, mock_get_im) -> None:
+        mock_sm.activate_chat.return_value = True
+        mock_get_im.return_value = _make_index_manager()
+        matcher = _make_matcher()
+        await handle_add(_make_bot(), _make_event("111", "/add 小明"), matcher)
+        assert matcher.state["speaker"] == "小明"
+        assert matcher.state["tags"] == []
 
-    def test_strips_leading_trailing_underscores(self) -> None:
-        """首尾下划线被去除。"""
-        result = _sanitize_filename("___abc___")
-        assert result == "abc"
+    @pytest.mark.asyncio
+    @patch.object(meme_add, "get_index_manager")
+    @patch.object(meme_add, "is_authorized", return_value=True)
+    @patch.object(meme_add, "session_manager")
+    async def test_speaker_and_tags(self, mock_sm, mock_auth, mock_get_im) -> None:
+        mock_sm.activate_chat.return_value = True
+        mock_get_im.return_value = _make_index_manager()
+        matcher = _make_matcher()
+        await handle_add(_make_bot(), _make_event("111", "/add 小明 吐槽 加班"), matcher)
+        assert matcher.state["speaker"] == "小明"
+        assert matcher.state["tags"] == ["吐槽", "加班"]
 
-    def test_truncates_at_80(self) -> None:
-        """截断至 80 字符。"""
-        long_name = "a" * 200
-        result = _sanitize_filename(long_name)
-        assert len(result) <= 80
 
-    def test_preserves_chinese(self) -> None:
-        """中文字符保留（非非法字符）。"""
-        result = _sanitize_filename("你好世界")
-        assert result == "你好世界"
-
-    def test_empty_returns_empty(self) -> None:
-        """全非法字符返回空字符串。"""
-        result = _sanitize_filename("/:?*")
-        assert result == ""
+# ===========================================================================
+# 辅助函数测试
+# ===========================================================================
 
 
 class TestGetExtension:
@@ -168,27 +172,6 @@ class TestGetExtension:
         """无法推断时返回 None。"""
         resp = _make_response("text/plain")
         assert _get_extension("https://example.com/image", resp) is None
-
-
-class TestBuildFilename:
-    """_build_filename 测试。"""
-
-    def test_with_target_name(self) -> None:
-        """有目标命名时使用目标命名。"""
-        result = _build_filename("我的表情", b"fake", ".jpg")
-        assert result == "我的表情.jpg"
-
-    def test_empty_target_uses_auto(self) -> None:
-        """空目标命名时自动生成文件名。"""
-        result = _build_filename("", b"fake_data", ".png")
-        assert result.startswith("meme_")
-        assert result.endswith(".png")
-
-    def test_sanitizes_target_name(self) -> None:
-        """目标命名被安全化。"""
-        result = _build_filename("a/b", b"fake", ".jpg")
-        assert "/" not in result
-        assert result.endswith(".jpg")
 
 
 class TestFormatOcrText:
@@ -291,44 +274,6 @@ class TestHandleAdd:
         matcher.finish.assert_awaited_once()
         assert "已有命令在处理中" in matcher.finish.call_args[0][0]
 
-    @pytest.mark.asyncio
-    @patch.object(meme_add, "get_index_manager")
-    @patch.object(meme_add, "is_authorized", return_value=True)
-    @patch.object(meme_add, "session_manager")
-    async def test_target_name_captured(
-        self,
-        mock_sm: MagicMock,
-        mock_auth: MagicMock,
-        mock_get_im: MagicMock,
-    ) -> None:
-        """/add 后的目标命名应正确提取到 state。"""
-        mock_sm.activate_chat.return_value = True
-        mock_get_im.return_value = _make_index_manager()
-
-        matcher = _make_matcher()
-        await handle_add(_make_bot(), _make_event("111", "/add 我的表情"), matcher)
-
-        assert matcher.state["target_name"] == "我的表情"
-
-    @pytest.mark.asyncio
-    @patch.object(meme_add, "get_index_manager")
-    @patch.object(meme_add, "is_authorized", return_value=True)
-    @patch.object(meme_add, "session_manager")
-    async def test_target_name_empty_when_no_arg(
-        self,
-        mock_sm: MagicMock,
-        mock_auth: MagicMock,
-        mock_get_im: MagicMock,
-    ) -> None:
-        """/add 无参数时 target_name 为空字符串。"""
-        mock_sm.activate_chat.return_value = True
-        mock_get_im.return_value = _make_index_manager()
-
-        matcher = _make_matcher()
-        await handle_add(_make_bot(), _make_event("111", "/add"), matcher)
-
-        assert matcher.state["target_name"] == ""
-
 
 # ===========================================================================
 # got_image 测试
@@ -411,7 +356,7 @@ class TestGotImage:
     @patch.object(meme_add, "session_manager")
     @patch.object(meme_add, "got_intercept_bypass", return_value=False)
     @patch.object(meme_add, "resolve_unique_filename")
-    @patch.object(meme_add, "_build_filename", return_value="a.jpg")
+    @patch.object(meme_add, "_auto_filename", return_value="a")
     @patch.object(meme_add, "_get_extension", return_value=".jpg")
     @patch.object(meme_add, "_download_image")
     @patch.object(meme_add, "get_index_manager")
@@ -422,7 +367,7 @@ class TestGotImage:
         mock_get_im: MagicMock,
         mock_download: MagicMock,
         mock_ext: MagicMock,
-        mock_build: MagicMock,
+        mock_auto: MagicMock,
         mock_resolve: MagicMock,
         mock_bypass: MagicMock,
         mock_sm: MagicMock,
@@ -449,29 +394,31 @@ class TestGotImage:
 
         matcher.finish.assert_awaited_once()
         assert "新增表情包" in matcher.finish.call_args[0][0]
+        im.add.assert_awaited_once_with("a.jpg", speaker=None, tags=[])
+        assert "id：1" in matcher.finish.call_args[0][0]
 
     @pytest.mark.asyncio
     @patch.object(meme_add, "session_manager")
     @patch.object(meme_add, "got_intercept_bypass", return_value=False)
     @patch.object(meme_add, "resolve_unique_filename")
-    @patch.object(meme_add, "_build_filename", return_value="我的表情.jpg")
+    @patch.object(meme_add, "_auto_filename", return_value="meme")
     @patch.object(meme_add, "_get_extension", return_value=".jpg")
     @patch.object(meme_add, "_download_image")
     @patch.object(meme_add, "get_index_manager")
     @patch.object(meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
-    async def test_success_with_target_name(
+    async def test_success_with_speaker_and_tags(
         self,
         mock_extract: MagicMock,
         mock_get_im: MagicMock,
         mock_download: MagicMock,
         mock_ext: MagicMock,
-        mock_build: MagicMock,
+        mock_auto: MagicMock,
         mock_resolve: MagicMock,
         mock_bypass: MagicMock,
         mock_sm: MagicMock,
         tmp_path: Path,
     ) -> None:
-        """带 target_name 时应回复成功。"""
+        """带 speaker 和 tags 时应回复成功。"""
         from bot.engine.index_manager import AddResult
 
         im = _make_index_manager()
@@ -480,18 +427,20 @@ class TestGotImage:
         )
         mock_get_im.return_value = im
 
-        fake_file = tmp_path / "我的表情.jpg"
+        fake_file = tmp_path / "meme.jpg"
         fake_file.write_bytes(b"fake")
         mock_resolve.return_value = fake_file
 
         mock_download.return_value = (b"fake", _make_response())
 
-        matcher = _make_matcher(state={"target_name": "我的表情"})
+        matcher = _make_matcher(state={"speaker": "小明", "tags": ["吐槽"]})
         bot = _make_bot()
         await got_image(bot, _make_event(), matcher, MagicMock())
 
         matcher.finish.assert_awaited_once()
         assert "新增表情包" in matcher.finish.call_args[0][0]
+        im.add.assert_awaited_once_with("meme.jpg", speaker="小明", tags=["吐槽"])
+        assert "id：1" in matcher.finish.call_args[0][0]
 
     @pytest.mark.asyncio
     @patch.object(meme_add, "session_manager")
@@ -521,7 +470,7 @@ class TestGotImage:
     @patch.object(meme_add, "session_manager")
     @patch.object(meme_add, "got_intercept_bypass", return_value=False)
     @patch.object(meme_add, "resolve_unique_filename")
-    @patch.object(meme_add, "_build_filename", return_value="a.jpg")
+    @patch.object(meme_add, "_auto_filename", return_value="a")
     @patch.object(meme_add, "_get_extension", return_value=".jpg")
     @patch.object(meme_add, "_download_image")
     @patch.object(meme_add, "get_index_manager")
@@ -532,7 +481,7 @@ class TestGotImage:
         mock_get_im: MagicMock,
         mock_download: MagicMock,
         mock_ext: MagicMock,
-        mock_build: MagicMock,
+        mock_auto: MagicMock,
         mock_resolve: MagicMock,
         mock_bypass: MagicMock,
         mock_sm: MagicMock,
@@ -554,7 +503,7 @@ class TestGotImage:
     @patch.object(meme_add, "session_manager")
     @patch.object(meme_add, "got_intercept_bypass", return_value=False)
     @patch.object(meme_add, "resolve_unique_filename")
-    @patch.object(meme_add, "_build_filename", return_value="a.jpg")
+    @patch.object(meme_add, "_auto_filename", return_value="a")
     @patch.object(meme_add, "_get_extension", return_value=".jpg")
     @patch.object(meme_add, "_download_image")
     @patch.object(meme_add, "get_index_manager")
@@ -565,7 +514,7 @@ class TestGotImage:
         mock_get_im: MagicMock,
         mock_download: MagicMock,
         mock_ext: MagicMock,
-        mock_build: MagicMock,
+        mock_auto: MagicMock,
         mock_resolve: MagicMock,
         mock_bypass: MagicMock,
         mock_sm: MagicMock,
@@ -595,7 +544,7 @@ class TestGotImage:
     @patch.object(meme_add, "session_manager")
     @patch.object(meme_add, "got_intercept_bypass", return_value=False)
     @patch.object(meme_add, "resolve_unique_filename")
-    @patch.object(meme_add, "_build_filename", return_value="a.jpg")
+    @patch.object(meme_add, "_auto_filename", return_value="a")
     @patch.object(meme_add, "_get_extension", return_value=".jpg")
     @patch.object(meme_add, "_download_image")
     @patch.object(meme_add, "get_index_manager")
@@ -606,7 +555,7 @@ class TestGotImage:
         mock_get_im: MagicMock,
         mock_download: MagicMock,
         mock_ext: MagicMock,
-        mock_build: MagicMock,
+        mock_auto: MagicMock,
         mock_resolve: MagicMock,
         mock_bypass: MagicMock,
         mock_sm: MagicMock,
@@ -636,7 +585,7 @@ class TestGotImage:
     @patch.object(meme_add, "session_manager")
     @patch.object(meme_add, "got_intercept_bypass", return_value=False)
     @patch.object(meme_add, "resolve_unique_filename")
-    @patch.object(meme_add, "_build_filename", return_value="a.jpg")
+    @patch.object(meme_add, "_auto_filename", return_value="a")
     @patch.object(meme_add, "_get_extension", return_value=".jpg")
     @patch.object(meme_add, "_download_image")
     @patch.object(meme_add, "get_index_manager")
@@ -647,7 +596,7 @@ class TestGotImage:
         mock_get_im: MagicMock,
         mock_download: MagicMock,
         mock_ext: MagicMock,
-        mock_build: MagicMock,
+        mock_auto: MagicMock,
         mock_resolve: MagicMock,
         mock_bypass: MagicMock,
         mock_sm: MagicMock,
@@ -677,7 +626,7 @@ class TestGotImage:
     @patch.object(meme_add, "session_manager")
     @patch.object(meme_add, "got_intercept_bypass", return_value=False)
     @patch.object(meme_add, "resolve_unique_filename")
-    @patch.object(meme_add, "_build_filename", return_value="a.jpg")
+    @patch.object(meme_add, "_auto_filename", return_value="a")
     @patch.object(meme_add, "_get_extension", return_value=".jpg")
     @patch.object(meme_add, "_download_image")
     @patch.object(meme_add, "get_index_manager")
@@ -688,7 +637,7 @@ class TestGotImage:
         mock_get_im: MagicMock,
         mock_download: MagicMock,
         mock_ext: MagicMock,
-        mock_build: MagicMock,
+        mock_auto: MagicMock,
         mock_resolve: MagicMock,
         mock_bypass: MagicMock,
         mock_sm: MagicMock,
@@ -716,7 +665,7 @@ class TestGotImage:
     @patch.object(meme_add, "session_manager")
     @patch.object(meme_add, "got_intercept_bypass", return_value=False)
     @patch.object(meme_add, "resolve_unique_filename")
-    @patch.object(meme_add, "_build_filename", return_value="a.jpg")
+    @patch.object(meme_add, "_auto_filename", return_value="a")
     @patch.object(meme_add, "_get_extension", return_value=".jpg")
     @patch.object(meme_add, "_download_image")
     @patch.object(meme_add, "get_index_manager")
@@ -727,7 +676,7 @@ class TestGotImage:
         mock_get_im: MagicMock,
         mock_download: MagicMock,
         mock_ext: MagicMock,
-        mock_build: MagicMock,
+        mock_auto: MagicMock,
         mock_resolve: MagicMock,
         mock_bypass: MagicMock,
         mock_sm: MagicMock,
@@ -754,7 +703,7 @@ class TestGotImage:
     @patch.object(meme_add, "session_manager")
     @patch.object(meme_add, "got_intercept_bypass", return_value=False)
     @patch.object(meme_add, "resolve_unique_filename")
-    @patch.object(meme_add, "_build_filename", return_value="a.jpg")
+    @patch.object(meme_add, "_auto_filename", return_value="a")
     @patch.object(meme_add, "_get_extension", return_value=".jpg")
     @patch.object(meme_add, "_download_image")
     @patch.object(meme_add, "get_index_manager")
@@ -765,7 +714,7 @@ class TestGotImage:
         mock_get_im: MagicMock,
         mock_download: MagicMock,
         mock_ext: MagicMock,
-        mock_build: MagicMock,
+        mock_auto: MagicMock,
         mock_resolve: MagicMock,
         mock_bypass: MagicMock,
         mock_sm: MagicMock,
@@ -792,7 +741,7 @@ class TestGotImage:
     @patch.object(meme_add, "session_manager")
     @patch.object(meme_add, "got_intercept_bypass", return_value=False)
     @patch.object(meme_add, "resolve_unique_filename")
-    @patch.object(meme_add, "_build_filename", return_value="a.jpg")
+    @patch.object(meme_add, "_auto_filename", return_value="a")
     @patch.object(meme_add, "_get_extension", return_value=".jpg")
     @patch.object(meme_add, "_download_image")
     @patch.object(meme_add, "get_index_manager")
@@ -803,7 +752,7 @@ class TestGotImage:
         mock_get_im: MagicMock,
         mock_download: MagicMock,
         mock_ext: MagicMock,
-        mock_build: MagicMock,
+        mock_auto: MagicMock,
         mock_resolve: MagicMock,
         mock_bypass: MagicMock,
         mock_sm: MagicMock,

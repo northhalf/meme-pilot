@@ -316,6 +316,7 @@ class TestGotSelection:
         )
 
         mock_remove_sel.assert_called_once_with("12345")
+        matcher.send.assert_awaited_once()
         matcher.finish.assert_awaited_once()
 
     @pytest.mark.asyncio

@@ -17,6 +17,7 @@ from bot.app_state import get_index_manager
 from bot.auth import is_authorized, log_unauthorized
 from bot.config import MEMES_DIR
 from bot.engine.ai_matcher import AIMatchResult
+from bot.plugins._search_utils import format_metadata_line
 from bot.session import session_manager
 
 logger = logging.getLogger(__name__)
@@ -102,8 +103,15 @@ async def handle_ai(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
         # 发送匹配图片（本地文件使用 file:/// URI）
         image_path = MEMES_DIR / match_result.image_path
         session_manager.deactivate_chat(user_id)
-        await matcher.finish(
+        await matcher.send(
             MessageSegment.image("file://" + str(image_path.resolve()))
+        )
+        await matcher.finish(
+            format_metadata_line(
+                match_result.entry_id,
+                match_result.speaker,
+                match_result.tags,
+            )
         )
     except asyncio.CancelledError:
         session_manager.deactivate_chat(user_id)

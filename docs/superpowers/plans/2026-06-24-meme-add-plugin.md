@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 实现 `/add [目标命名]` 命令，允许授权用户通过 QQ 私聊发送图片添加表情包到本地索引。
+**Goal:** 实现 `/add [speaker <tags...>]` 命令，允许授权用户通过 QQ 私聊发送图片添加表情包到本地索引。
 
 **Architecture:** 插件层（`meme_add.py`）负责 NoneBot2 交互、图片下载、文件名处理；引擎层（`IndexManager`）新增 `add_single_file()` 方法封装压缩→OCR→Embedding 管道；会话管理提取到 `bot/session.py` 供 `/add` 和 `/search` 共用。
 
@@ -589,7 +589,7 @@ uv run python -m compileall bot/session.py
 ```python
 """/add 命令插件 — 通过聊天添加表情包。
 
-授权用户在私聊中发送 /add [目标命名]，Bot 等待图片后
+授权用户在私聊中发送 /add [speaker <tags...>]，Bot 等待图片后
 下载、压缩、OCR、Embedding 并写入索引。
 """
 

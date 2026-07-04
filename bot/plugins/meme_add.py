@@ -1,13 +1,12 @@
 """/add 命令插件 — 通过聊天添加表情包。
 
-授权用户在私聊中发送 /add [目标命名]，Bot 等待图片后
+授权用户在私聊中发送 /add [说话人] [标签1] [标签2] ...，Bot 等待图片后
 下载、压缩、OCR、Embedding 并写入索引。
 """
 
 import asyncio
 import hashlib
 import logging
-import re
 from datetime import datetime
 from pathlib import Path
 import uuid
@@ -34,16 +33,12 @@ from bot.engine.index_manager import (
 )
 from bot.plugins._help_text import HELP_TEXT
 from bot.session import session_manager, timeout_session
-from bot.plugins._search_utils import got_intercept_bypass
+from bot.plugins._search_utils import got_intercept_bypass, format_metadata_line
 
 logger = logging.getLogger(__name__)
 
 DOWNLOAD_TIMEOUT = 30  # 图片下载超时（秒）
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
-
-# 文件名安全化：替换非法字符
-_UNSAFE_CHARS = re.compile(r'[<>:"/\\|?*]')
-_WHITESPACE = re.compile(r"\s+")
 
 add_cmd = on_command("add", rule=to_me(), priority=5, block=True)
 
@@ -52,7 +47,7 @@ add_cmd = on_command("add", rule=to_me(), priority=5, block=True)
 async def handle_add(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
     """/add 命令入口。
 
-    流程：授权校验 → 会话检查 → 捕获目标命名。
+    流程：授权校验 → 会话检查 → 捕获说话人和标签。
 
     Args:
         bot: OneBot V11 Bot 实例。
@@ -79,10 +74,14 @@ async def handle_add(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
             await matcher.finish("已有命令在处理中，请先 /cancel")
             return
 
-        # 捕获目标命名（命令参数），存入 state 供 got_image 使用
+        # 解析 speaker 和 tags
         raw_text = event.get_plaintext().strip()
-        target_name = raw_text.removeprefix("/add").removeprefix("add").strip()
-        matcher.state["target_name"] = target_name
+        args_text = raw_text.removeprefix("/add").removeprefix("add").strip()
+        parts = args_text.split()
+        speaker = parts[0] if parts else None
+        tags = parts[1:] if len(parts) > 1 else []
+        matcher.state["speaker"] = speaker
+        matcher.state["tags"] = tags
 
         selection_id = str(uuid.uuid4())
         task = asyncio.create_task(
@@ -147,7 +146,8 @@ async def got_image(
 
             # ── 阶段 2：处理流程 ──
             image_url = urls[0]
-            target_name = str(matcher.state.get("target_name", ""))
+            speaker = matcher.state.get("speaker")
+            tags = matcher.state.get("tags", [])
 
             # 下载图片
             try:
@@ -166,7 +166,7 @@ async def got_image(
                 return
 
             # 文件名处理
-            filename = _build_filename(target_name, image_data, ext)
+            filename = f"{_auto_filename(image_data)}{ext}"
             filepath = resolve_unique_filename(MEMES_DIR, filename)
             filename = filepath.name
 
@@ -183,7 +183,7 @@ async def got_image(
             # 调用 IndexManager 处理
             try:
                 result = await asyncio.wait_for(
-                    index_manager.add(filename),
+                    index_manager.add(filename, speaker=speaker, tags=tags),
                     timeout=index_manager.add_user_timeout,
                 )
             except RefreshInProgressError as exc:
@@ -215,12 +215,18 @@ async def got_image(
                 elif result.reason == "replaced":
                     ocr_display = _format_ocr_text(result.text)
                     await matcher.finish(
-                        f"替换旧图✅，识别到的文字为：\n「{ocr_display}」"
+                        f"替换旧图✅，id：{result.entry_id}，识别到的文字为：\n「{ocr_display}」\n"
+                        f"{format_metadata_line(entry_id = result.entry_id, # pyright: ignore[reportArgumentType]
+                                                speaker=result.speaker,
+                                                  tags=result.tags)}"
                     )
                 else:
                     ocr_display = _format_ocr_text(result.text)
                     await matcher.finish(
-                        f"新增表情包✅，识别到的文字为：\n「{ocr_display}」"
+                        f"新增表情包✅，id：{result.entry_id}，识别到的文字为：\n「{ocr_display}」\n"
+                        f"{format_metadata_line(entry_id = result.entry_id, # pyright: ignore[reportArgumentType]
+                                                speaker=result.speaker,
+                                                  tags=result.tags)}"
                     )
                 return
 
@@ -306,28 +312,10 @@ def _get_extension(url: str, response: httpx.Response) -> str | None:
     return None
 
 
-def _sanitize_filename(name: str) -> str:
-    """安全化文件名基名。
-
-    规则：去除首尾空白 → 替换非法字符 → 合并空白为 _ → 截断 80 字符。
-
-    Args:
-        name: 原始文件名基名。
-
-    Returns:
-        安全化后的基名（无扩展名），可能为空字符串。
-    """
-    name = name.strip()
-    name = _UNSAFE_CHARS.sub("_", name)
-    name = _WHITESPACE.sub("_", name)
-    name = name[:80].strip("_")
-    return name
-
-
 def _auto_filename(image_data: bytes) -> str:
     """自动生成文件名。
 
-    格式：meme_<YYYYMMDDHHMMSS>_<hash8>
+    格式：meme_YYYYMMDDHHMMSS_hash8
 
     Args:
         image_data: 图片内容。
@@ -338,28 +326,6 @@ def _auto_filename(image_data: bytes) -> str:
     now = datetime.now().strftime("%Y%m%d%H%M%S")
     hash8 = hashlib.sha256(image_data).hexdigest()[:8]
     return f"meme_{now}_{hash8}"
-
-
-def _build_filename(target_name: str, image_data: bytes, ext: str) -> str:
-    """构建最终文件名。
-
-    Args:
-        target_name: 用户指定的目标命名（可能为空）。
-        image_data: 图片内容。
-        ext: 扩展名（含点号）。
-
-    Returns:
-        包含扩展名的完整文件名。
-    """
-    if target_name:
-        base = _sanitize_filename(target_name)
-    else:
-        base = ""
-
-    if not base:
-        base = _auto_filename(image_data)
-
-    return f"{base}{ext}"
 
 
 def _format_ocr_text(text: str, max_len: int = 50) -> str:

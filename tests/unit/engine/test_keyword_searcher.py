@@ -47,6 +47,24 @@ class TestSearchResult:
         assert r.similarity == 85.5
 
 
+def test_search_result_carries_speaker_and_tags() -> None:
+    """KeywordSearcher 应把 MemeEntry 的 speaker/tags 带到 SearchResult。"""
+    entries = {
+        1: MemeEntry(
+            id=1,
+            image_path="a.jpg",
+            text="加班",
+            speaker="小明",
+            tags=["吐槽", "加班"],
+        ),
+    }
+    searcher = KeywordSearcher(MockMetadataStore(entries))
+    results = searcher.search("加班")
+    assert len(results) == 1
+    assert results[0].speaker == "小明"
+    assert results[0].tags == ["吐槽", "加班"]
+
+
 class TestInit:
     def test_default_threshold(self) -> None:
         assert KeywordSearcher(MockMetadataStore())._threshold == 60.0

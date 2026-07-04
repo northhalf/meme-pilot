@@ -69,6 +69,8 @@ def _make_index_manager(
                 text="加班到心累",
                 similarity=0.95,
                 source="rerank",
+                speaker="小明",
+                tags=["吐槽"],
             )
         )
     return im
@@ -197,20 +199,24 @@ class TestHandleAiSuccess:
     @patch.object(meme_ai, "MessageSegment")
     @patch.object(meme_ai, "get_index_manager")
     @patch.object(meme_ai, "is_authorized", return_value=True)
-    async def test_match_sends_image(
+    async def test_match_sends_image_then_metadata(
         self,
         mock_auth: MagicMock,
         mock_get_im: MagicMock,
         mock_segment: MagicMock,
     ) -> None:
-        """匹配成功时应发送图片。"""
+        """匹配成功时应先发送图片，再 finish 元数据行。"""
         matcher = _make_matcher()
         mock_get_im.return_value = _make_index_manager()
 
         await handle_ai(_make_bot(), _make_event("12345", "/ai 加班心累"), matcher)
 
+        assert matcher.send.await_count == 2
         matcher.finish.assert_awaited_once()
-        mock_segment.image.assert_called_once()
+        finished_text = matcher.finish.call_args[0][0]
+        assert "1" in finished_text
+        assert "小明" in finished_text
+        assert "吐槽" in finished_text
 
     @pytest.mark.asyncio
     @patch.object(meme_ai, "MessageSegment")

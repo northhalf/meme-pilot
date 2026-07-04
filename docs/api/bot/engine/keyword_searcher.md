@@ -32,6 +32,8 @@ class SearchResult:
     image_path: str
     text: str
     similarity: float
+    speaker: str | None = None
+    tags: list[str] = field(default_factory=list)
 ```
 
 | 字段 | 类型 | 说明 |
@@ -40,6 +42,8 @@ class SearchResult:
 | `image_path` | `str` | `memes/` 目录下相对路径 |
 | `text` | `str` | OCR 文本（无空格） |
 | `similarity` | `float` | 相似度分数，范围 0–100 |
+| `speaker` | `str \| None` | 说话人，可能为 `None` |
+| `tags` | `list[str]` | 标记词列表 |
 
 ---
 

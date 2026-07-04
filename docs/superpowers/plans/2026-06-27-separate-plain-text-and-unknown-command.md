@@ -674,7 +674,7 @@ _HELP_TEXT = """\
 /help：查看命令帮助
 /search <关键词>：按 OCR 文本关键词搜索表情包
 /ai <自然语言描述>：按自然语言描述匹配表情包
-/add [目标命名]：通过聊天添加一张表情包
+/add [speaker <tags...>]：通过聊天添加一张表情包
 /refresh：扫描 memes/ 并增量更新索引"""
 
 help_cmd = on_command("help", rule=to_me(), priority=5, block=True)

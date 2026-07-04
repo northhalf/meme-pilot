@@ -13,9 +13,16 @@ def _make_search_result(
     image_path: str = "test.jpg",
     text: str = "测试文本",
     similarity: float = 90.0,
+    speaker: str | None = None,
+    tags: list[str] | None = None,
 ) -> SearchResult:
     return SearchResult(
-        entry_id=entry_id, image_path=image_path, text=text, similarity=similarity
+        entry_id=entry_id,
+        image_path=image_path,
+        text=text,
+        similarity=similarity,
+        speaker=speaker,
+        tags=tags or [],
     )
 
 
@@ -167,25 +174,29 @@ class TestExecuteSearch:
     @patch("bot.plugins._search_utils.session_manager.deactivate_chat")
     @patch("bot.plugins._search_utils.MessageSegment")
     @patch("bot.plugins._search_utils.get_index_manager")
-    async def test_single_result_sends_image(
+    async def test_single_result_sends_image_then_metadata(
         self,
         mock_get_im: MagicMock,
         mock_segment: MagicMock,
         mock_deactivate: MagicMock,
     ) -> None:
-        """唯一结果应直接发送图片并 deactivate_chat。"""
+        """唯一结果应先发送图片，再 finish 元数据行。"""
         from bot.plugins._search_utils import execute_search
 
         mock_get_im.return_value = _make_index_manager(
-            results=[_make_search_result(image_path="加班心累.jpg")]
+            results=[_make_search_result(entry_id=7, image_path="加班心累.jpg", speaker="小明")]
         )
         _cmd = MagicMock()
         _cmd.finish = AsyncMock()
+        _cmd.send = AsyncMock()
 
         await execute_search(_make_bot(), _make_event(), _cmd, "加班")
 
+        _cmd.send.assert_awaited_once()
         _cmd.finish.assert_awaited_once()
-        mock_segment.image.assert_called_once()
+        finished_text = _cmd.finish.call_args[0][0]
+        assert "7" in finished_text
+        assert "小明" in finished_text
         mock_deactivate.assert_called_once_with("12345")
 
     @pytest.mark.asyncio
@@ -224,6 +235,34 @@ class TestExecuteSearch:
         assert timeout_args[2] == "111"  # user_id
         assert timeout_args[3] == _cmd.state["selection_id"]  # selection_id
         assert "选择已过期" in timeout_args[4]  # message
+
+    @pytest.mark.asyncio
+    @patch("bot.plugins._search_utils.session_manager.create_selection")
+    @patch("bot.plugins._search_utils.timeout_session")
+    @patch("bot.plugins._search_utils.get_index_manager")
+    async def test_multiple_results_lists_metadata(
+        self,
+        mock_get_im: MagicMock,
+        mock_timeout: MagicMock,
+        mock_create_selection: MagicMock,
+    ) -> None:
+        """多结果列表应包含 id/speaker/tags。"""
+        from bot.plugins._search_utils import execute_search
+
+        results = [
+            _make_search_result(entry_id=1, text="甲", speaker="小明", tags=["吐槽"]),
+            _make_search_result(entry_id=2, text="乙", tags=["搞笑"]),
+        ]
+        mock_get_im.return_value = _make_index_manager(results=results)
+        _cmd = MagicMock()
+        _cmd.state = {}
+        _cmd.send = AsyncMock()
+
+        await execute_search(_make_bot(), _make_event("111"), _cmd, "加班")
+
+        sent_text = _cmd.send.call_args[0][0]
+        assert "1, 小明, 吐槽" in sent_text
+        assert "2, 无, 搞笑" in sent_text
 
     @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.get_index_manager")
@@ -300,3 +339,27 @@ class TestGotInterceptBypass:
         session_manager.activate_chat("user1", "add", matcher)
         result = await got_intercept_bypass("user1", matcher, "/cancel something", "帮助文本")
         assert result is True
+
+
+class TestFormatMetadataLine:
+    """format_metadata_line 测试。"""
+
+    def test_with_speaker_and_tags(self) -> None:
+        """同时存在 speaker 和 tags 时格式化正确。"""
+        from bot.plugins._search_utils import format_metadata_line
+        assert format_metadata_line(3, "小明", ["吐槽", "加班"]) == "3, 小明, 吐槽, 加班"
+
+    def test_missing_speaker(self) -> None:
+        """speaker 缺失时显示为"无"。"""
+        from bot.plugins._search_utils import format_metadata_line
+        assert format_metadata_line(7, None, ["吐槽"]) == "7, 无, 吐槽"
+
+    def test_empty_tags_omitted(self) -> None:
+        """tags 为空时省略 tags 段。"""
+        from bot.plugins._search_utils import format_metadata_line
+        assert format_metadata_line(7, "小明", []) == "7, 小明"
+
+    def test_both_empty(self) -> None:
+        """speaker 和 tags 都为空时只显示 id 和"无"。"""
+        from bot.plugins._search_utils import format_metadata_line
+        assert format_metadata_line(12, None, []) == "12, 无"
