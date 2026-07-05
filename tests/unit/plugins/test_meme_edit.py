@@ -68,7 +68,7 @@ class TestHandleEdit:
     """handle_edit 入口函数测试。"""
 
     def test_unauthorized(self) -> None:
-        """非授权用户 → 静默忽略。"""
+        """非授权用户应调用 finish(None) 结束匹配。"""
         with (
             patch("bot.plugins.meme_edit.is_authorized", return_value=False),
             patch("bot.plugins.meme_edit.log_unauthorized") as mock_log,
@@ -79,7 +79,8 @@ class TestHandleEdit:
 
             asyncio.run(handle_edit(bot, event, matcher))  # type: ignore[arg-type]
 
-            assert matcher.finish.call_count == 0
+            assert matcher.finish.call_count == 1
+            assert matcher.finish.await_args[0][0] is None
             mock_log.assert_called_once()
 
     def test_group_chat(self) -> None:

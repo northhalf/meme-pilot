@@ -1,10 +1,10 @@
 """AIMatcher 真实 API 调用集成测试。
 
 使用真实服务验证 AI 匹配的完整流程：
-IndexManager(OCR+Embedding) → AIMatcher → EmbeddingService → RerankService
+IndexManager(OCR+Embedding) → AIMatcher → OpenAIEmbeddingService → RerankService
 
 需要设置环境变量：
-- SILICONFLOW_API_KEY（OCR 服务）
+- OPENAI_OCR_API_KEY（OCR 服务）
 - EMBEDDING_API_KEY（Embedding 服务）
 - DEEPSEEK_API_KEY（Rerank 服务）
 
@@ -25,9 +25,9 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
 from bot.engine.ai_matcher import AIMatcher
-from bot.engine.embedding_service import EmbeddingService
 from bot.engine.index_manager import IndexManager
-from bot.engine.deepseek_ocr import DeepSeekOcrService
+from bot.engine.openai_embedding import OpenAIEmbeddingService
+from bot.engine.openai_ocr import OpenAIOcrService
 from bot.engine.metadata_store import MetadataStore
 from bot.engine.rerank_service import RerankService
 from bot.engine.vector_store import VectorStore
@@ -37,10 +37,10 @@ FIXTURE_IMAGES_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "imag
 
 # 跳过条件：三个 API Key 均需要
 pytestmark = pytest.mark.skipif(
-    not os.environ.get("SILICONFLOW_API_KEY")
+    not os.environ.get("OPENAI_OCR_API_KEY")
     or not os.environ.get("EMBEDDING_API_KEY")
     or not os.environ.get("DEEPSEEK_API_KEY"),
-    reason="SILICONFLOW_API_KEY / EMBEDDING_API_KEY / DEEPSEEK_API_KEY 未全部设置，跳过集成测试",
+    reason="OPENAI_OCR_API_KEY / EMBEDDING_API_KEY / DEEPSEEK_API_KEY 未全部设置，跳过集成测试",
 )
 
 
@@ -64,17 +64,17 @@ def work_dirs(tmp_path: Path) -> dict[str, Path]:
 
 
 @pytest_asyncio.fixture
-async def ocr_service() -> AsyncGenerator[DeepSeekOcrService, None]:
-    """创建真实的 DeepSeekOcrService 实例。"""
-    service = DeepSeekOcrService()
+async def ocr_service() -> AsyncGenerator[OpenAIOcrService, None]:
+    """创建真实的 OpenAIOcrService 实例。"""
+    service = OpenAIOcrService()
     yield service
     await service._client.close()
 
 
 @pytest_asyncio.fixture
-async def embedding_service() -> AsyncGenerator[EmbeddingService, None]:
-    """创建真实的 EmbeddingService 实例。"""
-    service = EmbeddingService()
+async def embedding_service() -> AsyncGenerator[OpenAIEmbeddingService, None]:
+    """创建真实的 OpenAIEmbeddingService 实例。"""
+    service = OpenAIEmbeddingService()
     yield service
     await service._client.close()
 
@@ -95,8 +95,8 @@ def _copy_fixture_images(target_dir: Path, names: list[str]) -> None:
 
 async def _build_index(
     work_dirs: dict[str, Path],
-    ocr_service: DeepSeekOcrService,
-    embedding_service: EmbeddingService,
+    ocr_service: OpenAIOcrService,
+    embedding_service: OpenAIEmbeddingService,
     image_names: list[str],
 ) -> tuple[IndexManager, MetadataStore, VectorStore]:
     """同步索引并返回就绪的 IndexManager 及其底层存储。"""
@@ -120,8 +120,8 @@ async def _build_index(
 @pytest.mark.asyncio
 async def test_match_embedding_only(
     work_dirs: dict[str, Path],
-    ocr_service: DeepSeekOcrService,
-    embedding_service: EmbeddingService,
+    ocr_service: OpenAIOcrService,
+    embedding_service: OpenAIEmbeddingService,
 ) -> None:
     """测试：仅用 embedding 匹配，返回相似度最高的结果。"""
     images = [
@@ -154,8 +154,8 @@ async def test_match_embedding_only(
 @pytest.mark.asyncio
 async def test_match_with_rerank(
     work_dirs: dict[str, Path],
-    ocr_service: DeepSeekOcrService,
-    embedding_service: EmbeddingService,
+    ocr_service: OpenAIOcrService,
+    embedding_service: OpenAIEmbeddingService,
     rerank_service: RerankService,
 ) -> None:
     """测试：embedding + rerank 精排，返回精排后的结果。"""
@@ -189,8 +189,8 @@ async def test_match_with_rerank(
 @pytest.mark.asyncio
 async def test_match_empty_description_returns_none(
     work_dirs: dict[str, Path],
-    ocr_service: DeepSeekOcrService,
-    embedding_service: EmbeddingService,
+    ocr_service: OpenAIOcrService,
+    embedding_service: OpenAIEmbeddingService,
 ) -> None:
     """测试：空描述返回 None。"""
     images = ["听天由命吧.png"]
@@ -213,8 +213,8 @@ async def test_match_empty_description_returns_none(
 @pytest.mark.asyncio
 async def test_match_returns_correct_filename(
     work_dirs: dict[str, Path],
-    ocr_service: DeepSeekOcrService,
-    embedding_service: EmbeddingService,
+    ocr_service: OpenAIOcrService,
+    embedding_service: OpenAIEmbeddingService,
 ) -> None:
     """测试：匹配结果包含正确的文件名。"""
     images = [

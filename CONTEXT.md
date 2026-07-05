@@ -32,16 +32,21 @@
 |------|------|
 | **NapCatQQ** | QQ 协议端，基于 NTQQ 的 OneBot v11 实现，负责收发 QQ 消息 |
 | **NoneBot2** | Python 异步聊天机器人框架，负责业务逻辑 |
-| **DeepSeek-OCR** | 硅基流动上的视觉 OCR 模型（`deepseek-ai/DeepSeek-OCR`），通过 chat completions API 调用，用于从图片中提取文字；返回去除所有空白后的文本 |
+| **OpenAI 兼容 OCR** | `OCR_PROVIDER=deepseek` 时使用的 OpenAI 兼容视觉 OCR 服务；原模块 `bot/engine/deepseek_ocr.py` 已重命名为 `openai_ocr.py`，实现 `index_manager.OcrProvider` 协议，返回去除所有空白后的文本；示例模型为 `deepseek-ai/DeepSeek-OCR` |
 | **index.db** | 业务索引数据库，sqlite3 格式，存于 `data/index.db`；`meme` 表保存每个 id 对应的 `image_path`、OCR `text`（去空白后）、`speaker`，`meme_tag` 关联表保存多值标记词；`UNIQUE INDEX` 加在 `image_path` 与 `text` 上，`PRAGMA foreign_keys = ON` |
 | **原子索引更新** | 更新 sqlite 与 chroma 时统一「先 sqlite 后 chroma」写入顺序，`VectorStore.upsert` 失败时回滚 sqlite 写入，保证两库一致；失败时保留旧索引 |
 | **chroma 向量库** | AI 匹配必需的向量索引，存于 `data/chroma/`，ChromaDB `PersistentClient`，collection 默认 `memes`，HNSW `cosine` 距离；每条向量仅存 `id`（与 sqlite `meme.id` 一一对应，内部转 `str`）+ 1024 维 `embedding`；`similarity = 1 - distance`；首次建索引和 `/refresh` 时由 `VectorStore` 维护，sync 阶段0 负责跨库一致性修复 |
 | **pylcs** | C++ 实现的最长公共子序列/子串算法库，用于关键词的非精确匹配 |
 | **DeepSeek** | 大模型 API 提供商，用于 AI 匹配中的候选精排，不用于生成 embedding |
-| **SiliconFlow** | Embedding API 提供商，用于生成用户描述和索引文本的向量；v1.0 默认模型为 `BAAI/bge-m3` |
+| **OpenAI 兼容 Embedding** | OpenAI 兼容 Embedding API 提供商；当 `EMBEDDING_PROVIDER=openai`（默认）时可用于生成用户描述和索引文本的向量；`.env.example` 示例默认模型为 `BAAI/bge-m3` |
 | **依赖协议（Protocol）** | engine 模块用 `typing.Protocol` 解耦依赖的约定：消费者按自身需要定义**最小接口**协议（接口隔离），不依赖具体 Store 实现，便于测试用 mock 替换。**放置规则**：只被一个模块用的 Protocol 定义在该模块内，多模块共用的放 `bot/engine/protocols.py`。现有协议：`protocols.py.EmbeddingProvider`（`embed`，IndexManager 与 AIMatcher 共用）；`keyword_searcher.MetadataStoreProvider`（`get_all_entries`）；`ai_matcher.MetadataEntryProvider`（`get_entry`）+ `ai_matcher.VectorQueryProvider`（`count` + `async query`）+ `ai_matcher.RerankProvider`（`async rerank`）；`index_manager.MetadataStoreProtocol`（全 CRUD 子集）+ `index_manager.VectorStoreProtocol`（全 CRUD 子集）+ `index_manager.ImageOptimizerProtocol`（`async optimize`）+ `index_manager.OcrProvider`（`async ocr`）。`MetadataEntryProvider`（按 id 取单条）与 `MetadataStoreProvider`（取全量）与 `MetadataStoreProtocol`（全 CRUD）命名不同因接口需求不同，不复用。生产代码 `bot.py` 传真实 `MetadataStore`/`VectorStore`/`ImageOptimizer` 实例，结构子类型天然满足协议。 |
+| **Provider 工厂** | `bot/engine/provider_factory.py` 维护的 OCR 与 Embedding provider 注册表，提供 `register_ocr()` / `register_embedding()` 注册函数、`create_ocr_provider()` / `create_embedding_provider()` 工厂函数，以及 `ProviderNotAvailableError`；`bot/engine/__init__.py` 在导入时自动注册所有可用 provider，依赖缺失的 provider 会被标记为不可用 |
+| **RapidOCR** | 本地 ONNX OCR 引擎；`OCR_PROVIDER=rapidocr` 时由 `bot/engine/rapidocr_ocr.py` 调用，无需联网即可从图片中提取文字，返回去除所有空白后的文本；与 PaddleOCR 共用 `OCR_TEXT_SCORE` 置信度阈值 |
+| **Google Embedding** | `EMBEDDING_PROVIDER=google` 时使用的文本向量服务，基于 `google-genai` SDK 调用 Google GenAI API，固定输出 1024 维向量，示例默认模型 `gemini-embedding-001`，由 `bot/engine/google_embedding.py` 实现 `protocols.EmbeddingProvider` |
+| **OCR_TEXT_SCORE** | OCR 文本置信度阈值，环境变量，默认 `0.9`；PaddleOCR 与 RapidOCR 共用此阈值过滤低置信度识别结果 |
+| **tenacity 重试** | `bot/engine/retry_config.py` 提供的统一网络请求重试装饰器 `api_retry()`；默认对 `httpx` 网络/连接/超时异常、Python 内置 `ConnectionError` / `TimeoutError` 以及调用方指定的额外异常（如 OpenAI / Google API 异常）进行最多 3 次指数退避重试，本地业务异常（如 `ValueError`、`FileNotFoundError`）不重试 |
 | **授权校验模块** | `bot/auth.py`，从 `AUTHORIZED_USER_IDS` 环境变量读取白名单，提供 `is_authorized()` / `log_unauthorized()` 供各插件统一调用 |
-| **全局路径与配置** | `bot/config.py`，通过 `Path(__file__).resolve().parent.parent` 定位项目根目录，导出 `PROJECT_ROOT`、`MEMES_DIR`、`DATA_DIR`、`INDEX_DB_PATH`、`CHROMA_DIR` 路径常量和 `read_session_timeout()`、`read_ocr_provider()` 配置读取函数 |
+| **全局路径与配置** | `bot/config.py`，通过 `Path(__file__).resolve().parent.parent` 定位项目根目录，导出 `PROJECT_ROOT`、`MEMES_DIR`、`DATA_DIR`、`INDEX_DB_PATH`、`CHROMA_DIR` 路径常量和 `read_session_timeout()`、`read_ocr_provider()`、`read_embedding_provider()`、`read_ocr_text_score()` 等配置读取函数 |
 
 ### 交互协议
 

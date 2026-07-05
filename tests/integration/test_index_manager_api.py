@@ -1,10 +1,10 @@
 """IndexManager 真实 API 调用集成测试。
 
-使用真实 OCR（DeepSeek-OCR）和 Embedding（BAAI/bge-m3）服务，
+使用真实 OCR（OpenAI 兼容 API，默认 DeepSeek-OCR）和 Embedding（BAAI/bge-m3）服务，
 验证 sync_with_filesystem 的完整流程：OCR → Embedding → 索引写入。
 
 需要设置环境变量：
-- SILICONFLOW_API_KEY（OCR 服务）
+- OPENAI_OCR_API_KEY（OCR 服务）
 - EMBEDDING_API_KEY（Embedding 服务，可选，.env 中已配置）
 
 运行方式：
@@ -23,9 +23,9 @@ from dotenv import load_dotenv
 # 加载项目根目录 .env
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
-from bot.engine.embedding_service import EmbeddingService
 from bot.engine.index_manager import IndexManager
-from bot.engine.deepseek_ocr import DeepSeekOcrService
+from bot.engine.openai_embedding import OpenAIEmbeddingService
+from bot.engine.openai_ocr import OpenAIOcrService
 from bot.engine.metadata_store import MetadataStore
 from bot.engine.vector_store import VectorStore
 
@@ -34,9 +34,9 @@ FIXTURE_IMAGES_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "imag
 
 # 跳过条件：OCR 和 Embedding 均需要 API Key
 pytestmark = pytest.mark.skipif(
-    not os.environ.get("SILICONFLOW_API_KEY")
+    not os.environ.get("OPENAI_OCR_API_KEY")
     or not os.environ.get("EMBEDDING_API_KEY"),
-    reason="SILICONFLOW_API_KEY 或 EMBEDDING_API_KEY 未设置，跳过集成测试",
+    reason="OPENAI_OCR_API_KEY 或 EMBEDDING_API_KEY 未设置，跳过集成测试",
 )
 
 
@@ -64,17 +64,17 @@ def work_dirs(tmp_path: Path) -> dict[str, Path]:
 
 
 @pytest_asyncio.fixture
-async def ocr_service() -> AsyncGenerator[DeepSeekOcrService, None]:
-    """创建真实的 DeepSeekOcrService 实例。"""
-    service = DeepSeekOcrService()
+async def ocr_service() -> AsyncGenerator[OpenAIOcrService, None]:
+    """创建真实的 OpenAIOcrService 实例。"""
+    service = OpenAIOcrService()
     yield service
     await service._client.close()
 
 
 @pytest_asyncio.fixture
-async def embedding_service() -> AsyncGenerator[EmbeddingService, None]:
-    """创建真实的 EmbeddingService 实例。"""
-    service = EmbeddingService()
+async def embedding_service() -> AsyncGenerator[OpenAIEmbeddingService, None]:
+    """创建真实的 OpenAIEmbeddingService 实例。"""
+    service = OpenAIEmbeddingService()
     yield service
     await service._client.close()
 
@@ -89,8 +89,8 @@ def _copy_fixture_images(target_dir: Path, names: list[str]) -> None:
 @pytest.mark.asyncio
 async def test_sync_single_image(
     work_dirs: dict[str, Path],
-    ocr_service: DeepSeekOcrService,
-    embedding_service: EmbeddingService,
+    ocr_service: OpenAIOcrService,
+    embedding_service: OpenAIEmbeddingService,
 ) -> None:
     """测试：同步单张图片，验证 OCR 文本和 embedding 写入索引。"""
     _copy_fixture_images(work_dirs["memes_dir"], ["听天由命吧.png"])
@@ -131,8 +131,8 @@ async def test_sync_single_image(
 @pytest.mark.asyncio
 async def test_sync_multiple_images(
     work_dirs: dict[str, Path],
-    ocr_service: DeepSeekOcrService,
-    embedding_service: EmbeddingService,
+    ocr_service: OpenAIOcrService,
+    embedding_service: OpenAIEmbeddingService,
 ) -> None:
     """测试：同步多张图片，验证全部进入索引。"""
     images = [
@@ -167,8 +167,8 @@ async def test_sync_multiple_images(
 @pytest.mark.asyncio
 async def test_sync_delete_removed_image(
     work_dirs: dict[str, Path],
-    ocr_service: DeepSeekOcrService,
-    embedding_service: EmbeddingService,
+    ocr_service: OpenAIOcrService,
+    embedding_service: OpenAIEmbeddingService,
 ) -> None:
     """测试：删除图片后再次同步，索引记录应被移除。"""
     images = ["听天由命吧.png", "不能用就弃之.png"]
@@ -209,8 +209,8 @@ async def test_sync_delete_removed_image(
 @pytest.mark.asyncio
 async def test_sync_idempotent(
     work_dirs: dict[str, Path],
-    ocr_service: DeepSeekOcrService,
-    embedding_service: EmbeddingService,
+    ocr_service: OpenAIOcrService,
+    embedding_service: OpenAIEmbeddingService,
 ) -> None:
     """测试：重复同步不会重复添加已有记录。"""
     _copy_fixture_images(work_dirs["memes_dir"], ["听天由命吧.png"])

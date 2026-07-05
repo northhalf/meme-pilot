@@ -11,9 +11,11 @@ import logging
 import os
 import re
 
+import openai
 from openai import AsyncOpenAI
 
 from bot.engine.ai_matcher import AIMatchCandidate
+from .retry_config import api_retry
 
 logger = logging.getLogger(__name__)
 
@@ -125,11 +127,20 @@ class RerankService:
             api_key=self._api_key,
             base_url=self._base_url,
             timeout=5.0,
+            max_retries=0,
         )
 
         c = concurrency or int(os.environ.get("RERANK_CONCURRENCY", 5))
         self._semaphore = asyncio.Semaphore(c)
 
+    @api_retry(
+        extra_exceptions=(
+            openai.APIConnectionError,
+            openai.APITimeoutError,
+            openai.RateLimitError,
+            openai.InternalServerError,
+        )
+    )
     async def rerank(
         self,
         description: str,
@@ -176,6 +187,13 @@ class RerankService:
                     ],
                     temperature=0,
                 )
+            except (
+                openai.APIConnectionError,
+                openai.APITimeoutError,
+                openai.RateLimitError,
+                openai.InternalServerError,
+            ):
+                raise
             except Exception as exc:
                 raise RuntimeError(f"DeepSeek 精排 API 调用失败: {exc}") from exc
 

@@ -61,12 +61,15 @@ class TestOcr:
     """ocr 方法测试。"""
 
     @pytest.mark.asyncio
-    async def test_ocr_returns_text_from_pruned_result(self) -> None:
-        """OCR 正常返回文本（pruned_result 为字符串）。"""
+    async def test_ocr_returns_text_from_rec_texts(self) -> None:
+        """OCR 正常返回文本（pruned_result 含 rec_texts）。"""
         mock_client = MagicMock()
         mock_ocr_result = MagicMock()
         mock_page = MagicMock()
-        mock_page.pruned_result = "识别到的文本内容"
+        mock_page.pruned_result = {
+            "rec_texts": ["识别到的文本内容"],
+            "rec_scores": [0.9999],
+        }
         mock_ocr_result.pages = [mock_page]
         mock_client.ocr = AsyncMock(return_value=mock_ocr_result)
 
@@ -80,25 +83,6 @@ class TestOcr:
             model=service._model,
             options=service._ocr_options,
         )
-
-    @pytest.mark.asyncio
-    async def test_pruned_result_is_list_of_dicts(self) -> None:
-        """pruned_result 为 list[dict] 时提取 text 字段拼接。"""
-        mock_client = MagicMock()
-        mock_ocr_result = MagicMock()
-        mock_page = MagicMock()
-        mock_page.pruned_result = [
-            {"text": "第一行", "score": 0.95},
-            {"text": "第二行", "score": 0.88},
-        ]
-        mock_ocr_result.pages = [mock_page]
-        mock_client.ocr = AsyncMock(return_value=mock_ocr_result)
-
-        service = PaddleOcrClientService(access_token="test-token")
-        service._client = mock_client
-
-        result = await service.ocr("/path/to/image.png")
-        assert result == "第一行第二行"
 
     @pytest.mark.asyncio
     async def test_pruned_result_is_none(self) -> None:
@@ -131,54 +115,6 @@ class TestOcr:
         assert result == ""
 
     @pytest.mark.asyncio
-    async def test_pruned_result_is_list_of_strings(self) -> None:
-        """pruned_result 为 list[str] 时直接拼接。"""
-        mock_client = MagicMock()
-        mock_ocr_result = MagicMock()
-        mock_page = MagicMock()
-        mock_page.pruned_result = ["hello", "world"]
-        mock_ocr_result.pages = [mock_page]
-        mock_client.ocr = AsyncMock(return_value=mock_ocr_result)
-
-        service = PaddleOcrClientService(access_token="test-token")
-        service._client = mock_client
-
-        result = await service.ocr("/path/to/image.png")
-        assert result == "helloworld"
-
-    @pytest.mark.asyncio
-    async def test_pruned_result_unexpected_type_fallback(self) -> None:
-        """pruned_result 为意外类型时使用 str() 兜底。"""
-        mock_client = MagicMock()
-        mock_ocr_result = MagicMock()
-        mock_page = MagicMock()
-        mock_page.pruned_result = 12345
-        mock_ocr_result.pages = [mock_page]
-        mock_client.ocr = AsyncMock(return_value=mock_ocr_result)
-
-        service = PaddleOcrClientService(access_token="test-token")
-        service._client = mock_client
-
-        result = await service.ocr("/path/to/image.png")
-        assert result == "12345"
-
-    @pytest.mark.asyncio
-    async def test_pruned_result_dict_with_text_key(self) -> None:
-        """pruned_result 为 dict 时尝试提取 text 字段。"""
-        mock_client = MagicMock()
-        mock_ocr_result = MagicMock()
-        mock_page = MagicMock()
-        mock_page.pruned_result = {"text": "从dict提取的文本"}
-        mock_ocr_result.pages = [mock_page]
-        mock_client.ocr = AsyncMock(return_value=mock_ocr_result)
-
-        service = PaddleOcrClientService(access_token="test-token")
-        service._client = mock_client
-
-        result = await service.ocr("/path/to/image.png")
-        assert result == "从dict提取的文本"
-
-    @pytest.mark.asyncio
     async def test_pruned_result_dict_with_rec_texts(self) -> None:
         """pruned_result 为含 rec_texts 的 dict 时提取文本（PaddleOCR 新版 API 格式）。"""
         mock_client = MagicMock()
@@ -199,6 +135,30 @@ class TestOcr:
 
         result = await service.ocr("/path/to/image.png")
         assert result == "你走了我们吃什么"
+
+    @pytest.mark.asyncio
+    async def test_pruned_result_dict_with_overall_ocr_res(self) -> None:
+        """PP-Structure v3 格式：文本嵌套在 overall_ocr_res 下。"""
+        mock_client = MagicMock()
+        mock_ocr_result = MagicMock()
+        mock_page = MagicMock()
+        mock_page.pruned_result = {
+            "page_count": 1,
+            "overall_ocr_res": {
+                "rec_texts": ["酒", "你是想收买我"],
+                "rec_scores": [0.61, 0.999],
+            },
+        }
+        mock_ocr_result.pages = [mock_page]
+        mock_client.ocr = AsyncMock(return_value=mock_ocr_result)
+
+        service = PaddleOcrClientService(
+            access_token="test-token", text_rec_score_thresh=0.5
+        )
+        service._client = mock_client
+
+        result = await service.ocr("/path/to/image.png")
+        assert result == "酒你是想收买我"
 
     @pytest.mark.asyncio
     async def test_pruned_result_dict_with_rec_texts_filters_low_score(self) -> None:
@@ -293,7 +253,10 @@ class TestOcr:
         mock_client = MagicMock()
         mock_ocr_result = MagicMock()
         mock_page = MagicMock()
-        mock_page.pruned_result = "加 班\t心\n累"
+        mock_page.pruned_result = {
+            "rec_texts": ["加 班", "心\n累"],
+            "rec_scores": [0.99, 0.99],
+        }
         mock_ocr_result.pages = [mock_page]
         mock_client.ocr = AsyncMock(return_value=mock_ocr_result)
 

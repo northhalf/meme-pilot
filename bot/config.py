@@ -56,7 +56,10 @@ def read_session_timeout() -> int:
 
 
 # 有效 OCR Provider 值
-_VALID_OCR_PROVIDERS: frozenset[str] = frozenset({"deepseek", "paddle"})
+_VALID_OCR_PROVIDERS: frozenset[str] = frozenset({"deepseek", "paddle", "rapidocr"})
+
+# 有效 Embedding Provider 值
+_VALID_EMBEDDING_PROVIDERS: frozenset[str] = frozenset({"openai", "google"})
 
 
 def _parse_timeout_seconds(raw: str, default: int) -> int:
@@ -111,10 +114,42 @@ def read_ocr_provider() -> str:
     """从环境变量读取 OCR provider 类型。
 
     Returns:
-        "paddle"（默认）或 "deepseek"。
+        "rapidocr"（默认）、"paddle" 或 "deepseek"。
     """
-    raw = os.environ.get("OCR_PROVIDER", "paddle").strip().lower()
-    return raw if raw in _VALID_OCR_PROVIDERS else "paddle"
+    raw = os.environ.get("OCR_PROVIDER", "rapidocr").strip().lower()
+    return raw if raw in _VALID_OCR_PROVIDERS else "rapidocr"
+
+
+def read_embedding_provider() -> str:
+    """从环境变量读取 Embedding provider 类型。
+
+    Returns:
+        "openai"（默认）或 "google"。
+    """
+    raw = os.environ.get("EMBEDDING_PROVIDER", "openai").strip().lower()
+    return raw if raw in _VALID_EMBEDDING_PROVIDERS else "openai"
+
+
+# 默认 OCR 文本置信度阈值
+_DEFAULT_OCR_TEXT_SCORE = 0.9
+
+
+def read_ocr_text_score() -> float:
+    """从环境变量读取 OCR 文本置信度阈值。
+
+    PaddleOCR 与 RapidOCR 共用此阈值。
+
+    Returns:
+        阈值浮点数，默认 0.9；解析失败或越界时回退为 0.9。
+    """
+    raw = os.environ.get("OCR_TEXT_SCORE", "")
+    if not raw:
+        return _DEFAULT_OCR_TEXT_SCORE
+    try:
+        value = float(raw)
+        return value if 0.0 <= value <= 1.0 else _DEFAULT_OCR_TEXT_SCORE
+    except ValueError:
+        return _DEFAULT_OCR_TEXT_SCORE
 
 
 __all__ = [
@@ -127,4 +162,6 @@ __all__ = [
     "read_read_lock_timeout",
     "read_add_command_timeout",
     "read_ocr_provider",
+    "read_embedding_provider",
+    "read_ocr_text_score",
 ]

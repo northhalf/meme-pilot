@@ -41,6 +41,7 @@ async def handle_refresh(bot: Bot, event: MessageEvent, matcher: Matcher) -> Non
         # 授权校验
         if not is_authorized(user_id):
             log_unauthorized(user_id, "refresh")
+            await matcher.finish(None)
             return
 
         # 群聊拦截：/refresh 仅限私聊使用

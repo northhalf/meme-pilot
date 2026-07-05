@@ -50,6 +50,7 @@ async def handle_plain_text(bot: Bot, event: MessageEvent, matcher: Matcher) -> 
     try:
         if not is_authorized(user_id):
             log_unauthorized(user_id, "plain_text")
+            await matcher.finish(None)
             return
 
         if text.startswith("/"):

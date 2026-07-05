@@ -10,15 +10,19 @@ api
 └── bot
     ├── engine
     │   ├── ai_matcher.md
-    │   ├── deepseek_ocr.md
-    │   ├── embedding_service.md
+    │   ├── google_embedding.md
     │   ├── image_optimizer.md
     │   ├── index_manager.md
     │   ├── keyword_searcher.md
     │   ├── metadata_store.md
+    │   ├── openai_embedding.md
+    │   ├── openai_ocr.md
     │   ├── paddle_ocr.md
     │   ├── protocols.md
+    │   ├── provider_factory.md
+    │   ├── rapidocr_ocr.md
     │   ├── rerank_service.md
+    │   ├── retry_config.md
     │   ├── vector_store.md
     ├── bot.md
     ├── config.md
@@ -309,10 +313,10 @@ class KeywordSearcher:
     def search(self, keyword: str) -> list[SearchResult]
 ```
 
-### `docs/api/bot/engine/embedding_service.md`
+### `docs/api/bot/engine/openai_embedding.md`
 
 ```python
-class EmbeddingService:
+class OpenAIEmbeddingService:
     def __init__(
         self,
         api_key: str | None = None,
@@ -322,15 +326,20 @@ class EmbeddingService:
     ) -> None
 
     async def embed(self, text: str) -> list[float]  # 1024 维
+    async def close(self) -> None
+
+
+def create_openai_embedding_service() -> OpenAIEmbeddingService
 ```
 
-并发控制：使用 asyncio.Semaphore 限制 embed() 并发数。
-concurrency 默认读取 EMBEDDING_CONCURRENCY 环境变量，回退为 5。
+实现 `protocols.EmbeddingProvider` 协议。默认模型 `BAAI/bge-m3`，输出 1024 维向量；`embed()` 装饰有 `@api_retry(...)` 重试。
 
-### `docs/api/bot/engine/deepseek_ocr.md`
+并发控制：使用 `asyncio.Semaphore` 限制 `embed()` 并发数，`concurrency` 默认读取 `EMBEDDING_CONCURRENCY` 环境变量，回退为 5。
+
+### `docs/api/bot/engine/openai_ocr.md`
 
 ```python
-class DeepSeekOcrService:
+class OpenAIOcrService:
     MIME_MAP: dict[str, str]
     OCR_PROMPT: str
     concurrency: int  # OCR 并发上限，默认读取 OCR_CONCURRENCY 环境变量，回退为 5
@@ -344,7 +353,87 @@ class DeepSeekOcrService:
     ) -> None
 
     async def ocr(self, image_path: str) -> str
+    async def close(self) -> None
+
+
+def create_openai_ocr_service() -> OpenAIOcrService
 ```
+
+OpenAI 兼容 OCR 服务，示例默认调用硅基流动 `deepseek-ai/DeepSeek-OCR`；`ocr()` 装饰有 `@api_retry(...)` 重试。
+
+### `docs/api/bot/engine/rapidocr_ocr.md`
+
+```python
+class RapidOcrService:
+    def __init__(
+        self,
+        text_score: float = 0.9,
+        concurrency: int | None = None,
+    ) -> None
+
+    async def ocr(self, image_path: str) -> str
+    async def close(self) -> None
+
+
+def create_rapidocr_service() -> RapidOcrService
+```
+
+RapidOCR 本地 OCR provider，使用本地 ONNX 模型；实现 `index_manager.OcrProvider` 协议。
+
+### `docs/api/bot/engine/google_embedding.md`
+
+```python
+class GoogleEmbeddingService:
+    def __init__(
+        self,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        model: str | None = None,
+        concurrency: int | None = None,
+    ) -> None
+
+    async def embed(self, text: str) -> list[float]  # 1024 维
+    async def close(self) -> None
+
+
+def create_google_embedding_service() -> GoogleEmbeddingService
+```
+
+Google Embedding provider，通过 Google GenAI SDK 生成 1024 维向量；实现 `protocols.EmbeddingProvider` 协议，`embed()` 装饰有 `@api_retry(...)` 重试。
+
+### `docs/api/bot/engine/provider_factory.md`
+
+```python
+OCR_REGISTRY: dict[str, Factory]
+EMBEDDING_REGISTRY: dict[str, EmbeddingFactory]
+
+class ProviderNotAvailableError(ValueError): ...
+
+def register_ocr(name: str, factory: Factory) -> None
+def register_embedding(name: str, factory: EmbeddingFactory) -> None
+def mark_ocr_unavailable(name: str, reason: str) -> None
+def mark_embedding_unavailable(name: str, reason: str) -> None
+def create_ocr_provider(name: str) -> OcrProvider
+def create_embedding_provider(name: str) -> EmbeddingProvider
+def reset_provider_registries() -> None
+```
+
+OCR / Embedding provider 注册表与工厂函数。依赖缺失的 provider 可在 `bot/engine/__init__.py` 中被标记为不可用，调用 `create_*_provider()` 时抛出 `ProviderNotAvailableError`。
+
+### `docs/api/bot/engine/retry_config.md`
+
+```python
+def api_retry(
+    *,
+    max_attempts: int = 3,
+    wait_min: float = 1,
+    wait_max: float = 10,
+    multiplier: float = 1,
+    extra_exceptions: ExceptionTuple = (),
+)
+```
+
+tenacity 通用网络请求重试装饰器工厂。默认对 `httpx.NetworkError`、`httpx.ConnectError`、`httpx.TimeoutException`、`ConnectionError`、`TimeoutError` 及调用方传入的额外异常进行最多 3 次指数退避重试。
 
 ### `docs/api/bot/engine/paddle_ocr.md`
 
@@ -427,7 +516,7 @@ class ImageOptimizer:
 NoneBot2 应用入口，详见 `docs/api/bot/bot.md`。
 
 - 启动：`main()` — 初始化 NoneBot2（`driver="~fastapi"`），注册 OneBot V11 适配器，加载插件，启动驱动器
-- Startup hook：`_on_startup()` — 创建 OCR/Embedding/Rerank/ImageOptimizer 服务，创建 `MetadataStore(INDEX_DB_PATH)` + `VectorStore(CHROMA_DIR)` 并注入 `IndexManager`，`load()` 后注册到 `app_state`、后台执行索引同步；根据 `OCR_PROVIDER` 环境变量选择 OCR 引擎（`paddle`/`deepseek`）
+- Startup hook：`_on_startup()` — 通过 `provider_factory.create_*_provider()` 创建 OCR/Embedding 服务，同时创建 `RerankService` 与 `ImageOptimizer`；创建 `MetadataStore(INDEX_DB_PATH)` + `VectorStore(CHROMA_DIR)` 并注入 `IndexManager`，`load()` 后注册到 `app_state`、后台执行索引同步；根据 `OCR_PROVIDER` 选择 OCR 引擎（`paddle`/`deepseek`/`rapidocr`），根据 `EMBEDDING_PROVIDER` 选择 Embedding 引擎（`openai`/`google`）
 - Shutdown hook：`_on_shutdown()` — 关闭 OCR 服务 HTTP 会话，并 `close()` 两个 Store（sqlite 连接 + chroma PersistentClient）
 - `_background_sync()` — 后台同步任务，调用 `IndexManager.refresh()` 以独占写锁执行同步；同步失败时记录日志，Bot 继续运行
 - 环境变量：`BOT_HOST`（默认 `0.0.0.0`）、`BOT_PORT`（默认 `8080`，无效值回退 8080）、`READ_LOCK_TIMEOUT`（默认 `00:00:30`）、`ADD_COMMAND_TIMEOUT`（默认 `00:01:00`）、`EMBEDDING_CONCURRENCY`（默认 5）、`OCR_CONCURRENCY`（默认 5）、`RERANK_CONCURRENCY`（默认 5）、`COMPRESS_CONCURRENCY`（默认 5）
@@ -445,8 +534,8 @@ def init_app(
     index_manager: IndexManager,
     metadata_store: MetadataStore,
     vector_store: VectorStore,
-    ocr_service: DeepSeekOcrService | PaddleOcrClientService,
-    embedding_service: EmbeddingService,
+    ocr_service: OcrProvider,
+    embedding_service: EmbeddingProvider,
     image_optimizer: ImageOptimizer | None = None,
     ai_matcher: AIMatcher | None = None,
     keyword_searcher: KeywordSearcher | None = None,
@@ -455,8 +544,8 @@ def init_app(
 def get_index_manager() -> IndexManager
 def get_metadata_store() -> MetadataStore
 def get_vector_store() -> VectorStore
-def get_ocr_service() -> DeepSeekOcrService | PaddleOcrClientService
-def get_embedding_service() -> EmbeddingService
+def get_ocr_service() -> OcrProvider
+def get_embedding_service() -> EmbeddingProvider
 def get_image_optimizer() -> ImageOptimizer | None
 def get_ai_matcher() -> AIMatcher
 def get_keyword_searcher() -> KeywordSearcher
@@ -637,4 +726,6 @@ NoneBot2 命令插件，注册 `/search` 命令（薄包装，核心逻辑委托
 - `INDEX_DB_PATH: Path` — sqlite 元数据数据库文件，绝对路径 `<项目根>/data/index.db`
 - `CHROMA_DIR: Path` — chroma 向量库数据目录，绝对路径 `<项目根>/data/chroma`
 - `read_session_timeout() -> int` — 从 `SESSION_EXPIRE_TIMEOUT` 环境变量读取会话超时秒数，支持纯数字和 `HH:MM:SS` 格式（pydantic 解析），默认 60
-- `read_ocr_provider() -> str` — 从 `OCR_PROVIDER` 环境变量读取 OCR 引擎类型，默认 `"paddle"`，有效值：`"deepseek"`、`"paddle"`
+- `read_ocr_provider() -> str` — 从 `OCR_PROVIDER` 环境变量读取 OCR 引擎类型，默认 `"rapidocr"`，有效值：`"deepseek"`、`"paddle"`、`"rapidocr"`
+- `read_embedding_provider() -> str` — 从 `EMBEDDING_PROVIDER` 环境变量读取 Embedding 引擎类型，默认 `"openai"`，有效值：`"openai"`、`"google"`
+- `read_ocr_text_score() -> float` — 从 `OCR_TEXT_SCORE` 环境变量读取 OCR 文本置信度阈值，默认 `0.9`，无效值回退为 `0.9`

@@ -33,9 +33,7 @@ setspeaker_cmd = on_command("setspeaker", rule=to_me(), priority=5, block=True)
 
 
 @setspeaker_cmd.handle()
-async def handle_setspeaker(
-    bot: Bot, event: MessageEvent, matcher: Matcher
-) -> None:
+async def handle_setspeaker(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
     """入口：授权校验 → 参数解析 → 发图确认。
 
     Args:
@@ -50,6 +48,7 @@ async def handle_setspeaker(
         # 授权校验
         if not is_authorized(user_id):
             log_unauthorized(user_id, "setspeaker")
+            await matcher.finish(None)
             return
 
         # 仅限私聊
@@ -112,7 +111,11 @@ async def handle_setspeaker(
         selection_id = str(uuid.uuid4())
         task = asyncio.create_task(
             timeout_session(
-                bot, event, user_id, selection_id, "说话人设置已取消（超时）",
+                bot,
+                event,
+                user_id,
+                selection_id,
+                "说话人设置已取消（超时）",
             ),
         )
         session_manager.create_selection(user_id, selection_id, task)
@@ -169,9 +172,7 @@ async def got_confirm(
                     old_text = result.old_speaker if result.old_speaker else "无"
                     new_text = result.new_speaker if result.new_speaker else "无"
                     await matcher.finish(
-                        f"说话人已设置 ✅\n"
-                        f"旧：{old_text}\n"
-                        f"新：{new_text}",
+                        f"说话人已设置 ✅\n" f"旧：{old_text}\n" f"新：{new_text}",
                     )
                     return
             else:

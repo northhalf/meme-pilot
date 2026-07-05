@@ -19,82 +19,87 @@ from paddleocr import (
 
 logger = logging.getLogger(__name__)
 
-# pruned_result 中可能包含文本的常见字段名
-_TEXT_FIELDS = frozenset({"text", "content", "transcription", "txt"})
+# PaddleOCR 云 API 返回的 pruned_result 中，承载识别文本的常见结构。
+#
+# 当前支持的格式规律（基于 paddleocr*.jsonc 实测）：
+# 1. 通用 OCR（PP-OCR v6 等）：dict 直接包含 "rec_texts": list[str] 与可选 "rec_scores": list[float]
+# 2. 文档解析（PP-Structure v3）：dict 包含 "overall_ocr_res": dict，
+#    其下再包含 "rec_texts" / "rec_scores"
+#
+# 不支持的格式：PaddleOCR-VL-1.6 等视觉语言模型返回的对话/多模态格式。
+
+
+def _extract_rec_texts(
+    data: dict[str, object], rec_score_threshold: float
+) -> tuple[list[str], bool]:
+    """从包含 rec_texts/rec_scores 的字典中提取文本行。
+
+    Args:
+        data: 可能包含 rec_texts 与 rec_scores 的字典。
+        rec_score_threshold: rec_scores 置信度阈值（0~1），低于此值的文本行被过滤；
+                             0 表示不过滤。
+
+    Returns:
+        (过滤后的文本行列表, 是否存在 rec_texts 字段)。
+        当存在 rec_texts 但全部被过滤时，返回空列表和 True，调用方应整体返回空字符串，
+        避免回退到 str() 兜底。
+    """
+    rec_texts = data.get("rec_texts")
+    rec_scores = data.get("rec_scores")
+    if not isinstance(rec_texts, list):
+        return [], False
+
+    has_scores = isinstance(rec_scores, list)
+    parts: list[str] = []
+    for i, item in enumerate(rec_texts):
+        if not item:
+            continue
+        if has_scores and i < len(rec_scores):
+            score = rec_scores[i]
+            if isinstance(score, (int, float)) and score < rec_score_threshold:
+                logger.debug("过滤低置信度文本: text=%s, score=%s", item, score)
+                continue
+        parts.append(str(item))
+    return parts, True
 
 
 def _extract_text(pruned_result: object, rec_score_threshold: float = 0.0) -> str:
     """从 pruned_result 中提取文本字符串。
 
-    兼容多种返回格式：
-    - str: 直接返回
-    - list[dict]: 提取每个 dict 的 text/content/transcription/txt 字段，空格拼接
-    - dict: 依次尝试 text/content/transcription/txt 字段，再试 rec_texts（列表），
-            可配合 rec_scores 做置信度过滤
-    - None: 返回空字符串
+    仅支持 PaddleOCR 云 API 实测返回的两种结构（见模块顶部注释）。
+    PaddleOCR-VL-1.6 返回格式不在支持范围内。
 
     Args:
-        pruned_result: OCRResult.pages[i].pruned_result，类型 Any。
+        pruned_result: OCRResult.pages[i].pruned_result，类型任意。
         rec_score_threshold: rec_scores 置信度阈值（0~1），低于此值的文本行被过滤；
                              0 表示不过滤。
 
     Returns:
-        提取到的文本字符串。
+        提取到的文本字符串，多行之间以空格分隔。
     """
     if pruned_result is None:
         return ""
 
-    # 直接是字符串
-    if isinstance(pruned_result, str):
-        return pruned_result
+    if not isinstance(pruned_result, dict):
+        # 实测中 pruned_result 只可能出现 dict，其余类型按无文本处理
+        return ""
 
-    # 列表：可能是 list[dict] 或 list[str]
-    if isinstance(pruned_result, list):
-        parts: list[str] = []
-        for item in pruned_result:
-            if isinstance(item, dict):
-                for field in _TEXT_FIELDS:
-                    value = item.get(field)
-                    if value and isinstance(value, str):
-                        parts.append(value)
-                        break
-            elif isinstance(item, str):
-                parts.append(item)
+    # 1) 通用 OCR：dict 直接包含 rec_texts
+    parts, had_rec_texts = _extract_rec_texts(pruned_result, rec_score_threshold)
+    if had_rec_texts:
         return " ".join(parts)
 
-    # 单个 dict
-    if isinstance(pruned_result, dict):
-        # 尝试简单文本字段
-        for field in _TEXT_FIELDS:
-            value = pruned_result.get(field)
-            if value and isinstance(value, str):
-                return value
-        # 尝试 rec_texts（PaddleOCR API 新版返回格式，list[str]）
-        rec_texts = pruned_result.get("rec_texts")
-        rec_scores = pruned_result.get("rec_scores")
-        logger.debug("rec_texts: %s, rec_scores: %s", rec_texts, rec_scores)
-        if isinstance(rec_texts, list):
-            parts: list[str] = []
-            has_scores = isinstance(rec_scores, list)
-            for i, t in enumerate(rec_texts):
-                if not t:
-                    continue
-                # 置信度过滤
-                if has_scores and i < len(rec_scores):
-                    score = rec_scores[i]
-                    if isinstance(score, (int, float)) and score < rec_score_threshold:
-                        logger.debug("过滤低置信度文本: text=%s, score=%s", t, score)
-                        continue
-                parts.append(str(t))
-            if parts:
-                return " ".join(parts)
-            # 有 rec_texts 但全部被过滤 → 空字符串
-            if has_scores and rec_score_threshold > 0:
-                return ""
+    # 2) 文档解析（PP-Structure v3）：文本嵌套在 overall_ocr_res 下
+    overall_ocr_res = pruned_result.get("overall_ocr_res")
+    if isinstance(overall_ocr_res, dict):
+        parts, had_rec_texts = _extract_rec_texts(
+            overall_ocr_res, rec_score_threshold
+        )
+        if had_rec_texts:
+            return " ".join(parts)
 
-    # 兜底：转字符串
-    text = str(pruned_result)
-    return text if text.strip() else ""
+    # 未识别到支持的文本结构
+    return ""
 
 
 class PaddleOcrClientService:
@@ -201,3 +206,13 @@ class PaddleOcrClientService:
         """释放 AsyncPaddleOCRClient 内部 HTTP 会话。"""
         await self._client.close()
         logger.debug("PaddleOcrClientService HTTP 会话已关闭")
+
+
+def create_paddle_ocr_service() -> PaddleOcrClientService:
+    """从环境变量创建 PaddleOCR 云服务。"""
+    from bot.config import read_int_env, read_ocr_text_score
+
+    return PaddleOcrClientService(
+        text_rec_score_thresh=read_ocr_text_score(),
+        concurrency=read_int_env("OCR_CONCURRENCY"),
+    )

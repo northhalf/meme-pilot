@@ -19,4 +19,5 @@ class EmbeddingProvider(Protocol):
 
 - `ai_matcher.AIMatcher` — 用户描述向量化
 - `index_manager.IndexManager` — 新增图片 OCR 文本向量化
-- `embedding_service.EmbeddingService` — 具体实现类
+- `openai_embedding.OpenAIEmbeddingService` — OpenAI 兼容 Embedding 实现
+- `google_embedding.GoogleEmbeddingService` — Google Embedding 实现

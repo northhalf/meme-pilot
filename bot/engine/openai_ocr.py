@@ -1,8 +1,6 @@
-"""OCR 服务模块 — 基于硅基流动 DeepSeek-OCR。
+"""OCR 服务模块 — 基于 OpenAI 兼容 API。
 
-通过 OpenAI 兼容的 chat completions API 调用
-deepseek-ai/DeepSeek-OCR 视觉模型进行图片文字识别。
-
+通过 OpenAI 兼容的 chat completions API 调用视觉模型进行图片文字识别。
 实现 index_manager.OcrProvider 协议。
 """
 
@@ -13,7 +11,10 @@ import os
 import re
 from pathlib import Path
 
+import openai
 from openai import AsyncOpenAI
+
+from .retry_config import api_retry
 
 logger = logging.getLogger(__name__)
 
@@ -22,13 +23,13 @@ _TEXT_CLEAN_PATTERN = re.compile(r"<\|ref\|>(.*?)<\|/ref\|>")
 
 
 def _clean_ocr_result(raw: str) -> str:
-    """清洗 DeepSeek-OCR 原始输出，提取纯文本。
+    """清洗 OCR 原始输出，提取纯文本。
 
     将 <|ref|>text<|/ref|><|det|>[[...]]<|/det|> 格式
     中的 text 部分提取出来，多段文本用空格连接。
 
     Args:
-        raw: DeepSeek-OCR 原始 API 输出。
+        raw: OCR 原始 API 输出。
 
     Returns:
         清洗后的纯文本字符串。
@@ -40,11 +41,10 @@ def _clean_ocr_result(raw: str) -> str:
     return " ".join(m.strip() for m in matches if m.strip())
 
 
-class DeepSeekOcrService:
-    """DeepSeek-OCR 服务，通过硅基流动 API 进行图片文字识别。
+class OpenAIOcrService:
+    """OpenAI 兼容 OCR 服务，通过 OpenAI 兼容 API 进行图片文字识别。
 
-    实现 index_manager.OcrProvider 协议，
-    可直接注入给 IndexManager 使用。
+    实现 index_manager.OcrProvider 协议，可直接注入给 IndexManager 使用。
 
     Attributes:
         _client: AsyncOpenAI 客户端。
@@ -71,38 +71,48 @@ class DeepSeekOcrService:
         model: str | None = None,
         concurrency: int | None = None,
     ) -> None:
-        """初始化 DeepSeekOcrService。
+        """初始化 OpenAIOcrService。
 
         Args:
-            api_key: 硅基流动 API Key，默认从 SILICONFLOW_API_KEY 环境变量读取。
-            base_url: API 地址，默认从 SILICONFLOW_BASE_URL 环境变量读取，
-                      回退为 https://api.siliconflow.cn/v1。
-            model: OCR 模型名，默认从 SILICONFLOW_OCR_MODEL 环境变量读取，
-                   回退为 deepseek-ai/DeepSeek-OCR。
+            api_key: API Key，默认从 OPENAI_OCR_API_KEY 环境变量读取。
+            base_url: API 地址，默认从 OPENAI_OCR_BASE_URL 环境变量读取。
+                      未提供时将使用 OpenAI SDK 的默认地址。
+            model: OCR 模型名，默认从 OPENAI_OCR_MODEL 环境变量读取。
+                   调用 ocr() 前须确保已配置。
             concurrency: 并发数，默认从 OCR_CONCURRENCY 环境变量读取，
                          回退为 5。
         """
-        self._api_key = api_key or os.environ.get("SILICONFLOW_API_KEY", "")
-        self._base_url = base_url or os.environ.get(
-            "SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1"
-        )
-        self._model = model or os.environ.get(
-            "SILICONFLOW_OCR_MODEL", "deepseek-ai/DeepSeek-OCR"
-        )
+        self._api_key = api_key or os.environ.get("OPENAI_OCR_API_KEY", "")
+        self._base_url = base_url or os.environ.get("OPENAI_OCR_BASE_URL")
+        model_name = model or os.environ.get("OPENAI_OCR_MODEL")
+        if not model_name:
+            raise ValueError(
+                "必须提供 OCR 模型名（通过 model 参数或 OPENAI_OCR_MODEL 环境变量）"
+            )
+        self._model = model_name
 
         self._client = AsyncOpenAI(
             api_key=self._api_key,
             base_url=self._base_url,
+            max_retries=0,
         )
 
         c = concurrency or int(os.environ.get("OCR_CONCURRENCY", 5))
         self._semaphore = asyncio.Semaphore(c)
 
+    @api_retry(
+        extra_exceptions=(
+            openai.APIConnectionError,
+            openai.APITimeoutError,
+            openai.RateLimitError,
+            openai.InternalServerError,
+        )
+    )
     async def ocr(self, image_path: str) -> str:
         """对图片执行 OCR 识别。
 
-        将图片转为 base64 后通过硅基流动 chat completions API
-        调用 DeepSeek-OCR 视觉模型进行文字识别。
+        将图片转为 base64 后通过 OpenAI 兼容 chat completions API
+        调用视觉模型进行文字识别。
 
         Args:
             image_path: 图片文件路径。
@@ -131,7 +141,7 @@ class DeepSeekOcrService:
 
         # 调用 vision API
         async with self._semaphore:
-            logger.debug("调用 DeepSeek-OCR: %s", path.name)
+            logger.debug("调用 OCR API: %s", path.name)
             try:
                 response = await self._client.chat.completions.create(
                     model=self._model,
@@ -151,8 +161,11 @@ class DeepSeekOcrService:
                         }
                     ],
                 )
+            except openai.APIError:
+                # 让 tenacity 重试可重试的 OpenAI API 异常
+                raise
             except Exception as exc:
-                raise RuntimeError(f"DeepSeek-OCR API 调用失败: {exc}") from exc
+                raise RuntimeError(f"OCR API 调用失败: {exc}") from exc
 
             raw = response.choices[0].message.content or ""
             text = "".join(_clean_ocr_result(raw).split())
@@ -162,4 +175,11 @@ class DeepSeekOcrService:
     async def close(self) -> None:
         """释放 AsyncOpenAI HTTP 客户端会话。"""
         await self._client.close()
-        logger.debug("DeepSeekOcrService HTTP 会话已关闭")
+        logger.debug("OpenAIOcrService HTTP 会话已关闭")
+
+
+def create_openai_ocr_service() -> OpenAIOcrService:
+    """从环境变量创建 OpenAI OCR 服务。"""
+    from bot.config import read_int_env
+
+    return OpenAIOcrService(concurrency=read_int_env("OCR_CONCURRENCY"))

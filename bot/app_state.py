@@ -1,27 +1,26 @@
 """共享实例管理模块。
 
 模块级单例模式，供插件获取 IndexManager、MetadataStore、VectorStore、
-OcrService、EmbeddingService、AIMatcher、KeywordSearcher。
+OcrProvider、EmbeddingProvider、AIMatcher、KeywordSearcher。
 bot.py 启动时调用 init_app() 初始化，插件通过 get_*() 函数获取实例。
 """
 
 from .engine import (
     AIMatcher,
-    DeepSeekOcrService,
-    EmbeddingService,
     ImageOptimizer,
     IndexManager,
     KeywordSearcher,
     MetadataStore,
-    PaddleOcrClientService,
     VectorStore,
 )
+from .engine.index_manager import OcrProvider
+from .engine.protocols import EmbeddingProvider
 
 _index_manager: IndexManager | None = None
 _metadata_store: MetadataStore | None = None
 _vector_store: VectorStore | None = None
-_ocr_service: DeepSeekOcrService | PaddleOcrClientService | None = None
-_embedding_service: EmbeddingService | None = None
+_ocr_service: OcrProvider | None = None
+_embedding_service: EmbeddingProvider | None = None
 _image_optimizer: ImageOptimizer | None = None
 _ai_matcher: AIMatcher | None = None
 _keyword_searcher: KeywordSearcher | None = None
@@ -31,8 +30,8 @@ def init_app(
     index_manager: IndexManager,
     metadata_store: MetadataStore,
     vector_store: VectorStore,
-    ocr_service: DeepSeekOcrService | PaddleOcrClientService,
-    embedding_service: EmbeddingService,
+    ocr_service: OcrProvider,
+    embedding_service: EmbeddingProvider,
     image_optimizer: ImageOptimizer | None = None,
     ai_matcher: AIMatcher | None = None,
     keyword_searcher: KeywordSearcher | None = None,
@@ -106,11 +105,11 @@ def get_vector_store() -> VectorStore:
     return _vector_store
 
 
-def get_ocr_service() -> DeepSeekOcrService | PaddleOcrClientService:
+def get_ocr_service() -> OcrProvider:
     """获取 OCR 服务单例。
 
     Returns:
-        已初始化的 OCR 服务实例（DeepSeekOcrService 或 PaddleOcrClientService）。
+        已初始化的 OCR 服务实例（实现 OcrProvider 协议）。
 
     Raises:
         RuntimeError: 尚未调用 init_app() 初始化。
@@ -120,11 +119,11 @@ def get_ocr_service() -> DeepSeekOcrService | PaddleOcrClientService:
     return _ocr_service
 
 
-def get_embedding_service() -> EmbeddingService:
-    """获取 EmbeddingService 单例。
+def get_embedding_service() -> EmbeddingProvider:
+    """获取 Embedding 服务单例。
 
     Returns:
-        已初始化的 EmbeddingService 实例。
+        已初始化的 Embedding 服务实例（实现 EmbeddingProvider 协议）。
 
     Raises:
         RuntimeError: 尚未调用 init_app() 初始化。

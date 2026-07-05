@@ -45,6 +45,7 @@ async def handle_search(bot: Bot, event: MessageEvent, matcher: Matcher) -> None
         # 授权校验
         if not is_authorized(user_id):
             log_unauthorized(user_id, "search")
+            await matcher.finish(None)
             return
 
         # 拒绝而非覆盖

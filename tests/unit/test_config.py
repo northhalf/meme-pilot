@@ -11,7 +11,9 @@ from bot.config import (
     PROJECT_ROOT,
     _parse_timeout_seconds,
     read_add_command_timeout,
+    read_embedding_provider,
     read_ocr_provider,
+    read_ocr_text_score,
     read_read_lock_timeout,
     read_session_timeout,
 )
@@ -91,7 +93,7 @@ class TestReadSessionTimeout:
 class TestReadOcrProvider:
     def test_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("OCR_PROVIDER", raising=False)
-        assert read_ocr_provider() == "paddle"
+        assert read_ocr_provider() == "rapidocr"
 
     def test_valid_paddle(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("OCR_PROVIDER", "paddle")
@@ -101,14 +103,46 @@ class TestReadOcrProvider:
         monkeypatch.setenv("OCR_PROVIDER", "deepseek")
         assert read_ocr_provider() == "deepseek"
 
+    def test_valid_rapidocr(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("OCR_PROVIDER", "rapidocr")
+        assert read_ocr_provider() == "rapidocr"
+
     def test_valid_case_insensitive(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("OCR_PROVIDER", "Paddle")
         assert read_ocr_provider() == "paddle"
         monkeypatch.setenv("OCR_PROVIDER", "DeepSeek")
         assert read_ocr_provider() == "deepseek"
-        monkeypatch.setenv("OCR_PROVIDER", "  PADDLE  ")
-        assert read_ocr_provider() == "paddle"
+        monkeypatch.setenv("OCR_PROVIDER", "  RAPIDOCR  ")
+        assert read_ocr_provider() == "rapidocr"
 
     def test_invalid_returns_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("OCR_PROVIDER", "tesseract")
-        assert read_ocr_provider() == "paddle"
+        assert read_ocr_provider() == "rapidocr"
+
+
+class TestReadEmbeddingProvider:
+    def test_default_is_openai(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("EMBEDDING_PROVIDER", raising=False)
+        assert read_embedding_provider() == "openai"
+
+    def test_google(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("EMBEDDING_PROVIDER", "google")
+        assert read_embedding_provider() == "google"
+
+    def test_invalid_fallback_to_openai(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("EMBEDDING_PROVIDER", "invalid")
+        assert read_embedding_provider() == "openai"
+
+
+class TestReadOcrTextScore:
+    def test_default_is_0_9(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("OCR_TEXT_SCORE", raising=False)
+        assert read_ocr_text_score() == 0.9
+
+    def test_valid_value(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("OCR_TEXT_SCORE", "0.75")
+        assert read_ocr_text_score() == 0.75
+
+    def test_invalid_fallback_to_0_9(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("OCR_TEXT_SCORE", "abc")
+        assert read_ocr_text_score() == 0.9

@@ -23,3 +23,7 @@ class EmbeddingProvider(Protocol):
             embedding 向量（浮点数列表）。
         """
         ...
+
+    async def close(self) -> None:
+        """关闭 provider 占用的资源。"""
+        ...

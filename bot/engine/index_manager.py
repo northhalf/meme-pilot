@@ -15,13 +15,13 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from bot.config import read_add_command_timeout, read_read_lock_timeout
-from bot.engine.ai_matcher import AIMatcher, AIMatchResult
-from bot.engine.image_optimizer import OptimizeResult
-from bot.engine.keyword_searcher import KeywordSearcher, SearchResult
-from bot.engine.metadata_store import MemeEntry
-from bot.engine.protocols import EmbeddingProvider
-from bot.engine.rwlock import IndexRwLock
-from bot.engine.vector_store import VectorHit
+from .ai_matcher import AIMatcher, AIMatchResult
+from .image_optimizer import OptimizeResult
+from .keyword_searcher import KeywordSearcher, SearchResult
+from .metadata_store import MemeEntry
+from .protocols import EmbeddingProvider
+from .rwlock import IndexRwLock
+from .vector_store import VectorHit
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +145,10 @@ class OcrProvider(Protocol):
     """OCR 服务提供者协议。ocr() 返回去除所有空白后的文本。"""
 
     async def ocr(self, image_path: str) -> str: ...
+
+    async def close(self) -> None:
+        """关闭 provider 占用的资源。"""
+        ...
 
 
 class MetadataStoreProtocol(Protocol):

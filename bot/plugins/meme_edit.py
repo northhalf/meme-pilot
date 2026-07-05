@@ -49,6 +49,7 @@ async def handle_edit(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
         # 授权校验
         if not is_authorized(user_id):
             log_unauthorized(user_id, "edittext")
+            await matcher.finish(None)
             return
 
         # 仅限私聊

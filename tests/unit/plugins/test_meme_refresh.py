@@ -104,14 +104,14 @@ class TestHandleRefreshAuth:
     async def test_unauthorized_user_ignored(
         self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
-        """非授权用户应被静默忽略。"""
+        """非授权用户应调用 finish(None) 结束匹配。"""
         matcher = _make_matcher()
         bot = _make_bot()
 
         await handle_refresh(bot, _make_event("999"), matcher)
 
         mock_get_im.assert_not_called()
-        matcher.finish.assert_not_called()
+        matcher.finish.assert_awaited_once_with(None)
         bot.send.assert_not_called()
 
     @pytest.mark.asyncio

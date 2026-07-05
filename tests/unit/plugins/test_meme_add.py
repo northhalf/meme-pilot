@@ -211,11 +211,11 @@ class TestHandleAdd:
         self,
         mock_auth: MagicMock,
     ) -> None:
-        """非授权用户应被静默忽略。"""
+        """非授权用户应调用 finish(None) 结束匹配。"""
         matcher = _make_matcher()
         await handle_add(_make_bot(), _make_event("999"), matcher)
 
-        matcher.finish.assert_not_awaited()
+        matcher.finish.assert_awaited_once_with(None)
         matcher.send.assert_not_awaited()
 
     @pytest.mark.asyncio

@@ -64,8 +64,8 @@ class TestCancelCommand:
 
     @pytest.mark.asyncio
     async def test_unauthorized(self) -> None:
-        """未授权用户静默忽略。"""
-        matcher = MagicMock()
+        """未授权用户无活跃会话时，按无活跃会话处理。"""
+        matcher = AsyncMock()
         bot = AsyncMock()
         event = MagicMock()
         event.get_user_id.return_value = "unauthorized"
@@ -73,4 +73,4 @@ class TestCancelCommand:
         with patch("bot.plugins.meme_cancel.is_authorized", return_value=False):
             await handle_cancel(bot, event, matcher)
 
-        matcher.finish.assert_not_called()
+        matcher.finish.assert_awaited_once_with("当前没有活跃的会话")

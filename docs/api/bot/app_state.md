@@ -11,8 +11,8 @@
 | `index_manager` | `IndexManager` | 索引管理器实例 |
 | `metadata_store` | `MetadataStore` | 元数据存储实例 |
 | `vector_store` | `VectorStore` | 向量存储实例 |
-| `ocr_service` | `DeepSeekOcrService \| PaddleOcrClientService` | OCR 服务实例 |
-| `embedding_service` | `EmbeddingService` | Embedding 服务实例 |
+| `ocr_service` | `OcrProvider` | OCR 服务实例 |
+| `embedding_service` | `EmbeddingProvider` | Embedding 服务实例 |
 | `image_optimizer` | `ImageOptimizer \| None` | 图片压缩器实例，可选 |
 | `ai_matcher` | `AIMatcher \| None` | AI 匹配器实例，可选 |
 | `keyword_searcher` | `KeywordSearcher \| None` | 关键词搜索引擎实例，可选 |
@@ -53,20 +53,20 @@
 
 ---
 
-### `get_ocr_service() -> DeepSeekOcrService | PaddleOcrClientService`
+### `get_ocr_service() -> OcrProvider`
 
 | | 类型 | 说明 |
 |--|------|------|
-| **返回** | `DeepSeekOcrService \| PaddleOcrClientService` | 已初始化的 OCR 服务实例 |
+| **返回** | `OcrProvider` | 已初始化的 OCR 服务实例 |
 | **异常** | `RuntimeError` | 尚未调用 `init_app()` 初始化 |
 
 ---
 
-### `get_embedding_service() -> EmbeddingService`
+### `get_embedding_service() -> EmbeddingProvider`
 
 | | 类型 | 说明 |
 |--|------|------|
-| **返回** | `EmbeddingService` | 已初始化的 Embedding 服务实例 |
+| **返回** | `EmbeddingProvider` | 已初始化的 Embedding 服务实例 |
 | **异常** | `RuntimeError` | 尚未调用 `init_app()` 初始化 |
 
 ---

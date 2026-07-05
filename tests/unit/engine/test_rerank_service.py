@@ -4,6 +4,8 @@ import asyncio
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
+import openai
 import pytest
 
 from bot.engine.ai_matcher import AIMatchCandidate
@@ -148,6 +150,85 @@ class TestRerankService:
 
         with pytest.raises(ValueError, match="候选列表不能为空"):
             await service.rerank("开心的表情", [])
+
+
+class TestRerankRetry:
+    """验证 RerankService 对 OpenAI 可重试异常的重试行为。"""
+
+    @pytest.fixture(autouse=True)
+    def _patch_async_sleep(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """禁用 tenacity 的异步等待，避免测试真实耗时。"""
+
+        async def _noop(seconds: float) -> None:
+            return None
+
+        monkeypatch.setattr(asyncio, "sleep", _noop)
+
+    @pytest.mark.asyncio
+    async def test_rerank_retries_api_connection_error_then_success(
+        self,
+        mock_openai: AsyncMock,
+        sample_candidates: list[AIMatchCandidate],
+    ) -> None:
+        """APIConnectionError 连续 2 次后成功，应重试并最终返回结果。"""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "2"
+        mock_openai.chat.completions.create = AsyncMock(
+            side_effect=[
+                openai.APIConnectionError(
+                    message="fail1", request=httpx.Request("GET", "http://test")
+                ),
+                openai.APIConnectionError(
+                    message="fail2", request=httpx.Request("GET", "http://test")
+                ),
+                mock_response,
+            ]
+        )
+
+        service = RerankService(api_key="test-key")
+        rank = await service.rerank("开心的表情", sample_candidates)
+
+        assert rank == 2
+        assert mock_openai.chat.completions.create.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_rerank_retries_exhausted_raises_last_exception(
+        self,
+        mock_openai: AsyncMock,
+        sample_candidates: list[AIMatchCandidate],
+    ) -> None:
+        """APIConnectionError 连续 3 次仍失败，应抛出最后一个异常。"""
+        mock_openai.chat.completions.create = AsyncMock(
+            side_effect=openai.APIConnectionError(
+                message="fail", request=httpx.Request("GET", "http://test")
+            )
+        )
+
+        service = RerankService(api_key="test-key")
+
+        with pytest.raises(openai.APIConnectionError, match="fail"):
+            await service.rerank("开心的表情", sample_candidates)
+
+        assert mock_openai.chat.completions.create.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_rerank_non_retry_exception_not_retried(
+        self,
+        mock_openai: AsyncMock,
+        sample_candidates: list[AIMatchCandidate],
+    ) -> None:
+        """非重试异常（如 ValueError）不应重试，直接包装为 RuntimeError。"""
+        mock_openai.chat.completions.create = AsyncMock(
+            side_effect=ValueError("bad request")
+        )
+
+        service = RerankService(api_key="test-key")
+
+        with pytest.raises(RuntimeError, match="DeepSeek 精排 API 调用失败"):
+            await service.rerank("开心的表情", sample_candidates)
+
+        assert mock_openai.chat.completions.create.call_count == 1
 
 
 class TestRerankSemaphore:

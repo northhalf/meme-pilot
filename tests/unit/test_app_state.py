@@ -83,7 +83,7 @@ class TestGetOcrService:
     """get_ocr_service() 测试。"""
 
     def test_returns_instance(self) -> None:
-        """初始化后应返回 DeepSeekOcrService 实例。"""
+        """初始化后应返回 OCR 服务实例。"""
         ocr = MagicMock()
         app_state.init_app(MagicMock(), MagicMock(), MagicMock(), ocr, MagicMock())
         assert app_state.get_ocr_service() is ocr
@@ -98,7 +98,7 @@ class TestGetEmbeddingService:
     """get_embedding_service() 测试。"""
 
     def test_returns_instance(self) -> None:
-        """初始化后应返回 EmbeddingService 实例。"""
+        """初始化后应返回 Embedding 服务实例。"""
         emb = MagicMock()
         app_state.init_app(MagicMock(), MagicMock(), MagicMock(), MagicMock(), emb)
         assert app_state.get_embedding_service() is emb

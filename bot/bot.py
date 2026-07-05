@@ -21,20 +21,22 @@ from bot.config import (
     MEMES_DIR,
     PROJECT_ROOT,
     read_bot_port,
+    read_embedding_provider,
     read_int_env,
     read_ocr_provider,
 )
 from bot.engine import (
     AIMatcher,
-    DeepSeekOcrService,
-    EmbeddingService,
     ImageOptimizer,
     IndexManager,
     KeywordSearcher,
     MetadataStore,
-    PaddleOcrClientService,
     RerankService,
     VectorStore,
+)
+from bot.engine.provider_factory import (
+    create_embedding_provider,
+    create_ocr_provider,
 )
 from bot.logging_config import setup_logging
 
@@ -80,18 +82,13 @@ async def _on_startup() -> None:
     setup_logging("log")
     logger.info("MemePilot 正在启动...")
 
-    # 2. 根据 OCR_PROVIDER 环境变量选择 OCR 引擎
-    provider = read_ocr_provider()
-    if provider == "paddle":
-        ocr_service = PaddleOcrClientService(
-            concurrency=read_int_env("OCR_CONCURRENCY")
-        )
-        logger.info("OCR 引擎: PaddleOCR 云 API")
-    else:
-        ocr_service = DeepSeekOcrService(concurrency=read_int_env("OCR_CONCURRENCY"))
-        logger.info("OCR 引擎: DeepSeek-OCR（硅基流动）")
-    embedding_service = EmbeddingService(
-        concurrency=read_int_env("EMBEDDING_CONCURRENCY")
+    # 2. 根据环境变量选择 OCR / Embedding 引擎
+    ocr_service = create_ocr_provider(read_ocr_provider())
+    embedding_service = create_embedding_provider(read_embedding_provider())
+    logger.info(
+        "OCR 引擎: %s, Embedding 引擎: %s",
+        read_ocr_provider(),
+        read_embedding_provider(),
     )
     rerank_service = RerankService(concurrency=read_int_env("RERANK_CONCURRENCY"))
     image_optimizer = ImageOptimizer(concurrency=read_int_env("COMPRESS_CONCURRENCY"))
@@ -142,8 +139,12 @@ async def _on_startup() -> None:
 
 
 async def _on_shutdown() -> None:
-    """NoneBot2 关闭钩子 — 先关闭 IndexManager，再关闭 OCR 服务。"""
-    from bot.app_state import get_index_manager, get_ocr_service
+    """NoneBot2 关闭钩子 — 先关闭 IndexManager，再关闭各服务。"""
+    from bot.app_state import (
+        get_embedding_service,
+        get_index_manager,
+        get_ocr_service,
+    )
 
     try:
         index_manager = get_index_manager()
@@ -156,6 +157,14 @@ async def _on_shutdown() -> None:
         ocr_service = get_ocr_service()
         await ocr_service.close()
         logger.info("OCR 服务 HTTP 会话已关闭")
+    except RuntimeError:
+        pass
+
+    try:
+        embedding_service = get_embedding_service()
+        if embedding_service is not None:
+            await embedding_service.close()
+            logger.info("Embedding 服务 HTTP 会话已关闭")
     except RuntimeError:
         pass
 

@@ -68,6 +68,8 @@ class RerankService:
 
 通过 DeepSeek LLM 从 Top N 候选中精排出最佳匹配。按照 PRD 要求，只发送候选 id 和 OCR 文本，不发送文件名。
 
+方法装饰有 `@api_retry(...)`，对 `openai.APIConnectionError`、`openai.APITimeoutError`、`openai.RateLimitError`、`openai.InternalServerError` 及 httpx 网络异常进行最多 3 次指数退避重试。
+
 ---
 
 ## 环境变量
