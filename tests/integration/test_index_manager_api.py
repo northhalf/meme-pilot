@@ -105,7 +105,7 @@ async def test_sync_single_image(
         embedding_provider=embedding_service,
         no_text_dir=str(work_dirs["no_text_dir"]),
     )
-    manager.load()
+    await manager.load()
 
     result = await manager.refresh()
 
@@ -151,7 +151,7 @@ async def test_sync_multiple_images(
         embedding_provider=embedding_service,
         no_text_dir=str(work_dirs["no_text_dir"]),
     )
-    manager.load()
+    await manager.load()
 
     result = await manager.refresh()
 
@@ -184,7 +184,7 @@ async def test_sync_delete_removed_image(
         embedding_provider=embedding_service,
         no_text_dir=str(work_dirs["no_text_dir"]),
     )
-    manager.load()
+    await manager.load()
 
     # 首次同步
     await manager.refresh()
@@ -225,7 +225,7 @@ async def test_sync_idempotent(
         embedding_provider=embedding_service,
         no_text_dir=str(work_dirs["no_text_dir"]),
     )
-    manager.load()
+    await manager.load()
 
     # 首次同步
     result1 = await manager.refresh()

@@ -112,7 +112,7 @@ async def _build_index(
         embedding_provider=embedding_service,
         no_text_dir=str(work_dirs["no_text_dir"]),
     )
-    manager.load()
+    await manager.load()
     await manager.refresh()
     return manager, metadata_store, vector_store
 

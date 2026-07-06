@@ -119,7 +119,7 @@ async def _on_startup() -> None:
         keyword_searcher=keyword_searcher,
         ai_matcher=ai_matcher,
     )
-    index_manager.load()
+    await index_manager.load()
 
     # 6. 注册到 app_state（Bot 立即可用）
     init_app(

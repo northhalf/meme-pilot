@@ -333,13 +333,15 @@ class IndexManager:
     # load / 查询
     # ------------------------------------------------------------------
 
-    def load(self) -> None:
+    async def load(self) -> None:
         """委托两个 Store.load()，并记录当前条目数。
 
         启动时必须调用此方法后再使用其他查询或写入方法。
         """
-        self._metadata_store.load()
-        self._vector_store.load()
+        await asyncio.gather(
+            asyncio.to_thread(self._metadata_store.load),
+            asyncio.to_thread(self._vector_store.load),
+        )
         logger.info("IndexManager 加载完成: %d 条记录", self.entry_count)
 
     @property

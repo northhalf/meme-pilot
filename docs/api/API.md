@@ -168,7 +168,7 @@ class IndexManager:
         ai_matcher: AIMatcher | None = None,
     ) -> None
 
-    def load(self) -> None
+    async def load(self) -> None
 
     async def search(self, keyword: str) -> list[SearchResult]
     # 持读锁调用 KeywordSearcher；空库返回 []；超时抛 asyncio.TimeoutError
