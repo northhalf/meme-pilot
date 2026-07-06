@@ -12,7 +12,7 @@
 class ChatSession:
     session_id: str                    # UUID，首次创建时永久固定
     active: bool = False               # True 表示有命令正在处理
-    command_type: str | None = None    # "add" / "search" / "ai" / "refresh"
+    command_type: str | None = None    # "add" / "addtag" / "del" / "search" / "ai" / "refresh" / "info"
     matcher: Matcher | None = None     # 当前命令的 NoneBot2 Matcher
     current_task: asyncio.Task | None = None  # 异步任务引用
 ```

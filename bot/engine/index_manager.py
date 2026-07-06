@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from bot.config import read_add_command_timeout, read_read_lock_timeout
+from bot.session import session_manager
 from .ai_matcher import AIMatcher, AIMatchResult
 from .image_optimizer import OptimizeResult
 from .keyword_searcher import KeywordSearcher, SearchResult
@@ -78,6 +79,8 @@ class WriteOp(Enum):
     ADD = auto()
     EDIT_TEXT = auto()
     SET_SPEAKER = auto()
+    ADD_TAG = auto()
+    DELETE = auto()
 
 
 @dataclass
@@ -97,12 +100,13 @@ class _WriteRequest:
     """
 
     op: WriteOp
-    future: "asyncio.Future[AddResult | EditTextResult | SetSpeakerResult]"
+    future: "asyncio.Future[AddResult | EditTextResult | SetSpeakerResult | AddTagResult | DeleteResult]"
     entry_id: int = 0
     filename: str = ""
     text: str = ""
     speaker: str | None = None
     tags: list[str] | None = None
+    entry_ids: list[int] | None = None
     embedding: list[float] | None = None
     old_text: str = ""
 
@@ -135,6 +139,51 @@ class SetSpeakerResult:
     entry_id: int
     old_speaker: str | None
     new_speaker: str | None
+
+
+@dataclass
+class AddTagResult:
+    """add_tag() 的返回结果。
+
+    Attributes:
+        entry_id: 被修改的条目 id。
+        added_tags: 本次新增的标签列表。
+        all_tags: 修改后的全部标签列表。
+    """
+
+    entry_id: int
+    added_tags: list[str]
+    all_tags: list[str]
+
+
+@dataclass
+class DeleteResult:
+    """delete() 的返回结果。
+
+    Attributes:
+        deleted_ids: 成功删除的条目 id 列表。
+        not_found_ids: 不存在的条目 id 列表。
+        failed_ids: 删除失败的 (id, reason) 列表。
+    """
+
+    deleted_ids: list[int]
+    not_found_ids: list[int]
+    failed_ids: list[tuple[int, str]]
+
+
+@dataclass
+class IndexInfo:
+    """get_info() 的返回结果。
+
+    Attributes:
+        entry_count: 当前索引条目总数。
+        speaker_ranking: speaker 使用频率排行（speaker, count）。
+        status: 索引状态描述。
+    """
+
+    entry_count: int
+    speaker_ranking: list[tuple[str | None, int]]
+    status: str
 
 
 class DuplicateTextError(RuntimeError):
@@ -263,6 +312,7 @@ class IndexManager:
         _vector_store: 向量存储。
         _memes_dir: 表情包图片目录。
         _no_text_dir: 无文字图目录。
+        _deleted_dir: 已删除图目录。
         _ocr_provider / _embedding_provider / _optimizer: providers。
         _keyword_searcher: 关键词搜索器，由 IndexManager 持锁后调用。
         _ai_matcher: AI 匹配器，由 IndexManager 持锁后调用。
@@ -285,6 +335,7 @@ class IndexManager:
         vector_store: VectorStoreProtocol,
         memes_dir: str,
         no_text_dir: str | None = None,
+        deleted_dir: str | None = None,
         ocr_provider: OcrProvider | None = None,
         embedding_provider: EmbeddingProvider | None = None,
         optimizer: ImageOptimizerProtocol | None = None,
@@ -298,6 +349,7 @@ class IndexManager:
             vector_store: 向量存储实例。
             memes_dir: 表情包图片目录路径。
             no_text_dir: 无文字图目录；None 时取 memes_dir 同级的 meme_no_text/。
+            deleted_dir: 已删除图目录；None 时取 memes_dir 同级的 memes_deleted/。
             ocr_provider: OCR 服务提供者。
             embedding_provider: Embedding 服务提供者。
             optimizer: 图片压缩器。
@@ -311,6 +363,10 @@ class IndexManager:
             self._no_text_dir = Path(no_text_dir)
         else:
             self._no_text_dir = Path(memes_dir).parent / "meme_no_text"
+        if deleted_dir is not None:
+            self._deleted_dir = Path(deleted_dir)
+        else:
+            self._deleted_dir = Path(memes_dir).parent / "memes_deleted"
         self._ocr_provider = ocr_provider
         self._embedding_provider = embedding_provider
         self._optimizer = optimizer
@@ -566,6 +622,117 @@ class IndexManager:
         await self._write_queue.put(req)
         return await future
 
+    async def add_tags(self, entry_id: int, tags: list[str]) -> AddTagResult:
+        """为指定条目追加标签。
+
+        流程：校验 → put WriteRequest → await future。
+
+        Args:
+            entry_id: 要修改的索引 id。
+            tags: 要追加的标签列表。
+
+        Returns:
+            AddTagResult 描述添加结果。
+
+        Raises:
+            IndexAddCancelledError: Bot 正在关闭。
+            RefreshInProgressError: 刷新进行中或 pending 中。
+            ValueError: entry_id 不存在。
+        """
+        if self._shutting_down:
+            raise IndexAddCancelledError("Bot 正在关闭")
+        if self._refresh_active:
+            raise RefreshInProgressError("索引正在刷新，请稍后再试")
+
+        self._ensure_write_worker()
+
+        entry = await self._run_sync(self._metadata_store.get_entry, entry_id)
+        if entry is None:
+            raise ValueError(f"entry_id={entry_id} 不存在")
+
+        if self._shutting_down:
+            raise IndexAddCancelledError("Bot 正在关闭")
+        if self._refresh_active:
+            raise RefreshInProgressError("索引正在刷新，请稍后再试")
+
+        loop = asyncio.get_running_loop()
+        future: "asyncio.Future[AddTagResult]" = loop.create_future()
+        req = _WriteRequest(
+            op=WriteOp.ADD_TAG,
+            future=future,  # type: ignore[arg-type]
+            entry_id=entry_id,
+            tags=list(tags),
+        )
+        await self._write_queue.put(req)
+        return await future
+
+    async def delete(self, entry_ids: list[int]) -> DeleteResult:
+        """删除一个或多个表情包条目。
+
+        流程：校验 → put WriteRequest → await future。
+
+        Args:
+            entry_ids: 要删除的索引 id 列表。
+
+        Returns:
+            DeleteResult 描述删除结果。
+
+        Raises:
+            IndexAddCancelledError: Bot 正在关闭。
+            RefreshInProgressError: 刷新进行中或 pending 中。
+        """
+        if self._shutting_down:
+            raise IndexAddCancelledError("Bot 正在关闭")
+        if self._refresh_active:
+            raise RefreshInProgressError("索引正在刷新，请稍后再试")
+
+        self._ensure_write_worker()
+
+        if self._shutting_down:
+            raise IndexAddCancelledError("Bot 正在关闭")
+        if self._refresh_active:
+            raise RefreshInProgressError("索引正在刷新，请稍后再试")
+
+        loop = asyncio.get_running_loop()
+        future: "asyncio.Future[DeleteResult]" = loop.create_future()
+        req = _WriteRequest(
+            op=WriteOp.DELETE,
+            future=future,  # type: ignore[arg-type]
+            entry_ids=list(entry_ids),
+        )
+        await self._write_queue.put(req)
+        return await future
+
+    async def info(self) -> IndexInfo:
+        """返回当前索引内部统计信息（不含硬件）。
+
+        Returns:
+            IndexInfo 描述当前统计与状态。
+        """
+        entries = await self._run_sync(self._metadata_store.get_all_entries)
+
+        speaker_counts: dict[str | None, int] = {}
+        for entry in entries.values():
+            speaker_counts[entry.speaker] = speaker_counts.get(entry.speaker, 0) + 1
+
+        speaker_ranking = sorted(
+            speaker_counts.items(),
+            key=lambda item: (-item[1], item[0] or ""),
+        )[:3]
+
+        if self._refresh_active:
+            status = "正在刷新索引"
+        elif session_manager.has_active_session():
+            status = "正在处理命令"
+        else:
+            status = "空闲"
+
+        return IndexInfo(
+            entry_count=len(entries),
+            speaker_ranking=speaker_ranking,
+            status=status,
+        )
+
     async def refresh(self) -> SyncResult:
         """独占执行索引同步（refresh）。
 
@@ -631,6 +798,10 @@ class IndexManager:
                             result = await self._execute_edit_text(req)
                         elif req.op is WriteOp.SET_SPEAKER:
                             result = await self._execute_set_speaker(req)
+                        elif req.op is WriteOp.ADD_TAG:
+                            result = await self._execute_add_tags(req)
+                        elif req.op is WriteOp.DELETE:
+                            result = await self._execute_delete(req)
                         else:
                             raise ValueError(f"未知写入操作: {req.op}")
 
@@ -745,6 +916,113 @@ class IndexManager:
             old_speaker=old_speaker,
             new_speaker=req.speaker,
         )
+
+    async def _execute_add_tags(self, req: _WriteRequest) -> AddTagResult:
+        """写锁内执行 add_tags 写入（仅 sqlite，无 chroma 操作）。
+
+        Args:
+            req: 写入任务单元，包含 entry_id 与待追加标签。
+
+        Returns:
+            AddTagResult 描述添加结果。
+
+        Raises:
+            ValueError: entry_id 在写锁内已不存在。
+        """
+        entry = await self._run_sync(self._metadata_store.get_entry, req.entry_id)
+        if entry is None:
+            raise ValueError(f"entry_id={req.entry_id} 不存在（并发删除）")
+
+        current_tags = set(entry.tags)
+        new_tags = set(req.tags or [])
+        added_tags = list(new_tags - current_tags)
+        merged_tags = list(current_tags | new_tags)
+
+        if not added_tags:
+            return AddTagResult(
+                entry_id=req.entry_id,
+                added_tags=[],
+                all_tags=list(current_tags),
+            )
+
+        success = await self._run_sync(
+            self._metadata_store.update,
+            req.entry_id,
+            tags=merged_tags,
+        )
+        if not success:
+            raise ValueError(f"entry_id={req.entry_id} 不存在（update 返回 False）")
+
+        return AddTagResult(
+            entry_id=req.entry_id,
+            added_tags=added_tags,
+            all_tags=merged_tags,
+        )
+
+    async def _execute_delete(self, req: _WriteRequest) -> DeleteResult:
+        """写锁内执行 delete（先 sqlite 后 chroma，再移动文件到 memes_deleted/）。
+
+        Args:
+            req: 写入任务单元，包含待删除 entry_id 列表。
+
+         Returns:
+            DeleteResult 描述删除结果，含成功、未找到、失败三类 id。
+        """
+        self._deleted_dir.mkdir(parents=True, exist_ok=True)
+
+        deleted_ids: list[int] = []
+        not_found_ids: list[int] = []
+        failed_ids: list[tuple[int, str]] = []
+
+        for entry_id in req.entry_ids or []:
+            entry = await self._run_sync(self._metadata_store.get_entry, entry_id)
+            if entry is None:
+                not_found_ids.append(entry_id)
+                continue
+
+            try:
+                await self._run_sync(self._metadata_store.remove, entry_id)
+                await self._vector_store.remove(entry_id)
+
+                src = self._memes_dir / entry.image_path
+                if src.exists():
+                    dst = self._resolve_unique_deleted_path(entry.image_path)
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    src.rename(dst)
+
+                deleted_ids.append(entry_id)
+            except Exception as exc:
+                logger.error("删除条目失败: id=%s, error=%s", entry_id, exc)
+                failed_ids.append((entry_id, str(exc)))
+
+        return DeleteResult(
+            deleted_ids=deleted_ids,
+            not_found_ids=not_found_ids,
+            failed_ids=failed_ids,
+        )
+
+    def _resolve_unique_deleted_path(self, image_path: str) -> Path:
+        """生成 memes_deleted/ 下的唯一目标路径（冲突时追加 _n）。
+
+        Args:
+            image_path: 原始图片相对路径（memes/ 下文件名）。
+
+        Returns:
+            memes_deleted/ 下不冲突的完整路径。
+        """
+        dst = self._deleted_dir / Path(image_path).name
+        if not dst.exists():
+            return dst
+
+        stem = dst.stem
+        suffix = dst.suffix
+        parent = dst.parent
+        n = 1
+        while True:
+            candidate = parent / f"{stem}_{n}{suffix}"
+            if not candidate.exists():
+                return candidate
+            n += 1
 
     async def close(self) -> None:
         """安全关闭 IndexManager。

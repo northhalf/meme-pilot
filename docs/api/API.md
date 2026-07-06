@@ -36,8 +36,11 @@ api
         ├── meme_help.md
         ├── meme_refresh.md
         ├── meme_add.md
+        ├── meme_addtag.md
+        ├── meme_delete.md
         ├── meme_edit.md
         ├── meme_setspeaker.md
+        ├── meme_info.md
         ├── meme_ai.md
         ├── meme_cancel.md
         ├── meme_plain_text.md
@@ -150,6 +153,24 @@ class AddResult:
     speaker: str | None = None
     tags: list[str] = field(default_factory=list)
 
+@dataclass
+class AddTagResult:
+    entry_id: int
+    added_tags: list[str]
+    all_tags: list[str]
+
+@dataclass
+class DeleteResult:
+    deleted_ids: list[int]
+    not_found_ids: list[int]
+    failed_ids: list[tuple[int, str]]
+
+@dataclass
+class IndexInfo:
+    entry_count: int
+    speaker_ranking: list[tuple[str | None, int]]
+    status: str
+
 class IndexManager:
     SUPPORTED_EXTENSIONS: frozenset[str]
     read_timeout: float
@@ -161,6 +182,7 @@ class IndexManager:
         vector_store: VectorStore,
         memes_dir: str,
         no_text_dir: str | None = None,
+        deleted_dir: str | None = None,
         ocr_provider: OcrProvider | None = None,
         embedding_provider: EmbeddingProvider | None = None,
         optimizer: ImageOptimizer | None = None,
@@ -177,10 +199,7 @@ class IndexManager:
     # 锁外 embed，持读锁调用 AIMatcher.match_with_vector()；超时抛 asyncio.TimeoutError
 
     async def add(self, filename: str, speaker: str | None = None, tags: list[str] | None = None) -> AddResult
-    # 直接执行压缩-OCR-Embedding 管道后通过 Write Worker 串行写入；pipeline 期间抛 TOCTOU 异常
-
-    async def refresh(self) -> SyncResult
-    # Event drain 等待 Write Worker 排空后获取写锁；同步期间 _refresh_active=true 阻止新写入
+    # FIFO 入队；refresh 期间抛 RefreshInProgressError；关闭时抛 IndexAddCancelledError
 
     async def edit_text(self, entry_id: int, new_text: str) -> EditTextResult
     # 修改指定条目的 OCR 文本；锁外 embed，Write Worker 串行写入；
@@ -190,12 +209,25 @@ class IndexManager:
     # 设置或清空指定条目的 speaker；仅更新 sqlite 元数据，无需 embed；
     # raises RefreshInProgressError, ValueError, IndexAddCancelledError
 
+    async def add_tags(self, entry_id: int, tags: list[str]) -> AddTagResult
+    # 为指定条目追加标签；仅更新 sqlite 元数据，无需 embed；
+    # raises RefreshInProgressError, ValueError, IndexAddCancelledError
+
+    async def delete(self, entry_ids: list[int]) -> DeleteResult
+    # 删除一个或多个表情包条目；先 sqlite 后 chroma，再将图片移到 memes_deleted/
+
+    async def info(self) -> IndexInfo
+    # 返回当前索引统计信息（条目数、speaker 排行、状态）；不含硬件信息
+
+    async def refresh(self) -> SyncResult
+    # 独占写锁执行同步；运行期间新的 add/refresh 被拒绝
+
     async def close(self) -> None
     # 取消 workers，清空 pending，关闭两个 Store
 ```
 
 薄编排层：不直接写 SQL/Chroma，全部委托 `MetadataStore` + `VectorStore`。写入顺序统一「先 sqlite 后 chroma」，`upsert` 失败回滚 sqlite。去重键 = 去空白后的 `text`（经 `MetadataStore.get_id_by_text` 判定）。
-所有写入操作（`ADD` / `EDIT_TEXT` / `SET_SPEAKER`）通过异步 FIFO Write Worker 串行处理，持有写锁后执行跨库写入。
+所有写入操作（`ADD` / `EDIT_TEXT` / `SET_SPEAKER` / `ADD_TAG` / `DELETE`）通过异步 FIFO Write Worker 串行处理，持有写锁后执行跨库写入。
 新增 `RefreshInProgressError`、`IndexAddCancelledError`、`DuplicateTextError` 用于拒绝刷新/关闭期间的写入与冲突检测。
 
 ### `docs/api/bot/engine/metadata_store.md`
@@ -516,7 +548,7 @@ class ImageOptimizer:
 NoneBot2 应用入口，详见 `docs/api/bot/bot.md`。
 
 - 启动：`main()` — 初始化 NoneBot2（`driver="~fastapi"`），注册 OneBot V11 适配器，加载插件，启动驱动器
-- Startup hook：`_on_startup()` — 通过 `provider_factory.create_*_provider()` 创建 OCR/Embedding 服务，同时创建 `RerankService` 与 `ImageOptimizer`；创建 `MetadataStore(INDEX_DB_PATH)` + `VectorStore(CHROMA_DIR)` 并注入 `IndexManager`，`load()` 后注册到 `app_state`、后台执行索引同步；根据 `OCR_PROVIDER` 选择 OCR 引擎（`paddle`/`deepseek`/`rapidocr`），根据 `EMBEDDING_PROVIDER` 选择 Embedding 引擎（`openai`/`google`）
+- Startup hook：`_on_startup()` — 通过 `provider_factory.create_*_provider()` 创建 OCR/Embedding 服务，同时创建 `RerankService` 与 `ImageOptimizer`；创建 `MetadataStore(INDEX_DB_PATH)` + `VectorStore(CHROMA_DIR)` 并注入 `IndexManager`，`load()` 后注册到 `app_state`、后台执行索引同步；根据 `OCR_PROVIDER` 选择 OCR 引擎（`paddle`/`deepseek`/`rapidocr`），根据 `EMBEDDING_PROVIDER` 选择 Embedding 引擎（`openai`/`google`）；创建 `IndexManager` 时传入 `deleted_dir`（默认 `memes_deleted/`）用于 `/del` 备份
 - Shutdown hook：`_on_shutdown()` — 关闭 OCR 服务 HTTP 会话，并 `close()` 两个 Store（sqlite 连接 + chroma PersistentClient）
 - `_background_sync()` — 后台同步任务，调用 `IndexManager.refresh()` 以独占写锁执行同步；同步失败时记录日志，Bot 继续运行
 - 环境变量：`BOT_HOST`（默认 `0.0.0.0`）、`BOT_PORT`（默认 `8080`，无效值回退 8080）、`READ_LOCK_TIMEOUT`（默认 `00:00:30`）、`ADD_COMMAND_TIMEOUT`（默认 `00:01:00`）、`EMBEDDING_CONCURRENCY`（默认 5）、`OCR_CONCURRENCY`（默认 5）、`RERANK_CONCURRENCY`（默认 5）、`COMPRESS_CONCURRENCY`（默认 5）
@@ -697,6 +729,36 @@ NoneBot2 命令插件，注册 `/setspeaker` 命令。
 - 错误处理：索引刷新中抛 `RefreshInProgressError`，id 不存在抛 `ValueError`
 - 群聊：授权用户群聊 @bot 调用时回复"此命令仅限私聊使用"
 
+### `bot/plugins/meme_addtag.py`
+
+NoneBot2 命令插件，注册 `/addtag` 命令。
+
+- 依赖：`app_state.get_index_manager()`、`app_state.get_metadata_store()`、`auth.is_authorized()`、`bot.session.session_manager`、`bot.session.timeout_session`、`bot.plugins._search_utils.got_intercept_bypass`
+- 管道：`IndexManager.add_tags()`
+- 流程：`/addtag <id> <tag> [<tag>...]` → 发送确认消息（含 OCR 文本、当前标签、新增标签） → 用户回复「确认/yes」后追加标签
+- 错误处理：索引刷新中抛 `RefreshInProgressError`，id 不存在抛 `ValueError`
+- 群聊：授权用户群聊 @bot 调用时回复"此命令仅限私聊使用"
+
+### `bot/plugins/meme_delete.py`
+
+NoneBot2 命令插件，注册 `/del` 命令。
+
+- 依赖：`app_state.get_index_manager()`、`app_state.get_metadata_store()`、`auth.is_authorized()`、`bot.session.session_manager`、`bot.session.timeout_session`、`bot.plugins._search_utils.got_intercept_bypass`
+- 管道：`IndexManager.delete()`
+- 流程：`/del <id>...` → 发送摘要确认消息 → 用户回复「确认/yes」后执行删除
+- 错误处理：索引刷新中抛 `RefreshInProgressError`，处理超时抛 `asyncio.TimeoutError`
+- 群聊：授权用户群聊 @bot 调用时回复"此命令仅限私聊使用"
+
+### `bot/plugins/meme_info.py`
+
+NoneBot2 命令插件，注册 `/info` 命令。
+
+- 依赖：`app_state.get_index_manager()`、`auth.is_authorized()`、`psutil`
+- 管道：`IndexManager.info()`
+- 流程：`/info` → 获取索引统计 → 读取内存/CPU 占用 → 返回状态消息
+- 回复内容：表情包数量、speaker 排行（前 3）、当前状态、内存占用、CPU 占用
+- 群聊：授权用户群聊 @bot 调用时同样返回状态信息
+
 ### `bot/plugins/meme_ai.py`
 
 NoneBot2 命令插件，注册 `/ai` 命令。
@@ -722,6 +784,7 @@ NoneBot2 命令插件，注册 `/search` 命令（薄包装，核心逻辑委托
 
 - `PROJECT_ROOT: Path` — 项目根目录，绝对路径
 - `MEMES_DIR: Path` — 表情包图片目录，绝对路径 `<项目根>/memes`
+- `MEMES_DELETED_DIR: Path` — 被删除表情包备份目录，绝对路径 `<项目根>/memes_deleted`
 - `DATA_DIR: Path` — 索引数据目录，绝对路径 `<项目根>/data`
 - `INDEX_DB_PATH: Path` — sqlite 元数据数据库文件，绝对路径 `<项目根>/data/index.db`
 - `CHROMA_DIR: Path` — chroma 向量库数据目录，绝对路径 `<项目根>/data/chroma`

@@ -15,8 +15,11 @@
 /search <关键词>：按 OCR 文本关键词搜索表情包
 /ai <自然语言描述>：按自然语言描述匹配表情包
 /add [speaker <tags...>]：通过聊天添加一张表情包
+/addtag <id> <tag>...：为指定表情包添加标签
+/del <id>...：删除指定表情包（需确认）
 /edittext <id> <新文本>：修改指定表情包的 OCR 文本
 /setspeaker <id> [说话人]：设置或清空表情包的说话人
 /refresh：扫描 memes/ 并增量更新索引
+/info：查看机器人状态与统计信息
 /cancel：取消当前正在执行的命令
 ```

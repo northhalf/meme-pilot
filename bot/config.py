@@ -7,6 +7,8 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 MEMES_DIR = PROJECT_ROOT / "memes"
+MEMES_DELETED_DIR: Path = PROJECT_ROOT / "memes_deleted"
+"""被删除表情包的备份目录（可从该目录手动恢复）。"""
 
 # 索引数据目录与文件
 DATA_DIR = PROJECT_ROOT / "data"
@@ -15,7 +17,11 @@ CHROMA_DIR = DATA_DIR / "chroma"
 
 
 def read_bot_port() -> int:
-    """从环境变量读取 Bot 监听端口，无效值回退为 8080。"""
+    """从环境变量读取 Bot 监听端口，无效值回退为 8080。
+
+    Returns:
+        Bot 监听端口号。
+    """
     raw = os.environ.get("BOT_PORT", "8080")
     try:
         return int(raw)
@@ -155,6 +161,7 @@ def read_ocr_text_score() -> float:
 __all__ = [
     "PROJECT_ROOT",
     "MEMES_DIR",
+    "MEMES_DELETED_DIR",
     "DATA_DIR",
     "INDEX_DB_PATH",
     "CHROMA_DIR",

@@ -64,6 +64,7 @@ services:
       - ./data:/app/data
       - ./log:/app/log
       - ./meme_no_text:/app/meme_no_text
+      - ./memes_deleted:/app/memes_deleted
     networks:
       - meme-bot-net
 

@@ -121,6 +121,14 @@ class SessionManager:
         chat.matcher = None
         chat.current_task = None
 
+    def has_active_session(self) -> bool:
+        """是否存在非空闲的聊天会话。
+
+        Returns:
+            True 表示至少有一个用户处于活跃命令会话中。
+        """
+        return any(session.active for session in self._chat_sessions.values())
+
     # ── 选择会话管理 ──
 
     def create_selection(

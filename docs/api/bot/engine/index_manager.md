@@ -216,6 +216,60 @@ class SetSpeakerResult:
 
 ---
 
+### `AddTagResult`
+
+```python
+@dataclass
+class AddTagResult:
+    entry_id: int
+    added_tags: list[str]
+    all_tags: list[str]
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `entry_id` | `int` | 被修改的条目 id |
+| `added_tags` | `list[str]` | 本次实际新增的标签列表（已去重） |
+| `all_tags` | `list[str]` | 修改后的全部标签列表 |
+
+---
+
+### `DeleteResult`
+
+```python
+@dataclass
+class DeleteResult:
+    deleted_ids: list[int]
+    not_found_ids: list[int]
+    failed_ids: list[tuple[int, str]]
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `deleted_ids` | `list[int]` | 成功删除的条目 id 列表 |
+| `not_found_ids` | `list[int]` | 不存在的条目 id 列表 |
+| `failed_ids` | `list[tuple[int, str]]` | 删除失败的 `(id, reason)` 列表 |
+
+---
+
+### `IndexInfo`
+
+```python
+@dataclass
+class IndexInfo:
+    entry_count: int
+    speaker_ranking: list[tuple[str | None, int]]
+    status: str
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `entry_count` | `int` | 当前索引条目总数 |
+| `speaker_ranking` | `list[tuple[str \| None, int]]` | speaker 使用频率排行（speaker, count），前 3 名 |
+| `status` | `str` | 索引状态描述，如"空闲"/"正在刷新索引"/"正在处理命令" |
+
+---
+
 ## `IndexManager` 类
 
 ```python
@@ -230,6 +284,7 @@ class IndexManager:
         vector_store: VectorStore,
         memes_dir: str,
         no_text_dir: str | None = None,
+        deleted_dir: str | None = None,
         ocr_provider: OcrProvider | None = None,
         embedding_provider: EmbeddingProvider | None = None,
         optimizer: ImageOptimizer | None = None,
@@ -256,6 +311,17 @@ class IndexManager:
     async def set_speaker(self, entry_id: int, speaker: str | None) -> SetSpeakerResult
     # 设置或清空指定条目的 speaker；仅更新 sqlite 元数据，无需 embed；
     # raises RefreshInProgressError, ValueError, IndexAddCancelledError
+
+    async def add_tags(self, entry_id: int, tags: list[str]) -> AddTagResult
+    # 为指定条目追加标签；仅更新 sqlite 元数据，无需 embed；
+    # raises RefreshInProgressError, ValueError, IndexAddCancelledError
+
+    async def delete(self, entry_ids: list[int]) -> DeleteResult
+    # 删除一个或多个表情包条目；先 sqlite 后 chroma，再将图片移到 memes_deleted/；
+    # raises RefreshInProgressError, IndexAddCancelledError
+
+    async def info(self) -> IndexInfo
+    # 返回当前索引统计信息（条目数、speaker 排行、状态）；不含硬件信息
 
     async def refresh(self) -> SyncResult
     # 独占写锁执行同步；运行期间新的 add/refresh 被拒绝

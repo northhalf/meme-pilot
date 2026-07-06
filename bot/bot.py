@@ -18,6 +18,7 @@ from bot.app_state import init_app
 from bot.config import (
     CHROMA_DIR,
     INDEX_DB_PATH,
+    MEMES_DELETED_DIR,
     MEMES_DIR,
     PROJECT_ROOT,
     read_bot_port,
@@ -113,6 +114,7 @@ async def _on_startup() -> None:
         metadata_store=metadata_store,
         vector_store=vector_store,
         memes_dir=memes_dir,
+        deleted_dir=str(MEMES_DELETED_DIR),
         ocr_provider=ocr_service,
         embedding_provider=embedding_service,
         optimizer=image_optimizer,
