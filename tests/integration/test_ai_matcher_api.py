@@ -5,7 +5,7 @@ IndexManager(OCR+Embedding) → AIMatcher → OpenAIEmbeddingService → RerankS
 
 需要设置环境变量：
 - OPENAI_OCR_API_KEY（OCR 服务）
-- EMBEDDING_API_KEY（Embedding 服务）
+- OPENAI_EMBEDDING_API_KEY（Embedding 服务）
 - DEEPSEEK_API_KEY（Rerank 服务）
 
 运行方式：
@@ -38,9 +38,9 @@ FIXTURE_IMAGES_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "imag
 # 跳过条件：三个 API Key 均需要
 pytestmark = pytest.mark.skipif(
     not os.environ.get("OPENAI_OCR_API_KEY")
-    or not os.environ.get("EMBEDDING_API_KEY")
+    or not os.environ.get("OPENAI_EMBEDDING_API_KEY")
     or not os.environ.get("DEEPSEEK_API_KEY"),
-    reason="OPENAI_OCR_API_KEY / EMBEDDING_API_KEY / DEEPSEEK_API_KEY 未全部设置，跳过集成测试",
+    reason="OPENAI_OCR_API_KEY / OPENAI_EMBEDDING_API_KEY / DEEPSEEK_API_KEY 未全部设置，跳过集成测试",
 )
 
 

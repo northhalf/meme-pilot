@@ -1,7 +1,7 @@
 """OpenAIEmbeddingService 真实 API 调用集成测试。
 
-需要设置环境变量 EMBEDDING_API_KEY 才能运行。
-可选设置 EMBEDDING_BASE_URL 和 EMBEDDING_MODEL。
+需要设置环境变量 OPENAI_EMBEDDING_API_KEY 才能运行。
+可选设置 OPENAI_EMBEDDING_BASE_URL 和 OPENAI_EMBEDDING_MODEL。
 
 运行方式：
     uv run pytest tests/integration/test_openai_embedding_api.py -v -s
@@ -23,8 +23,8 @@ from bot.engine.openai_embedding import OpenAIEmbeddingService
 
 # 跳过条件：未设置 API Key 时跳过
 pytestmark = pytest.mark.skipif(
-    not os.environ.get("EMBEDDING_API_KEY"),
-    reason="EMBEDDING_API_KEY 未设置，跳过集成测试",
+    not os.environ.get("OPENAI_EMBEDDING_API_KEY"),
+    reason="OPENAI_EMBEDDING_API_KEY 未设置，跳过集成测试",
 )
 
 
@@ -63,7 +63,7 @@ async def test_embed_returns_vector(
 async def test_embed_dimension_1024(
     embedding_service: OpenAIEmbeddingService,
 ) -> None:
-    """测试：BAAI/bge-m3 默认模型输出 1024 维向量。"""
+    """测试：默认模型输出 1024 维向量。"""
     result = await embedding_service.embed("你好世界")
 
     print(f"\n向量维度: {len(result)}")

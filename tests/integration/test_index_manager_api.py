@@ -1,11 +1,11 @@
 """IndexManager 真实 API 调用集成测试。
 
-使用真实 OCR（OpenAI 兼容 API，默认 DeepSeek-OCR）和 Embedding（BAAI/bge-m3）服务，
+使用真实 OCR（OpenAI 兼容 API，默认 DeepSeek-OCR）和 Embedding（OpenAI 兼容 API，默认 GLM embedding-3）服务，
 验证 sync_with_filesystem 的完整流程：OCR → Embedding → 索引写入。
 
 需要设置环境变量：
 - OPENAI_OCR_API_KEY（OCR 服务）
-- EMBEDDING_API_KEY（Embedding 服务，可选，.env 中已配置）
+- OPENAI_EMBEDDING_API_KEY（Embedding 服务，可选，.env 中已配置）
 
 运行方式：
     uv run pytest tests/integration/test_index_manager_api.py -v -s
@@ -35,8 +35,8 @@ FIXTURE_IMAGES_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "imag
 # 跳过条件：OCR 和 Embedding 均需要 API Key
 pytestmark = pytest.mark.skipif(
     not os.environ.get("OPENAI_OCR_API_KEY")
-    or not os.environ.get("EMBEDDING_API_KEY"),
-    reason="OPENAI_OCR_API_KEY 或 EMBEDDING_API_KEY 未设置，跳过集成测试",
+    or not os.environ.get("OPENAI_EMBEDDING_API_KEY"),
+    reason="OPENAI_OCR_API_KEY 或 OPENAI_EMBEDDING_API_KEY 未设置，跳过集成测试",
 )
 
 

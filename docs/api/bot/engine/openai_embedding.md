@@ -10,7 +10,7 @@
 
 实现 `protocols.EmbeddingProvider` 协议，可直接注入给 `AIMatcher` 使用。
 
-支持任何兼容 OpenAI embeddings API 的服务商（如 SiliconFlow、OpenAI、DeepSeek 等），只需配置 `base_url` 和 `model` 即可。
+支持任何兼容 OpenAI embeddings API 的服务商（如 GLM、SiliconFlow、OpenAI、DeepSeek 等），只需配置 `base_url` 和 `model` 即可。
 
 ```python
 class OpenAIEmbeddingService:
@@ -34,9 +34,9 @@ class OpenAIEmbeddingService:
 
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| `api_key` | `str \| None` | `None` | API Key，默认从 `EMBEDDING_API_KEY` 环境变量读取 |
-| `base_url` | `str \| None` | `None` | API 地址，默认从 `EMBEDDING_BASE_URL` 环境变量读取；未设置时使用 OpenAI SDK 默认地址（`.env.example` 示例为 `https://api.siliconflow.cn/v1`） |
-| `model` | `str \| None` | `None` | Embedding 模型名，默认从 `EMBEDDING_MODEL` 环境变量读取；**必须配置**，否则构造函数抛出 `ValueError`（`.env.example` 示例为 `BAAI/bge-m3`） |
+| `api_key` | `str \| None` | `None` | API Key，默认从 `OPENAI_EMBEDDING_API_KEY` 环境变量读取 |
+| `base_url` | `str \| None` | `None` | API 地址，默认从 `OPENAI_EMBEDDING_BASE_URL` 环境变量读取；未设置时使用 OpenAI SDK 默认地址（`.env.example` 示例为 `https://open.bigmodel.cn/api/paas/v4`） |
+| `model` | `str \| None` | `None` | Embedding 模型名，默认从 `OPENAI_EMBEDDING_MODEL` 环境变量读取；**必须配置**，否则构造函数抛出 `ValueError`（`.env.example` 示例为 `embedding-3`） |
 | `concurrency` | `int \| None` | `None` | Embedding API 并发上限，默认从 `EMBEDDING_CONCURRENCY` 环境变量读取，回退为 5。使用 `asyncio.Semaphore` 限制并发 `embed()` 调用数。 |
 
 参数优先级：构造参数 > 环境变量 > 默认值。
@@ -92,7 +92,7 @@ class OpenAIEmbeddingService:
 
 | 变量名 | 说明 | 默认值 |
 |--------|------|--------|
-| `EMBEDDING_API_KEY` | API Key | `""` |
-| `EMBEDDING_BASE_URL` | API 地址 | —（未设置时使用 OpenAI SDK 默认地址；`.env.example` 示例为 `https://api.siliconflow.cn/v1`） |
-| `EMBEDDING_MODEL` | 模型名 | —（**必须配置**；`.env.example` 示例为 `BAAI/bge-m3`） |
+| `OPENAI_EMBEDDING_API_KEY` | API Key | `""` |
+| `OPENAI_EMBEDDING_BASE_URL` | API 地址 | —（未设置时使用 OpenAI SDK 默认地址；`.env.example` 示例为 `https://open.bigmodel.cn/api/paas/v4`） |
+| `OPENAI_EMBEDDING_MODEL` | 模型名 | —（**必须配置**；`.env.example` 示例为 `embedding-3`） |
 | `EMBEDDING_CONCURRENCY` | Embedding API 并发上限 | `5` |

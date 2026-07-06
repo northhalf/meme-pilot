@@ -3,7 +3,7 @@
 通过 OpenAI 兼容的 embeddings API 调用向量化模型，
 为 AI 语义匹配提供文本 embedding 生成能力。
 
-支持任何兼容 OpenAI embeddings API 的服务商（如 SiliconFlow、OpenAI、
+支持任何兼容 OpenAI embeddings API 的服务商（如 GLM、SiliconFlow、OpenAI、
 DeepSeek 等），只需配置 api_key、base_url 和 model 即可。
 
 实现 ai_matcher.EmbeddingProvider 协议。
@@ -42,20 +42,20 @@ class OpenAIEmbeddingService:
         """初始化 OpenAIEmbeddingService。
 
         Args:
-            api_key: API Key，默认从 EMBEDDING_API_KEY 环境变量读取。
-            base_url: API 地址，默认从 EMBEDDING_BASE_URL 环境变量读取。
+            api_key: API Key，默认从 OPENAI_EMBEDDING_API_KEY 环境变量读取。
+            base_url: API 地址，默认从 OPENAI_EMBEDDING_BASE_URL 环境变量读取。
                       未提供时将使用 OpenAI SDK 的默认地址。
-            model: Embedding 模型名，默认从 EMBEDDING_MODEL 环境变量读取。
+            model: Embedding 模型名，默认从 OPENAI_EMBEDDING_MODEL 环境变量读取。
                    未提供时由调用方/服务商决定，调用 embed() 前须确保已配置。
             concurrency: 并发数，默认从 EMBEDDING_CONCURRENCY 环境变量读取，
                          回退为 5。
         """
-        self._api_key = api_key or os.environ.get("EMBEDDING_API_KEY", "")
-        self._base_url = base_url or os.environ.get("EMBEDDING_BASE_URL")
-        model_name = model or os.environ.get("EMBEDDING_MODEL")
+        self._api_key = api_key or os.environ.get("OPENAI_EMBEDDING_API_KEY", "")
+        self._base_url = base_url or os.environ.get("OPENAI_EMBEDDING_BASE_URL")
+        model_name = model or os.environ.get("OPENAI_EMBEDDING_MODEL")
         if not model_name:
             raise ValueError(
-                "必须提供 Embedding 模型名（通过 model 参数或 EMBEDDING_MODEL 环境变量）"
+                "必须提供 Embedding 模型名（通过 model 参数或 OPENAI_EMBEDDING_MODEL 环境变量）"
             )
         self._model = model_name
 

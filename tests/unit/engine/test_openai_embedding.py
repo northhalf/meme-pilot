@@ -24,9 +24,9 @@ class TestOpenAIEmbeddingServiceInit:
     @patch.dict(
         "os.environ",
         {
-            "EMBEDDING_API_KEY": "test-key",
-            "EMBEDDING_BASE_URL": "https://custom.api/v1",
-            "EMBEDDING_MODEL": "custom-model",
+            "OPENAI_EMBEDDING_API_KEY": "test-key",
+            "OPENAI_EMBEDDING_BASE_URL": "https://custom.api/v1",
+            "OPENAI_EMBEDDING_MODEL": "custom-model",
         },
     )
     def test_from_env_vars(self, _mock_openai: MagicMock) -> None:

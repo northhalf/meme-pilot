@@ -93,7 +93,7 @@ Bot: 索引更新完成 ✅
 
 - Docker & Docker Compose
 - DeepSeek API Key（用于 LLM 精排，[点此获取](https://platform.deepseek.com)）
-- Embedding 凭证（默认 `EMBEDDING_PROVIDER=openai`，OpenAI 兼容 API）：任意 OpenAI 兼容 Embedding 服务的 API Key（示例默认使用 SiliconFlow，[点此获取](https://siliconflow.cn)）；仅在切换为 `EMBEDDING_PROVIDER=google` 时才需要 Google AI API Key
+- Embedding 凭证（默认 `EMBEDDING_PROVIDER=openai`，OpenAI 兼容 API）：任意 OpenAI 兼容 Embedding 服务的 API Key（示例默认使用 [GLM](https://open.bigmodel.cn/)）；仅在切换为 `EMBEDDING_PROVIDER=google` 时才需要 Google AI API Key
 - OCR 凭证（三选一）：
   - `OCR_PROVIDER=rapidocr`（默认）：无需 API Key，使用本地 ONNX 模型推理
   - `OCR_PROVIDER=paddle`：百度 PaddleOCR 云 API Access Token（[点此获取](https://aistudio.baidu.com/paddleocr)）
@@ -114,7 +114,9 @@ cp .env.example .env
 #   DEEPSEEK_API_KEY=sk-你的DeepSeekKey
 #
 #   # Embedding：默认使用 OpenAI 兼容 API
-#   EMBEDDING_API_KEY=sk-你的EmbeddingKey  # EMBEDDING_PROVIDER=openai（默认）时必填
+#   OPENAI_EMBEDDING_API_KEY=sk-你的EmbeddingKey  # EMBEDDING_PROVIDER=openai（默认）时必填
+#   # OPENAI_EMBEDDING_BASE_URL=https://open.bigmodel.cn/api/paas/v4  # 可选，OpenAI 兼容 Embedding 地址
+#   # OPENAI_EMBEDDING_MODEL=embedding-3  # 可选，OpenAI 兼容 Embedding 模型名
 #   # EMBEDDING_PROVIDER=openai            # 可选，默认 openai；仅当使用 google 时才改为 google
 #   # GOOGLE_API_KEY=你的GoogleKey         # 仅 EMBEDDING_PROVIDER=google 时必填
 #   # GOOGLE_EMBEDDING_MODEL=gemini-embedding-001  # 仅 EMBEDDING_PROVIDER=google 时生效
@@ -325,7 +327,7 @@ uv run pytest tests/integration/ -v -s
 - [NoneBot2](https://github.com/nonebot/nonebot2) — 聊天机器人框架 (7.5k ⭐)
 - [OpenAI 兼容 OCR](https://siliconflow.cn) — 视觉 OCR 模型（默认 `deepseek-ai/DeepSeek-OCR`，可通过 `OPENAI_OCR_MODEL` 切换）
 - [DeepSeek](https://platform.deepseek.com) — LLM 精排 API
-- [SiliconFlow](https://siliconflow.cn) — OpenAI 兼容 Embedding API，默认模型 `BAAI/bge-m3`
+- [GLM](https://open.bigmodel.cn/) — OpenAI 兼容 Embedding API，默认模型 `embedding-3`
 - [Google GenAI](https://aistudio.google.com) — Google Embedding API，模型 `gemini-embedding-001`
 - [RapidOCR](https://github.com/RapidAI/RapidOCR) — 本地 ONNX OCR 引擎
 - [ChromaDB](https://www.trychroma.com/) — 向量索引（HNSW cosine `PersistentClient`，`data/chroma/`）

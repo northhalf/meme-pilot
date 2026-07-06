@@ -332,7 +332,7 @@ class OpenAIEmbeddingService:
 def create_openai_embedding_service() -> OpenAIEmbeddingService
 ```
 
-实现 `protocols.EmbeddingProvider` 协议。默认模型 `BAAI/bge-m3`，输出 1024 维向量；`embed()` 装饰有 `@api_retry(...)` 重试。
+实现 `protocols.EmbeddingProvider` 协议。`.env.example` 示例默认使用 GLM 模型 `embedding-3`，输出 1024 维向量；`embed()` 装饰有 `@api_retry(...)` 重试。
 
 并发控制：使用 `asyncio.Semaphore` 限制 `embed()` 并发数，`concurrency` 默认读取 `EMBEDDING_CONCURRENCY` 环境变量，回退为 5。
 
