@@ -500,7 +500,7 @@ class OptimizeResult:
 class ImageOptimizer:
     def __init__(
         self,
-        jpeg_quality: int = 95,
+        jpeg_quality: int = 85,
         webp_quality: int = 80,
         concurrency: int | None = None,
     ) -> None

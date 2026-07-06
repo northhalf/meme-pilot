@@ -31,6 +31,7 @@ from bot.engine.index_manager import (
     RefreshInProgressError,
     resolve_unique_filename,
 )
+from bot.engine.retry_config import api_retry
 from bot.plugins._help_text import HELP_TEXT
 from bot.session import session_manager, timeout_session
 from bot.plugins._search_utils import got_intercept_bypass, format_metadata_line
@@ -260,8 +261,13 @@ async def got_image(
 # ---------------------------------------------------------------------------
 
 
+class DownloadServerError(RuntimeError):
+    """QQ 图片服务器返回 5xx，允许重试。"""
+
+
+@api_retry(extra_exceptions=(DownloadServerError,))
 async def _download_image(url: str) -> tuple[bytes, httpx.Response]:
-    """下载图片。
+    """下载图片，支持网络/超时/5xx 重试。
 
     Args:
         url: 图片 URL。
@@ -270,12 +276,17 @@ async def _download_image(url: str) -> tuple[bytes, httpx.Response]:
         (图片数据, HTTP 响应) 元组。
 
     Raises:
-        httpx.HTTPError: 下载失败。
+        httpx.HTTPError: 4xx 客户端错误等不可重试错误。
+        DownloadServerError: 5xx 服务器错误，由 api_retry 重试。
     """
     async with httpx.AsyncClient() as client:
         response = await client.get(
             url, timeout=DOWNLOAD_TIMEOUT, follow_redirects=True
         )
+        if response.status_code >= 500:
+            raise DownloadServerError(
+                f"图片服务器错误 {response.status_code}: {url}"
+            )
         response.raise_for_status()
         return response.content, response
 

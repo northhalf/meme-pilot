@@ -40,7 +40,7 @@ class ImageOptimizer:
     成功后覆盖原文件。.bmp 文件跳过压缩。
 
     Attributes:
-        _jpeg_quality: JPEG 重编码质量（默认 95）。
+        _jpeg_quality: JPEG 重编码质量（默认 85）。
         _webp_quality: WebP 无损压缩质量（默认 80）。
     """
 
@@ -57,14 +57,14 @@ class ImageOptimizer:
 
     def __init__(
         self,
-        jpeg_quality: int = 95,
+        jpeg_quality: int = 85,
         webp_quality: int = 80,
         concurrency: int | None = None,
     ) -> None:
         """初始化 ImageOptimizer。
 
         Args:
-            jpeg_quality: JPEG 重编码质量（1-100），默认 95。
+            jpeg_quality: JPEG 重编码质量（1-100），默认 85。
             webp_quality: WebP 无损压缩质量（0-100），默认 80。
             concurrency: 并发数，默认从 COMPRESS_CONCURRENCY 环境变量读取，
                          回退为 5。

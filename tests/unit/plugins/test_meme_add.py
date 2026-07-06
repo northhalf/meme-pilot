@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -195,6 +196,111 @@ class TestFormatOcrText:
     def test_empty_string(self) -> None:
         """空字符串不截断。"""
         assert meme_add._format_ocr_text("") == ""
+
+
+# ===========================================================================
+# _download_image 重试测试
+# ===========================================================================
+
+
+class TestDownloadImageRetry:
+    """_download_image 重试行为测试。"""
+
+    @pytest.mark.asyncio
+    async def test_5xx_retries_and_succeeds(self) -> None:
+        """5xx 服务器错误应重试，最终成功时返回内容。"""
+        bad_response = MagicMock()
+        bad_response.status_code = 503
+        bad_response.headers = {}
+
+        good_response = MagicMock()
+        good_response.status_code = 200
+        good_response.headers = {"content-type": "image/jpeg"}
+        good_response.content = b"fake_image"
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.get = AsyncMock(side_effect=[bad_response, good_response])
+
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            content, response = await meme_add._download_image(
+                "https://img.example.com/a.jpg"
+            )
+
+        assert content == b"fake_image"
+        assert response is good_response
+        assert mock_client.get.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_network_error_retries_and_succeeds(self) -> None:
+        """网络连接错误应重试，最终成功时返回内容。"""
+        good_response = MagicMock()
+        good_response.status_code = 200
+        good_response.headers = {"content-type": "image/jpeg"}
+        good_response.content = b"fake_image"
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.get = AsyncMock(
+            side_effect=[httpx.ConnectError("connection failed"), good_response]
+        )
+
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            content, response = await meme_add._download_image(
+                "https://img.example.com/a.jpg"
+            )
+
+        assert content == b"fake_image"
+        assert response is good_response
+        assert mock_client.get.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_5xx_exhausts_retries_and_fails(self) -> None:
+        """5xx 持续返回时，重试耗尽后抛出 DownloadServerError。"""
+        bad_response = MagicMock()
+        bad_response.status_code = 502
+        bad_response.headers = {}
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.get = AsyncMock(return_value=bad_response)
+
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            with pytest.raises(meme_add.DownloadServerError):
+                await meme_add._download_image(
+                    "https://img.example.com/a.jpg"
+                )
+
+        # api_retry 默认最多 3 次尝试
+        assert mock_client.get.await_count == 3
+
+    @pytest.mark.asyncio
+    async def test_4xx_does_not_retry(self) -> None:
+        """4xx 客户端错误不应重试，立即失败。"""
+        from httpx import HTTPStatusError
+
+        bad_response = MagicMock()
+        bad_response.status_code = 404
+        bad_response.headers = {}
+        bad_response.raise_for_status.side_effect = HTTPStatusError(
+            "Not Found", request=MagicMock(), response=bad_response
+        )
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.get = AsyncMock(return_value=bad_response)
+
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            with pytest.raises(HTTPStatusError):
+                await meme_add._download_image(
+                    "https://img.example.com/a.jpg"
+                )
+
+        assert mock_client.get.await_count == 1
 
 
 # ===========================================================================
