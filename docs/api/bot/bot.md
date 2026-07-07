@@ -53,7 +53,7 @@ NoneBot2 启动钩子，按顺序执行：
 1. `setup_logging("log")` — 配置日志
 2. 通过 `provider_factory.create_ocr_provider(read_ocr_provider())` 与 `provider_factory.create_embedding_provider(read_embedding_provider())` 创建 OCR/Embedding 服务，以及 `RerankService`、`ImageOptimizer`；支持的 OCR 引擎：`paddle`（PaddleOCR 云 API）、`deepseek`（OpenAI 兼容 OCR，示例默认硅基流动 DeepSeek-OCR）、`rapidocr`（RapidOCR 本地 OCR）；支持的 Embedding 引擎：`openai`（OpenAI 兼容 Embedding，示例默认 GLM `embedding-3`）、`google`（Google Embedding API）
 3. 创建 `MetadataStore(str(INDEX_DB_PATH))` 与 `VectorStore(str(CHROMA_DIR))`，再创建 `AIMatcher(metadata_store, vector_store, embedding_provider, rerank_provider)` 与 `KeywordSearcher(metadata_store)`
-4. 创建 `IndexManager(metadata_store, vector_store, memes_dir, deleted_dir=str(MEMES_DELETED_DIR), ocr_provider, embedding_provider, optimizer, keyword_searcher, ai_matcher)` 并调用 `load()`（搜索/匹配服务由 IndexManager 内部持锁后委托调用）
+4. 创建 `IndexManager(metadata_store, vector_store, memes_dir, deleted_dir=str(MEMES_DELETED_DIR), replaced_dir=str(MEMES_REPLACED_DIR), ocr_provider, embedding_provider, optimizer, keyword_searcher, ai_matcher)` 并调用 `load()`（搜索/匹配服务由 IndexManager 内部持锁后委托调用）
 5. `app_state.init_app(...)` — 注册全局单例（含 IndexManager，Bot 立即可用）
 6. `asyncio.create_task(_background_sync(index_manager))` — 后台索引同步
 

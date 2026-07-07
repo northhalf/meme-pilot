@@ -7,7 +7,9 @@ import pytest
 from bot.config import (
     CHROMA_DIR,
     INDEX_DB_PATH,
+    MEMES_DELETED_DIR,
     MEMES_DIR,
+    MEMES_REPLACED_DIR,
     PROJECT_ROOT,
     _parse_timeout_seconds,
     read_add_command_timeout,
@@ -27,6 +29,16 @@ def test_index_db_path_under_data() -> None:
 def test_chroma_dir_under_data() -> None:
     """CHROMA_DIR 位于 <项目根>/data/chroma。"""
     assert CHROMA_DIR == PROJECT_ROOT / "data" / "chroma"
+
+
+def test_memes_deleted_dir_under_root() -> None:
+    """MEMES_DELETED_DIR 位于 <项目根>/memes_deleted。"""
+    assert MEMES_DELETED_DIR == PROJECT_ROOT / "memes_deleted"
+
+
+def test_memes_replaced_dir_under_root() -> None:
+    """MEMES_REPLACED_DIR 位于 <项目根>/memes_replaced。"""
+    assert MEMES_REPLACED_DIR == PROJECT_ROOT / "memes_replaced"
 
 
 class TestParseTimeoutSeconds:

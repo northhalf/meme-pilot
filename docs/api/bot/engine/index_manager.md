@@ -148,7 +148,7 @@ class SyncResult:
 |------|------|------|------|
 | `added` | `int` | `0` | 本次同步新增的图片数量 |
 | `deleted` | `int` | `0` | 本次同步删除的图片数量，指 `memes/` 已不存在的旧图 |
-| `deduped` | `int` | `0` | 新图因去重键命中已有条目或其他新图而被删除的数量 |
+| `deduped` | `int` | `0` | 新图因去重键命中已有条目或其他新图而被归档到 `memes_replaced/` 的数量 |
 | `no_text_moved` | `int` | `0` | OCR 无文字被移到 `meme_no_text/` 的数量 |
 | `failed` | `list[str]` | `[]` | 处理失败的文件名列表，含新增失败与阶段0重 embed 失败 |
 
@@ -163,6 +163,7 @@ class AddResult:
     reason: str
     text: str = ""
     replaced_image_path: str | None = None
+    archived_path: str | None = None
     moved_to: str | None = None
     speaker: str | None = None
     tags: list[str] = field(default_factory=list)
@@ -173,7 +174,8 @@ class AddResult:
 | `entry_id` | `int \| None` | 必填 | 分配或复用的索引 id；无文字移图场景为 `None` |
 | `reason` | `str` | 必填 | 结果类别：`"added"`、`"replaced"`、`"no_text"` |
 | `text` | `str` | `""` | OCR 识别文本（无空格）；无文字时为空字符串 |
-| `replaced_image_path` | `str \| None` | `None` | `reason="replaced"` 时为被删旧图路径，否则为 `None` |
+| `replaced_image_path` | `str \| None` | `None` | `reason="replaced"` 时为被替换旧图在 `memes/` 下的原路径，否则为 `None` |
+| `archived_path` | `str \| None` | `None` | `reason="replaced"` 时为旧图归档到 `memes_replaced/` 后的完整路径，否则为 `None` |
 | `moved_to` | `str \| None` | `None` | `reason="no_text"` 时为移入 `meme_no_text/` 的完整路径，否则为 `None` |
 | `speaker` | `str \| None` | `None` | `reason="added"/"replaced"` 时写入的说话人；无文字移图时为 `None` |
 | `tags` | `list[str]` | `[]` | `reason="added"/"replaced"` 时写入的标签列表；无文字移图时为空列表 |
@@ -285,6 +287,7 @@ class IndexManager:
         memes_dir: str,
         no_text_dir: str | None = None,
         deleted_dir: str | None = None,
+        replaced_dir: str | None = None,
         ocr_provider: OcrProvider | None = None,
         embedding_provider: EmbeddingProvider | None = None,
         optimizer: ImageOptimizer | None = None,
@@ -302,7 +305,7 @@ class IndexManager:
 
     async def add(self, filename: str, speaker: str | None = None, tags: list[str] | None = None) -> AddResult
     # FIFO 入队；refresh 期间抛 RefreshInProgressError；关闭时抛 IndexAddCancelledError；
-    # 内部由 Add Worker 串行处理（压缩 → OCR → embed → Write Worker 写库）
+    # 内部由 Add Worker 串行处理（压缩 → OCR → embed → Write Worker 写库）；去重替换时旧图归档到 memes_replaced/
 
     async def edit_text(self, entry_id: int, new_text: str) -> EditTextResult
     # 修改指定条目的 OCR 文本；锁外 embed，Write Worker 串行写入；
@@ -324,7 +327,7 @@ class IndexManager:
     # 返回当前索引统计信息（条目数、speaker 排行、状态）；不含硬件信息
 
     async def refresh(self) -> SyncResult
-    # 独占写锁执行同步；运行期间新的 add/refresh 被拒绝
+    # 独占写锁执行同步；运行期间新的 add/refresh 被拒绝；去重新图归档到 memes_replaced/
 
     async def close(self) -> None
     # 取消 workers，清空 pending，关闭两个 Store

@@ -10,6 +10,9 @@ MEMES_DIR = PROJECT_ROOT / "memes"
 MEMES_DELETED_DIR: Path = PROJECT_ROOT / "memes_deleted"
 """被删除表情包的备份目录（可从该目录手动恢复）。"""
 
+MEMES_REPLACED_DIR: Path = PROJECT_ROOT / "memes_replaced"
+"""被替换表情包的归档目录。"""
+
 # 索引数据目录与文件
 DATA_DIR = PROJECT_ROOT / "data"
 INDEX_DB_PATH = DATA_DIR / "index.db"
@@ -162,6 +165,7 @@ __all__ = [
     "PROJECT_ROOT",
     "MEMES_DIR",
     "MEMES_DELETED_DIR",
+    "MEMES_REPLACED_DIR",
     "DATA_DIR",
     "INDEX_DB_PATH",
     "CHROMA_DIR",

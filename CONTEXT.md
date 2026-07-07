@@ -10,7 +10,7 @@
 | **表情包** | 存储在本地的图片文件（.jpg/.jpeg/.png/.gif/.webp/.bmp），带有搞笑/吐槽含义 |
 | **索引** | 从表情包图片中 OCR 提取的文字和图片路径信息，存储在 sqlite `data/index.db` 中（`meme` 表 + `meme_tag` 关联表），向量存储在 ChromaDB `data/chroma/` 中 |
 | **测试目录** | 仓库根目录 `tests/`；按 `unit/`、`integration/`、`fixtures/` 分层，当前只规划目录结构，不代表已经引入测试框架或固定测试命令 |
-| **按文件名同步的增量刷新** | 启动和 `/refresh` 时使用的 v1.0 同步策略：阶段0 跨库一致性修复（对齐 sqlite ↔ chroma 的 id 集合，chroma 损坏/为空且 sqlite 有数据时全量重 embed `rebuild_all`）；阶段1 删除 `memes/` 已不存在图片的记录；阶段2 新增图片先按格式执行图片无损压缩，再追加索引记录；文件名仍存在的图片不重新 OCR，不检测同名覆盖；删除记录后保持其他已有 id 稳定，允许临时编号空洞；新增图片按文件名升序处理，并优先复用最小空洞 id；新增图片 OCR 后按「去除所有空白字符的去重键」去重，与已有条目或其他新图同键时保留已有/靠前者、删除重复新图；OCR 无文字的新图移至 `meme_no_text/` 不进索引 |
+| **按文件名同步的增量刷新** | 启动和 `/refresh` 时使用的 v1.0 同步策略：阶段0 跨库一致性修复（对齐 sqlite ↔ chroma 的 id 集合，chroma 损坏/为空且 sqlite 有数据时全量重 embed `rebuild_all`）；阶段1 删除 `memes/` 已不存在图片的记录；阶段2 新增图片先按格式执行图片无损压缩，再追加索引记录；文件名仍存在的图片不重新 OCR，不检测同名覆盖；删除记录后保持其他已有 id 稳定，允许临时编号空洞；新增图片按文件名升序处理，并优先复用最小空洞 id；新增图片 OCR 后按「去除所有空白字符的去重键」去重，与已有条目或其他新图同键时保留已有/靠前者、将重复新图归档到 `memes_replaced/`；OCR 无文字的新图移至 `meme_no_text/` 不进索引 |
 | **关键词搜索** | 功能一：用户输入关键词，先用「原始输入去所有空白、保留助词」的关键词对索引中的 OCR 文本做精确子串匹配，命中则只返回包含该子串的 Top 10 表情包；未命中时回退到 jieba.posseg 分词过滤助词后的关键词，用 pylcs LCS 模糊匹配（阈值统一 >= 60），按分数降序返回 Top 10；模糊回退阶段如果存在分数为 100 的结果，只返回分数为 100 的结果；不匹配文件名 |
 | **AI 匹配** | 功能二：用户用自然语言描述，先用 `VectorStore.query` 从 ChromaDB 召回 Top 10（不设最低相似度阈值），再用 `MetadataStore.get_entry` 取 metadata 构候选，经 DeepSeek 精排后返回；若精排失败、解析失败或返回 `0`，fallback 到 embedding Top 1。`AIMatcher` 通过 `MetadataEntryProvider` + `VectorQueryProvider` 两个 Protocol 依赖两个 Store（见「依赖协议」） |
 | **图片无损压缩** | 新增图片进入索引前的文件优化步骤；`/add`、启动同步和 `/refresh` 对新增的 `.jpg/.jpeg/.png/.webp/.gif` 尝试无损压缩，成功后覆盖原文件；`.bmp` 不压缩，其他扩展名不作为表情包处理 |
@@ -22,6 +22,7 @@
 | **去重键** | OCR 文本去除所有空白字符（含半角/全角空格、制表符、换行）后的纯文本；用于在 `/add` 和 `sync_with_filesystem` 新增阶段判定「是否完全相同的图片」，通过 `MetadataStore.get_id_by_text` 查询，实时计算不落盘；DB 层 `text` UNIQUE 约束兜底，冲突抛 `DuplicateEntryError` |
 | **无文字目录** | `memes/` 同级的 `meme_no_text/` 目录；OCR 去除所有空白后为空的图片在此场景下不进入索引，被移动到该目录并由日志 warning 提示，本项目不处理该类表情包 |
 | **删除备份目录** | `memes/` 同级的 `memes_deleted/` 目录；被 `/del` 命令删除的表情包图片会移动到该目录备份，可手动恢复 |
+| **替换归档目录** | `memes/` 同级的 `memes_replaced/` 目录；`/add` 去重替换旧图或 `/refresh` 去重归档重复新图时，被替换的图片文件会被移动到此目录，保留原文件名（冲突时追加 `_n` 序号），可手动恢复 |
 | **entry_id** | 索引 id，类型为 `int`，全栈统一（sqlite `meme.id` 与 chroma 向量 id 一一对应）；删除记录后保持其他已有 id 稳定，允许临时编号空洞，新增时复用最小空洞 id |
 | **image_path** | `memes/` 目录下相对路径（扁平结构下即文件名），存储在 sqlite `meme.image_path` 列；原 v1.0 早期称 `filename`，重构后改为相对路径语义 |
 | **speaker** | 说话人字段，sqlite `meme.speaker` 列，`NULL` 允许；v1.0 可通过 /setspeaker 命令设置，供后续「按角色搜索」扩展 |

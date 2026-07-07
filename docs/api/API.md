@@ -149,6 +149,7 @@ class AddResult:
     reason: str
     text: str = ""
     replaced_image_path: str | None = None
+    archived_path: str | None = None  # reason="replaced" 时填充
     moved_to: str | None = None
     speaker: str | None = None
     tags: list[str] = field(default_factory=list)
@@ -183,6 +184,7 @@ class IndexManager:
         memes_dir: str,
         no_text_dir: str | None = None,
         deleted_dir: str | None = None,
+        replaced_dir: str | None = None,
         ocr_provider: OcrProvider | None = None,
         embedding_provider: EmbeddingProvider | None = None,
         optimizer: ImageOptimizer | None = None,
@@ -548,7 +550,7 @@ class ImageOptimizer:
 NoneBot2 应用入口，详见 `docs/api/bot/bot.md`。
 
 - 启动：`main()` — 初始化 NoneBot2（`driver="~fastapi"`），注册 OneBot V11 适配器，加载插件，启动驱动器
-- Startup hook：`_on_startup()` — 通过 `provider_factory.create_*_provider()` 创建 OCR/Embedding 服务，同时创建 `RerankService` 与 `ImageOptimizer`；创建 `MetadataStore(INDEX_DB_PATH)` + `VectorStore(CHROMA_DIR)` 并注入 `IndexManager`，`load()` 后注册到 `app_state`、后台执行索引同步；根据 `OCR_PROVIDER` 选择 OCR 引擎（`paddle`/`deepseek`/`rapidocr`），根据 `EMBEDDING_PROVIDER` 选择 Embedding 引擎（`openai`/`google`）；创建 `IndexManager` 时传入 `deleted_dir`（默认 `memes_deleted/`）用于 `/del` 备份
+- Startup hook：`_on_startup()` — 通过 `provider_factory.create_*_provider()` 创建 OCR/Embedding 服务，同时创建 `RerankService` 与 `ImageOptimizer`；创建 `MetadataStore(INDEX_DB_PATH)` + `VectorStore(CHROMA_DIR)` 并注入 `IndexManager`，`load()` 后注册到 `app_state`、后台执行索引同步；根据 `OCR_PROVIDER` 选择 OCR 引擎（`paddle`/`deepseek`/`rapidocr`），根据 `EMBEDDING_PROVIDER` 选择 Embedding 引擎（`openai`/`google`）；创建 `IndexManager` 时传入 `deleted_dir`（默认 `memes_deleted/`）用于 `/del` 备份、`replaced_dir`（默认 `memes_replaced/`）用于 `/add` 与 `/refresh` 去重时归档被替换的图片
 - Shutdown hook：`_on_shutdown()` — 关闭 OCR 服务 HTTP 会话，并 `close()` 两个 Store（sqlite 连接 + chroma PersistentClient）
 - `_background_sync()` — 后台同步任务，调用 `IndexManager.refresh()` 以独占写锁执行同步；同步失败时记录日志，Bot 继续运行
 - 环境变量：`BOT_HOST`（默认 `0.0.0.0`）、`BOT_PORT`（默认 `8080`，无效值回退 8080）、`READ_LOCK_TIMEOUT`（默认 `00:00:30`）、`ADD_COMMAND_TIMEOUT`（默认 `00:01:00`）、`EMBEDDING_CONCURRENCY`（默认 5）、`OCR_CONCURRENCY`（默认 5）、`RERANK_CONCURRENCY`（默认 5）、`COMPRESS_CONCURRENCY`（默认 5）
@@ -785,6 +787,7 @@ NoneBot2 命令插件，注册 `/search` 命令（薄包装，核心逻辑委托
 - `PROJECT_ROOT: Path` — 项目根目录，绝对路径
 - `MEMES_DIR: Path` — 表情包图片目录，绝对路径 `<项目根>/memes`
 - `MEMES_DELETED_DIR: Path` — 被删除表情包备份目录，绝对路径 `<项目根>/memes_deleted`
+- `MEMES_REPLACED_DIR: Path` — 被替换表情包归档目录，绝对路径 `<项目根>/memes_replaced`；`/add` 替换旧图与 `/refresh` 去重新图会移动到该目录，可手动恢复
 - `DATA_DIR: Path` — 索引数据目录，绝对路径 `<项目根>/data`
 - `INDEX_DB_PATH: Path` — sqlite 元数据数据库文件，绝对路径 `<项目根>/data/index.db`
 - `CHROMA_DIR: Path` — chroma 向量库数据目录，绝对路径 `<项目根>/data/chroma`

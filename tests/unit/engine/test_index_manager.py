@@ -335,8 +335,6 @@ async def test_add_fifo_order(index_manager: IndexManager) -> None:
     ids: list[int] = [r.entry_id for r in results if r.entry_id is not None]
     assert len(ids) == 3
     # 实际写入顺序应与提交顺序一致，验证 FIFO
-    from typing import cast
-
     metadata_store = cast(FakeMetadataStore, index_manager._metadata_store)
     assert metadata_store.add_order == ids
 
@@ -469,11 +467,51 @@ class TestAdd:
         (Path(index_manager._memes_dir) / "old.jpg").write_bytes(b"fake")
         (Path(index_manager._memes_dir) / "new.jpg").write_bytes(b"fake")
         await index_manager.add("old.jpg", speaker="旧说话人", tags=["旧标签"])
-        await index_manager.add("new.jpg", speaker="新说话人", tags=["新标签"])
+        result = await index_manager.add(
+            "new.jpg", speaker="新说话人", tags=["新标签"]
+        )
         entry = index_manager._metadata_store.get_entry(1)
         assert entry is not None
         assert entry.speaker == "新说话人"
         assert entry.tags == ["新标签"]
+
+        # 验证旧图已被归档到 memes_replaced/
+        replaced_dir = Path(index_manager._replaced_dir)
+        assert (replaced_dir / "old.jpg").exists()
+        # 验证新图仍保留在 memes/
+        assert (Path(index_manager._memes_dir) / "new.jpg").exists()
+        # 验证 AddResult 携带归档路径
+        assert result.archived_path == str(replaced_dir / "old.jpg")
+
+    @pytest.mark.anyio
+    async def test_add_duplicate_archives_old_image_with_unique_name(
+        self, index_manager: IndexManager
+    ) -> None:
+        """多次替换同名旧图时，memes_replaced/ 中应生成 _2、_3 等不冲突文件名。"""
+
+        class ConstantOcrProvider:
+            async def ocr(self, image_path: str) -> str:
+                return "相同文本"
+
+        index_manager._ocr_provider = ConstantOcrProvider()
+        replaced_dir = Path(index_manager._replaced_dir)
+
+        (Path(index_manager._memes_dir) / "old.jpg").write_bytes(b"1")
+        await index_manager.add("old.jpg")
+
+        # 第一次替换
+        (Path(index_manager._memes_dir) / "new1.jpg").write_bytes(b"2")
+        r1 = await index_manager.add("new1.jpg")
+        assert r1.archived_path == str(replaced_dir / "old.jpg")
+
+        # 第二次替换：再次把同名 old.jpg 移入 memes_replaced/
+        # 通过手动调用 _move_to_replaced 模拟同名冲突
+        (Path(index_manager._memes_dir) / "old.jpg").write_bytes(b"3")
+        archived = await index_manager._run_sync(
+            index_manager._move_to_replaced, "old.jpg"
+        )
+        assert archived == str(replaced_dir / "old_2.jpg")
+        assert (replaced_dir / "old_2.jpg").exists()
 
     @pytest.mark.anyio
     async def test_add_duplicate_upsert_failure_rolls_back_speaker_and_tags(
@@ -506,6 +544,10 @@ class TestAdd:
         assert entry is not None
         assert entry.speaker == "旧说话人"
         assert entry.tags == ["旧标签"]
+
+        # 验证旧图仍在 memes/（upsert 失败时不应移动旧图），新图应已被清理
+        assert (Path(index_manager._memes_dir) / "old.jpg").exists()
+        assert not (Path(index_manager._memes_dir) / "new.jpg").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -863,3 +905,34 @@ class TestConcurrencyAndDrain:
         """验证已删除属性不存在（_add_concurrency, _sync_semaphore 等）。"""
         assert not hasattr(index_manager, "_add_concurrency")
         assert not hasattr(index_manager, "_sync_semaphore")
+
+
+class TestRefresh:
+    """IndexManager.refresh() 去重归档测试。"""
+
+    @pytest.mark.anyio
+    async def test_refresh_dedup_moves_duplicate_to_replaced(
+        self, index_manager: IndexManager
+    ) -> None:
+        """新图与已有条目 OCR 文本重复时，应归档到 memes_replaced/。"""
+
+        class ConstantOcrProvider:
+            async def ocr(self, image_path: str) -> str:
+                return "重复文本"
+
+        index_manager._ocr_provider = ConstantOcrProvider()
+        memes_dir = Path(index_manager._memes_dir)
+        replaced_dir = Path(index_manager._replaced_dir)
+
+        # 先建立一条已有索引
+        (memes_dir / "old.jpg").write_bytes(b"1")
+        await index_manager.add("old.jpg")
+
+        # 再放入一张 OCR 文本相同的新图
+        (memes_dir / "new.jpg").write_bytes(b"2")
+        result = await index_manager.refresh()
+
+        assert result.deduped == 1
+        assert result.added == 0
+        assert not (memes_dir / "new.jpg").exists()
+        assert (replaced_dir / "new.jpg").exists()

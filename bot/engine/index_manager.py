@@ -287,7 +287,8 @@ class AddResult:
         entry_id: 分配/复用的索引 ID（int）；无文字移图场景为 None。
         reason: 结果类别：added / replaced / no_text。
         text: OCR 文本（无空格）。
-        replaced_image_path: reason="replaced" 时为被删旧图路径，否则 None。
+        replaced_image_path: reason="replaced" 时为被替换旧图路径，否则 None。
+        archived_path: reason="replaced" 时为旧图归档后的完整路径，否则 None。
         moved_to: reason="no_text" 时为移入 meme_no_text/ 的完整路径，否则 None。
         speaker: ADD 时写入的说话人（无文字移图时为 None）。
         tags: ADD 时写入的标签列表（无文字移图时为空列表）。
@@ -297,6 +298,7 @@ class AddResult:
     reason: str
     text: str = ""
     replaced_image_path: str | None = None
+    archived_path: str | None = None
     moved_to: str | None = None
     speaker: str | None = None
     tags: list[str] = field(default_factory=list)
@@ -336,6 +338,7 @@ class IndexManager:
         memes_dir: str,
         no_text_dir: str | None = None,
         deleted_dir: str | None = None,
+        replaced_dir: str | None = None,
         ocr_provider: OcrProvider | None = None,
         embedding_provider: EmbeddingProvider | None = None,
         optimizer: ImageOptimizerProtocol | None = None,
@@ -350,6 +353,7 @@ class IndexManager:
             memes_dir: 表情包图片目录路径。
             no_text_dir: 无文字图目录；None 时取 memes_dir 同级的 meme_no_text/。
             deleted_dir: 已删除图目录；None 时取 memes_dir 同级的 memes_deleted/。
+            replaced_dir: 被替换旧图归档目录；None 时取 memes_dir 同级的 memes_replaced/。
             ocr_provider: OCR 服务提供者。
             embedding_provider: Embedding 服务提供者。
             optimizer: 图片压缩器。
@@ -367,6 +371,10 @@ class IndexManager:
             self._deleted_dir = Path(deleted_dir)
         else:
             self._deleted_dir = Path(memes_dir).parent / "memes_deleted"
+        if replaced_dir is not None:
+            self._replaced_dir = Path(replaced_dir)
+        else:
+            self._replaced_dir = Path(memes_dir).parent / "memes_replaced"
         self._ocr_provider = ocr_provider
         self._embedding_provider = embedding_provider
         self._optimizer = optimizer
@@ -1024,6 +1032,22 @@ class IndexManager:
                 return candidate
             n += 1
 
+    def _move_to_replaced(self, filename: str) -> str:
+        """将被替换的文件移动到 memes_replaced/ 目录。
+
+        Args:
+            filename: memes/ 下的文件名。
+
+        Returns:
+            移入后的完整路径字符串。
+        """
+        src = self._memes_dir / filename
+        self._replaced_dir.mkdir(parents=True, exist_ok=True)
+        dst = resolve_unique_filename(self._replaced_dir, filename)
+        shutil.move(str(src), str(dst))
+        logger.info("已归档被替换文件: %s -> %s", filename, dst)
+        return str(dst)
+
     async def close(self) -> None:
         """安全关闭 IndexManager。
 
@@ -1240,8 +1264,23 @@ class IndexManager:
                 no_text_moved += 1
                 continue
             if text in winner_keys:
-                (self._memes_dir / filename).unlink(missing_ok=True)
-                logger.info("新图与已有索引去重，删除新图: filename=%s", filename)
+                try:
+                    archived_path = await self._run_sync(
+                        self._move_to_replaced, filename
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "去重新图归档失败，跳过该文件: filename=%s, error=%s",
+                        filename,
+                        exc,
+                    )
+                    failed.append(filename)
+                    continue
+                logger.info(
+                    "新图与已有索引去重，已归档新图: filename=%s, archived=%s",
+                    filename,
+                    archived_path,
+                )
                 deduped += 1
                 continue
             # 正常新增：先 sqlite 后 chroma；upsert 失败回滚 sqlite
@@ -1326,17 +1365,25 @@ class IndexManager:
                 )
                 (self._memes_dir / filename).unlink(missing_ok=True)
                 raise EmbeddingError(f"去重替换 upsert 失败: {filename}") from exc
-            # 删旧图（最后删，保证前序失败时旧图仍在）
+            # 归档旧图（最后移动，保证前序失败时旧图仍在）
+            archived_path: str | None = None
             if old_image_path and old_image_path != filename:
-                (self._memes_dir / old_image_path).unlink(missing_ok=True)
+                archived_path = await self._run_sync(
+                    self._move_to_replaced, old_image_path
+                )
             logger.info(
-                "去重替换: id=%s, 旧=%s, 新=%s", old_id, old_image_path, filename
+                "去重替换: id=%s, 旧=%s, 新=%s, archived=%s",
+                old_id,
+                old_image_path,
+                filename,
+                archived_path,
             )
             return AddResult(
                 entry_id=old_id,
                 reason="replaced",
                 text=text,
                 replaced_image_path=old_image_path,
+                archived_path=archived_path,
                 speaker=speaker,
                 tags=tags or [],
             )

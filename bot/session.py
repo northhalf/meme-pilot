@@ -28,7 +28,7 @@ class ChatSession:
     Attributes:
         session_id: UUID，首次创建时永久固定。
         active: True 表示有命令正在处理。
-        command_type: 命令类型，"add"/"search"/"ai"/"refresh"。
+        command_type: 命令类型，"add"/"search"/"ai"/"refresh"/"edittext"/"setspeaker"/"addtag"/"del"。
         matcher: 当前命令的 NoneBot2 Matcher。
         current_task: 异步任务引用，handle/got 入口通过 activate_chat 设置。
     """
