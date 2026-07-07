@@ -22,7 +22,7 @@ async def got_selection(bot: Bot, event: MessageEvent, matcher: Matcher, selecti
 
 - `auth.is_authorized()` — 授权校验
 - `_search_utils.execute_search()` — 核心搜索逻辑（锁、索引空、搜索、结果分支、session 注册和超时）
-- `_search_utils.handle_got_selection()` — got 选择编号共享逻辑（旁路拦截、会话检查、`handle_selection`、发送图片、清理）
+- `_search_utils.handle_got_selection()` — got 选择编号共享逻辑（旁路拦截、会话检查、`resolve_selection`、发送图片、清理）
 - `bot.session.session_manager` — 会话管理（activate_chat / deactivate_chat）
 
 ## 流程

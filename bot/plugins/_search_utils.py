@@ -1,6 +1,7 @@
 """搜索核心逻辑模块。
 
-提供 execute_search 和 handle_selection 供 meme_search 和 meme_help 复用。
+提供 execute_search、resolve_selection、present_candidates 和 dispatch_search_results，
+供 meme_search、meme_rand、meme_sim 等插件复用。
 以下划线开头避免 NoneBot2 自动加载为插件。
 """
 
@@ -47,12 +48,12 @@ def format_metadata_line(entry_id: int, speaker: str | None, tags: list[str]) ->
     return ", ".join(parts)
 
 
-def handle_selection(
+def resolve_selection(
     matcher: Matcher,
     candidates: list[SearchResult],
     text: str,
 ) -> SearchResult | str:
-    """处理用户选择编号。
+    """解析用户选择编号。
 
     Args:
         matcher: NoneBot2 Matcher 实例。
@@ -111,16 +112,93 @@ async def got_intercept_bypass(
     return False
 
 
+async def present_candidates(
+    bot: Bot,
+    event: MessageEvent,
+    cmd_matcher: Matcher,
+    candidates: list[SearchResult],
+    *,
+    prompt_suffix: str = "",
+) -> None:
+    """展示候选列表并创建选择会话（仅处理多结果）。
+
+    Args:
+        bot: OneBot V11 Bot 实例。
+        event: 消息事件。
+        cmd_matcher: 调用方的 Matcher（用于 send）。
+        candidates: 候选结果列表。
+        prompt_suffix: 附加在提示末尾的可选文本。
+    """
+    user_id = event.get_user_id()
+    lines = ["找到多个匹配的表情包，请选择："]
+    for i, r in enumerate(candidates, 1):
+        meta = format_metadata_line(r.entry_id, r.speaker, r.tags)
+        lines.append(f"{i}. {r.text} -- {meta}")
+    lines.append(f"回复编号即可 (1-{len(candidates)})")
+    if prompt_suffix:
+        lines.append(prompt_suffix)
+
+    cmd_matcher.state["candidates"] = candidates
+    selection_id = str(uuid.uuid4())
+    cmd_matcher.state["selection_id"] = selection_id
+
+    await cmd_matcher.send("\n".join(lines))
+    task = asyncio.create_task(
+        timeout_session(bot, event, user_id, selection_id, "选择已过期，请重新搜索")
+    )
+    session_manager.create_selection(user_id, selection_id, task)
+    session_manager.reset_current_task(user_id)
+
+
+async def dispatch_search_results(
+    bot: Bot,
+    event: MessageEvent,
+    cmd_matcher: Matcher,
+    results: list[SearchResult],
+    *,
+    prompt_suffix: str = "",
+) -> None:
+    """统一处理搜索结果：无结果、单结果、多结果。
+
+    Args:
+        bot: OneBot V11 Bot 实例。
+        event: 消息事件。
+        cmd_matcher: 调用方的 Matcher（用于 send/finish）。
+        results: 搜索结果列表。
+        prompt_suffix: 多结果时传给 present_candidates 的附加提示。
+    """
+    user_id = event.get_user_id()
+
+    if not results:
+        session_manager.deactivate_chat(user_id)
+        await cmd_matcher.finish("没有匹配到任何表情包 🙁")
+        return
+
+    if len(results) == 1:
+        session_manager.deactivate_chat(user_id)
+        result = results[0]
+        image_path = MEMES_DIR / result.image_path
+        await cmd_matcher.send(
+            MessageSegment.image("file://" + str(image_path.resolve()))
+        )
+        await cmd_matcher.finish(
+            format_metadata_line(result.entry_id, result.speaker, result.tags)
+        )
+        return
+
+    await present_candidates(bot, event, cmd_matcher, results, prompt_suffix=prompt_suffix)
+
+
 async def execute_search(
     bot: Bot,
     event: MessageEvent,
     cmd_matcher: Matcher,
     keyword: str,
 ) -> None:
-    """核心搜索逻辑。
+    """核心关键词搜索逻辑。
 
-    流程：执行搜索 → 结果分支。
-    多结果时创建选择会话（selection_id + create_selection）并启动超时任务。
+    流程：获取 IndexManager 并执行关键词搜索，
+    再通过 dispatch_search_results 统一处理结果分支。
 
     Args:
         bot: OneBot V11 Bot 实例。
@@ -150,41 +228,7 @@ async def execute_search(
         await cmd_matcher.finish("搜索服务暂时不可用，稍后重试")
         return
 
-    if not results:
-        session_manager.deactivate_chat(user_id)
-        await cmd_matcher.finish("没有匹配到任何表情包 🙁")
-        return
-
-    if len(results) == 1:
-        session_manager.deactivate_chat(user_id)
-        result = results[0]
-        image_path = MEMES_DIR / result.image_path
-        await cmd_matcher.send(
-            MessageSegment.image("file://" + str(image_path.resolve()))
-        )
-        await cmd_matcher.finish(format_metadata_line(result.entry_id, result.speaker, result.tags))
-        return
-
-    # 多个结果：格式化选择列表
-    lines = ["找到多个匹配的表情包，请选择："]
-    for i, r in enumerate(results, 1):
-        meta = format_metadata_line(r.entry_id, r.speaker, r.tags)
-        lines.append(f"{i}. {r.text} -- {meta}")
-    lines.append(f"回复编号即可 (1-{len(results)})")
-
-    # 存储候选、创建选择会话
-    cmd_matcher.state["candidates"] = results
-    selection_id = str(uuid.uuid4())
-    cmd_matcher.state["selection_id"] = selection_id
-
-    await cmd_matcher.send("\n".join(lines))
-
-    # 启动超时任务（使用 selection_id 双重校验）
-    task = asyncio.create_task(
-        timeout_session(bot, event, user_id, selection_id, "选择已过期，请重新搜索")
-    )
-    session_manager.create_selection(user_id, selection_id, task)
-    session_manager.reset_current_task(user_id)
+    await dispatch_search_results(bot, event, cmd_matcher, results)
 
 
 async def handle_got_selection(
@@ -225,7 +269,7 @@ async def handle_got_selection(
             candidates = matcher.state.get("candidates", [])
             selection_text = selection_msg.extract_plain_text().strip()
 
-            result = handle_selection(matcher, candidates, selection_text)
+            result = resolve_selection(matcher, candidates, selection_text)
             if isinstance(result, str):
                 await matcher.reject(result)
                 return

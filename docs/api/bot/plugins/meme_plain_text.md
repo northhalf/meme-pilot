@@ -27,7 +27,7 @@ catch_all = on_message(rule=to_me(), priority=99, block=False)
 
 ### 多结果选择
 
-`got("selection")` 薄包装，委托 `_search_utils.handle_got_selection()` 处理由本 matcher 触发的搜索多结果选择（旁路拦截、会话检查、`handle_selection`、发送图片、清理）。
+`got("selection")` 薄包装，委托 `_search_utils.handle_got_selection()` 处理由本 matcher 触发的搜索多结果选择（旁路拦截、会话检查、`resolve_selection`、发送图片、清理）。
 
 ## 依赖
 

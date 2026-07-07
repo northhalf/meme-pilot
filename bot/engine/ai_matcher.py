@@ -4,13 +4,13 @@
 """
 
 import logging
-import math
 from dataclasses import dataclass, field, replace
 from typing import Protocol
 
-from bot.engine.metadata_store import MemeEntry
-from bot.engine.protocols import EmbeddingProvider
-from bot.engine.vector_store import VectorHit
+from .metadata_store import MemeEntry
+from .protocols import EmbeddingProvider
+from .utils import vector_norm
+from .vector_store import VectorHit
 
 logger = logging.getLogger(__name__)
 
@@ -176,7 +176,7 @@ class AIMatcher:
             logger.debug("AI 匹配描述为空，返回空结果")
             return None
 
-        if _vector_norm(query_vector) == 0:
+        if vector_norm(query_vector) == 0:
             raise ValueError("用户描述 embedding 不能是零向量")
 
         if self._vector_store.count() == 0:
@@ -271,8 +271,3 @@ def _candidate_to_result(candidate: AIMatchCandidate, source: str) -> AIMatchRes
         speaker=candidate.speaker,
         tags=candidate.tags,
     )
-
-
-def _vector_norm(vector: list[float]) -> float:
-    """计算向量 L2 范数。"""
-    return math.sqrt(sum(value * value for value in vector))

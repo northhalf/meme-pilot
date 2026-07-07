@@ -21,7 +21,10 @@ from .image_optimizer import OptimizeResult
 from .keyword_searcher import KeywordSearcher, SearchResult
 from .metadata_store import MemeEntry
 from .protocols import EmbeddingProvider
+from .random_searcher import RandomSearcher
 from .rwlock import IndexRwLock
+from .semantic_searcher import SemanticSearcher
+from .utils import vector_norm
 from .vector_store import VectorHit
 
 logger = logging.getLogger(__name__)
@@ -344,6 +347,8 @@ class IndexManager:
         optimizer: ImageOptimizerProtocol | None = None,
         keyword_searcher: KeywordSearcher | None = None,
         ai_matcher: AIMatcher | None = None,
+        random_searcher: RandomSearcher | None = None,
+        semantic_searcher: SemanticSearcher | None = None,
     ) -> None:
         """初始化 IndexManager。
 
@@ -359,6 +364,8 @@ class IndexManager:
             optimizer: 图片压缩器。
             keyword_searcher: 关键词搜索器，由 IndexManager 持锁后调用。
             ai_matcher: AI 匹配器，由 IndexManager 持锁后调用。
+            random_searcher: 随机搜索器，由 IndexManager 持锁后调用。
+            semantic_searcher: 语义搜索器，由 IndexManager 持锁后调用。
         """
         self._metadata_store = metadata_store
         self._vector_store = vector_store
@@ -380,6 +387,8 @@ class IndexManager:
         self._optimizer = optimizer
         self._keyword_searcher = keyword_searcher
         self._ai_matcher = ai_matcher
+        self._random_searcher = random_searcher
+        self._semantic_searcher = semantic_searcher
 
         self.read_timeout = float(read_read_lock_timeout())
         self.add_user_timeout = float(read_add_command_timeout())
@@ -436,6 +445,53 @@ class IndexManager:
             if self._keyword_searcher is None:
                 raise RuntimeError("KeywordSearcher 未注入")
             return self._keyword_searcher.search(keyword)
+
+    async def random_search(self, keyword: str | None = None) -> list[SearchResult]:
+        """随机搜索入口。持读锁调用 RandomSearcher.search_random。
+
+        Args:
+            keyword: 可选关键词；None 或空串表示全库随机。
+
+        Returns:
+            随机取样后的 SearchResult 列表；空库时返回空列表。
+
+        Raises:
+            asyncio.TimeoutError: 等待读锁超时。
+            RuntimeError: RandomSearcher 未注入。
+        """
+        async with self._rwlock.read(timeout=self.read_timeout):
+            if self._metadata_store.entry_count() == 0:
+                return []
+            if self._random_searcher is None:
+                raise RuntimeError("RandomSearcher 未注入")
+            return self._random_searcher.search_random(keyword)
+
+    async def semantic_search(self, description: str, limit: int = 10) -> list[SearchResult]:
+        """语义搜索入口。锁外 embed，持读锁查询。
+
+        Args:
+            description: 用户自然语言描述。
+            limit: 返回结果数量上限，默认 10。
+
+        Returns:
+            语义相似度 Top-N SearchResult 列表；空库时返回空列表。
+
+        Raises:
+            asyncio.TimeoutError: 等待读锁超时。
+            RuntimeError: SemanticSearcher 或 EmbeddingProvider 未注入。
+            ValueError: embedding 结果为零向量。
+        """
+        if self._semantic_searcher is None:
+            raise RuntimeError("SemanticSearcher 未注入")
+        if self._embedding_provider is None:
+            raise RuntimeError("EmbeddingProvider 未注入")
+        query_vector = await self._embedding_provider.embed(description)
+        if vector_norm(query_vector) == 0:
+            raise ValueError("用户描述 embedding 不能是零向量")
+        async with self._rwlock.read(timeout=self.read_timeout):
+            if self._vector_store.count() == 0:
+                return []
+            return await self._semantic_searcher.search_semantic(query_vector, limit=limit)
 
     async def ai_match(self, description: str) -> AIMatchResult | None:
         """AI 描述匹配。

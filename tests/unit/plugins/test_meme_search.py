@@ -290,7 +290,7 @@ class TestGotSelection:
 
     @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.MessageSegment")
-    @patch("bot.plugins._search_utils.handle_selection")
+    @patch("bot.plugins._search_utils.resolve_selection")
     @patch("bot.plugins._search_utils.session_manager.remove_selection")
     @patch("bot.plugins._search_utils.session_manager.activate_chat")
     @patch("bot.plugins._search_utils.session_manager.get_selection")
@@ -320,7 +320,7 @@ class TestGotSelection:
         matcher.finish.assert_awaited_once()
 
     @pytest.mark.asyncio
-    @patch("bot.plugins._search_utils.handle_selection")
+    @patch("bot.plugins._search_utils.resolve_selection")
     @patch("bot.plugins._search_utils.session_manager.activate_chat")
     @patch("bot.plugins._search_utils.session_manager.get_selection")
     @patch("bot.plugins._search_utils.got_intercept_bypass", return_value=False)
@@ -354,7 +354,7 @@ class TestGotSelection:
     # -----------------------------------------------------------------------
 
     @pytest.mark.asyncio
-    @patch("bot.plugins._search_utils.handle_selection")
+    @patch("bot.plugins._search_utils.resolve_selection")
     @patch("bot.plugins._search_utils.session_manager.activate_chat")
     @patch("bot.plugins._search_utils.session_manager.get_selection")
     @patch("bot.plugins._search_utils.got_intercept_bypass", return_value=False)
@@ -379,7 +379,7 @@ class TestGotSelection:
         assert "无效编号" in matcher.reject.call_args[0][0]
 
     @pytest.mark.asyncio
-    @patch("bot.plugins._search_utils.handle_selection")
+    @patch("bot.plugins._search_utils.resolve_selection")
     @patch("bot.plugins._search_utils.session_manager.activate_chat")
     @patch("bot.plugins._search_utils.session_manager.get_selection")
     @patch("bot.plugins._search_utils.got_intercept_bypass", return_value=False)
@@ -404,7 +404,7 @@ class TestGotSelection:
         assert "无效编号" in matcher.reject.call_args[0][0]
 
     @pytest.mark.asyncio
-    @patch("bot.plugins._search_utils.handle_selection")
+    @patch("bot.plugins._search_utils.resolve_selection")
     @patch("bot.plugins._search_utils.session_manager.activate_chat")
     @patch("bot.plugins._search_utils.session_manager.get_selection")
     @patch("bot.plugins._search_utils.got_intercept_bypass", return_value=False)
@@ -429,7 +429,7 @@ class TestGotSelection:
         assert "无效编号" in matcher.reject.call_args[0][0]
 
     @pytest.mark.asyncio
-    @patch("bot.plugins._search_utils.handle_selection")
+    @patch("bot.plugins._search_utils.resolve_selection")
     @patch("bot.plugins._search_utils.session_manager.activate_chat")
     @patch("bot.plugins._search_utils.session_manager.get_selection")
     @patch("bot.plugins._search_utils.got_intercept_bypass", return_value=False)
@@ -440,7 +440,7 @@ class TestGotSelection:
         mock_activate: MagicMock,
         mock_handle: MagicMock,
     ) -> None:
-        """candidates 为空时 handle_selection 返回错误消息，应 reject。"""
+        """candidates 为空时 resolve_selection 返回错误消息，应 reject。"""
         mock_handle.return_value = "搜索状态异常，请重新搜索"
         mock_get_sel.return_value = MagicMock()
         matcher = _make_matcher(state={})

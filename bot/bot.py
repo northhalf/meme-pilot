@@ -40,6 +40,8 @@ from bot.engine.provider_factory import (
     create_embedding_provider,
     create_ocr_provider,
 )
+from bot.engine.random_searcher import RandomSearcher
+from bot.engine.semantic_searcher import SemanticSearcher
 from bot.logging_config import setup_logging
 
 logger = logging.getLogger("bot")
@@ -107,6 +109,8 @@ async def _on_startup() -> None:
         rerank_provider=rerank_service,
     )
     keyword_searcher = KeywordSearcher(metadata_store)
+    random_searcher = RandomSearcher(metadata_store, keyword_searcher)
+    semantic_searcher = SemanticSearcher(metadata_store, vector_store)
 
     # 5. 创建 IndexManager 并加载索引
     memes_dir = str(MEMES_DIR)
@@ -122,6 +126,8 @@ async def _on_startup() -> None:
         optimizer=image_optimizer,
         keyword_searcher=keyword_searcher,
         ai_matcher=ai_matcher,
+        random_searcher=random_searcher,
+        semantic_searcher=semantic_searcher,
     )
     await index_manager.load()
 
@@ -135,6 +141,8 @@ async def _on_startup() -> None:
         image_optimizer=image_optimizer,
         ai_matcher=ai_matcher,
         keyword_searcher=keyword_searcher,
+        random_searcher=random_searcher,
+        semantic_searcher=semantic_searcher,
     )
     logger.info("MemePilot 启动完成，后台索引同步进行中...")
 

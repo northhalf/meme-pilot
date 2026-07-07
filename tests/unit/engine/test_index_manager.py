@@ -28,6 +28,8 @@ from bot.engine.index_manager import (
 from bot.engine.image_optimizer import OptimizeResult
 from bot.engine.keyword_searcher import KeywordSearcher
 from bot.engine.metadata_store import MemeEntry
+from bot.engine.random_searcher import RandomSearcher
+from bot.engine.semantic_searcher import SemanticSearcher
 
 # 哨兵值，区分「不修改字段」与显式的 None
 _UNSET = object()
@@ -223,6 +225,8 @@ def index_manager(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         vector_store=vector_store,
         embedding_provider=embedding_provider,
     )
+    random_searcher = RandomSearcher(metadata_store, keyword_searcher)
+    semantic_searcher = SemanticSearcher(metadata_store, vector_store)
 
     manager = IndexManager(
         metadata_store=metadata_store,
@@ -233,6 +237,8 @@ def index_manager(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         optimizer=MockOptimizer(),
         keyword_searcher=keyword_searcher,
         ai_matcher=ai_matcher,
+        random_searcher=random_searcher,
+        semantic_searcher=semantic_searcher,
     )
     manager.load()
     return manager
@@ -936,3 +942,112 @@ class TestRefresh:
         assert result.added == 0
         assert not (memes_dir / "new.jpg").exists()
         assert (replaced_dir / "new.jpg").exists()
+
+
+# ---------------------------------------------------------------------------
+# random_search / semantic_search 测试
+# ---------------------------------------------------------------------------
+
+
+class TestRandomSearch:
+    @pytest.mark.anyio
+    async def test_random_search_full_random(
+        self, index_manager: IndexManager
+    ) -> None:
+        """无关键词时从全库随机返回候选。"""
+        for i in range(5):
+            (Path(index_manager._memes_dir) / f"img{i}.jpg").write_bytes(b"fake")
+            await index_manager.add(f"img{i}.jpg")
+
+        results = await index_manager.random_search(None)
+        assert len(results) == 5
+        assert len({r.entry_id for r in results}) == 5
+
+    @pytest.mark.anyio
+    async def test_random_search_with_keyword(
+        self, index_manager: IndexManager
+    ) -> None:
+        """有关键词时在搜索结果中随机。"""
+        (Path(index_manager._memes_dir) / "cat.jpg").write_bytes(b"fake")
+        (Path(index_manager._memes_dir) / "加班.jpg").write_bytes(b"fake")
+        await index_manager.add("cat.jpg")
+        await index_manager.add("加班.jpg")
+
+        results = await index_manager.random_search("加班")
+        assert len(results) == 1
+        assert "加班" in results[0].text
+
+    @pytest.mark.anyio
+    async def test_random_search_keyword_no_match(
+        self, index_manager: IndexManager
+    ) -> None:
+        """关键词无匹配时返回空列表。"""
+        (Path(index_manager._memes_dir) / "cat.jpg").write_bytes(b"fake")
+        await index_manager.add("cat.jpg")
+
+        results = await index_manager.random_search("火星文")
+        assert results == []
+
+    @pytest.mark.anyio
+    async def test_random_search_empty_index(
+        self, index_manager: IndexManager
+    ) -> None:
+        results = await index_manager.random_search(None)
+        assert results == []
+
+    @pytest.mark.anyio
+    async def test_random_search_not_injected(
+        self, index_manager: IndexManager
+    ) -> None:
+        """未注入 RandomSearcher 时抛 RuntimeError。"""
+        (Path(index_manager._memes_dir) / "cat.jpg").write_bytes(b"fake")
+        await index_manager.add("cat.jpg")
+        index_manager._random_searcher = None
+        with pytest.raises(RuntimeError, match="RandomSearcher 未注入"):
+            await index_manager.random_search(None)
+
+
+class TestSemanticSearch:
+    @pytest.mark.anyio
+    async def test_semantic_search_returns_results(
+        self, index_manager: IndexManager
+    ) -> None:
+        """语义搜索返回候选列表。"""
+        (Path(index_manager._memes_dir) / "cat.jpg").write_bytes(b"fake")
+        (Path(index_manager._memes_dir) / "overtime.jpg").write_bytes(b"fake")
+        await index_manager.add("cat.jpg")
+        await index_manager.add("overtime.jpg")
+
+        results = await index_manager.semantic_search("加班相关")
+        assert isinstance(results, list)
+        assert len(results) > 0
+
+    @pytest.mark.anyio
+    async def test_semantic_search_empty_index(
+        self, index_manager: IndexManager
+    ) -> None:
+        results = await index_manager.semantic_search("任意描述")
+        assert results == []
+
+    @pytest.mark.anyio
+    async def test_semantic_search_zero_vector(
+        self, index_manager: IndexManager
+    ) -> None:
+        """embedding 返回零向量时抛 ValueError。"""
+
+        class ZeroEmbeddingProvider:
+            async def embed(self, text: str) -> list[float]:
+                return [0.0] * 1024
+
+        index_manager._embedding_provider = ZeroEmbeddingProvider()
+        with pytest.raises(ValueError, match="零向量"):
+            await index_manager.semantic_search("任意描述")
+
+    @pytest.mark.anyio
+    async def test_semantic_search_not_injected(
+        self, index_manager: IndexManager
+    ) -> None:
+        """未注入 SemanticSearcher 时抛 RuntimeError。"""
+        index_manager._semantic_searcher = None
+        with pytest.raises(RuntimeError, match="SemanticSearcher 未注入"):
+            await index_manager.semantic_search("任意描述")
