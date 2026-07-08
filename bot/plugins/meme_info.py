@@ -70,7 +70,7 @@ async def handle_info(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
             logger.warning("获取 CPU 信息失败", exc_info=True)
             cpu_text = "获取失败"
 
-        # 组装说话人排行（前 3）
+        # 组装说话人排行（前 10）
         ranking_lines: list[str] = []
         for idx, (speaker, count) in enumerate(info.speaker_ranking, start=1):
             speaker_name = speaker if speaker is not None else "无"
@@ -81,7 +81,7 @@ async def handle_info(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
 
         lines = [
             f"表情包数量：{info.entry_count}",
-            "排行（前 3）：",
+            "排行（前 10）：",
             *ranking_lines,
             f"当前机器人状态：{info.status}",
             f"内存占用：{mem_text}",

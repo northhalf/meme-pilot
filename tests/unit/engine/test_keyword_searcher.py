@@ -2,8 +2,9 @@
 
 import pytest
 
-from bot.engine.keyword_searcher import KeywordSearcher, SearchResult
+from bot.engine.keyword_searcher import KeywordSearcher
 from bot.engine.metadata_store import MemeEntry
+from bot.engine.types import SearchResult
 
 
 class MockMetadataStore:
@@ -73,7 +74,7 @@ class TestInit:
         assert KeywordSearcher(MockMetadataStore(), threshold=80.0)._threshold == 80.0
 
     def test_default_limit(self) -> None:
-        assert KeywordSearcher(MockMetadataStore())._limit == 10
+        assert KeywordSearcher(MockMetadataStore())._limit is None
 
     def test_custom_limit(self) -> None:
         assert KeywordSearcher(MockMetadataStore(), limit=5)._limit == 5
@@ -224,6 +225,17 @@ class TestSearchEdgeCases:
 
 
 class TestSearchResultOrder:
+    def test_default_limit_returns_all(self) -> None:
+        """limit 默认 None 时返回全部匹配（不截断到 10）。"""
+        entries = {
+            i: MemeEntry(id=i, image_path=f"m_{i}.jpg", text=f"加班第{i}天")
+            for i in range(1, 16)  # 15 条全部命中"加班"
+        }
+        s = KeywordSearcher(MockMetadataStore(entries))  # 默认 limit=None
+        results = s.search("加班")
+        assert len(results) == 15
+        assert all(r.similarity == 100.0 for r in results)
+
     def test_limit_truncation(self) -> None:
         entries = {
             i: MemeEntry(id=i, image_path=f"meme_{i}.jpg", text=f"加班第{i}天")

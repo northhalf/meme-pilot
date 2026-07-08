@@ -22,9 +22,9 @@ async def got_sim_selection(bot: Bot, event: MessageEvent, matcher: Matcher, sel
 
 - `auth.is_authorized()` — 授权校验
 - `app_state.get_index_manager()` — 获取 IndexManager 单例
-- `IndexManager.semantic_search(description)` — 语义搜索入口（锁外 embed，持读锁查询 VectorStore）
-- `_search_utils.dispatch_search_results()` — 统一结果分发（空/单/多结果分支）
-- `_search_utils.handle_got_selection()` — got 选择编号共享逻辑
+- `IndexManager.semantic_search(description, limit=None)` - 语义搜索入口（锁外 embed，持读锁查询 VectorStore 全库召回；显式 limit=None 全库召回以支持分页）
+- `_search_utils.dispatch_search_results()` - 统一结果分发（空/单/多结果分支，传入 SIM_OPTIONS 展示相似度+翻页）
+- `_search_utils.handle_got_selection()` - got 选择编号共享逻辑（含翻页）
 - `bot.session.session_manager` — 会话管理（activate_chat / deactivate_chat）
 
 ## 流程
@@ -36,7 +36,7 @@ async def got_sim_selection(bot: Bot, event: MessageEvent, matcher: Matcher, sel
 3. 提取描述文本（去除 `/sim` 前缀）
 4. 空描述文本检查：回复 "/sim <描述文本>"
 5. 获取 IndexManager
-6. 调用 `IndexManager.semantic_search(description)` 执行语义搜索（锁外 embed，内部持读锁）
+6. 调用 `IndexManager.semantic_search(description, limit=None)` 执行语义搜索（锁外 embed，内部持读锁，显式全库召回以支持分页）
 7. 空结果分支：回复"没有找到匹配的表情包 🙁"
 8. 调用 `dispatch_search_results()` 统一分发结果
 
@@ -48,10 +48,14 @@ async def got_sim_selection(bot: Bot, event: MessageEvent, matcher: Matcher, sel
 
 ```
 找到多个匹配的表情包，请选择：
-1. 加班到凌晨三点的我 -- 23, 小明, 吐槽, 加班
+1. 加班到凌晨三点的我 -- 23, 小明, 吐槽, 加班, 82%
+2. 心累的打工人 -- 45, 无, 76%
 ...
 回复编号即可 (1-10)
+回复 n 看下一页
 ```
+
+列表行末尾展示语义相似度百分比（ratio 量纲，0–1 归一为 0–100%）；多结果按每页 10 条分页，回复 `n` 看下一页，末页回复 `n` 提示"没有更多结果了"并保持当前页。选中后元数据行不含相似度。
 
 ## 错误处理
 

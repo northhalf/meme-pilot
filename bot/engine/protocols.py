@@ -6,6 +6,7 @@
 from typing import Protocol
 
 from .metadata_store import MemeEntry
+from .vector_store import VectorHit
 
 
 class EmbeddingProvider(Protocol):
@@ -34,9 +35,9 @@ class EmbeddingProvider(Protocol):
 class MetadataEntryProvider(Protocol):
     """元数据条目提供者协议。
 
-    消费者（如 AIMatcher、SemanticSearcher）通过此协议按 id 取 MemeEntry 构建候选，
+    消费者（如 AIMatcher）通过此协议按 id 取 MemeEntry 构建候选，
     而非直接依赖具体的 MetadataStore 实现，便于测试用 mock 替换。
-    与 keyword_searcher.MetadataStoreProvider（get_all_entries）接口不同，
+    与 MetadataStoreProvider（get_all_entries）接口不同，
     此协议只暴露消费者实际使用的 get_entry。
     """
 
@@ -48,5 +49,39 @@ class MetadataEntryProvider(Protocol):
 
         Returns:
             匹配的 MemeEntry；不存在时返回 None。
+        """
+        ...
+
+
+class MetadataStoreProvider(Protocol):
+    """元数据提供者协议。"""
+
+    def get_all_entries(self) -> dict[int, MemeEntry]:
+        """返回全部条目，key=int(id)。"""
+        ...
+
+
+class VectorQueryProvider(Protocol):
+    """向量查询提供者协议。
+
+    AIMatcher、SemanticSearcher 依赖此协议做向量召回，
+    而非直接依赖具体的 VectorStore 实现，便于测试用 mock 替换。
+    """
+
+    def count(self) -> int:
+        """返回当前向量数。"""
+        ...
+
+    async def query(
+        self, query_embedding: list[float], n_results: int | None = 10
+    ) -> list[VectorHit]:
+        """召回 Top-N。
+
+        Args:
+            query_embedding: 查询向量。
+            n_results: 召回数量上限；None 表示全库召回。
+
+        Returns:
+            按 similarity 降序排列的 VectorHit 列表。
         """
         ...

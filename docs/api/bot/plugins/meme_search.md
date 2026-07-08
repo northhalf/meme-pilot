@@ -33,20 +33,23 @@ async def got_selection(bot: Bot, event: MessageEvent, matcher: Matcher, selecti
 2. 会话覆盖检查（`session_manager.activate_chat`）
 3. 提取关键词（去除 `/search` 前缀）
 4. 空关键词检查
-5. 调用 `execute_search(bot, event, matcher, keyword)` 委托核心逻辑
+5. 调用 `execute_search(bot, event, matcher, keyword, options=SEARCH_OPTIONS)` 委托核心逻辑
 
 ### got_selection
 
-薄包装，委托 `_search_utils.handle_got_selection(bot, event, matcher, selection_msg, "/search")` 处理。详见 `docs/api/bot/plugins/_search_utils.md`。
+薄包装，委托 `_search_utils.handle_got_selection(bot, event, matcher, selection_msg, "/search", options=SEARCH_OPTIONS)` 处理。详见 `docs/api/bot/plugins/_search_utils.md`。
 
 ## 选择列表格式
 
 ```
 找到多个匹配的表情包，请选择：
-1. 加班到心累 -- 12, 无
-2. 加班使我快乐 -- 23, 小明, 吐槽, 加班
+1. 加班到心累 -- 12, 无, 100%
+2. 加班使我快乐 -- 23, 小明, 吐槽, 加班, 85%
 回复编号即可 (1-2)
+回复 n 看下一页
 ```
+
+列表行末尾展示关键词相似度百分比（score 量纲，0–100）；多结果按每页 10 条分页，回复 `n` 看下一页，末页回复 `n` 提示"没有更多结果了"并保持当前页。选中后元数据行不含相似度。
 
 命中单条或用户选择编号后，Bot 会先发送表情包图片，再发送一条元数据文本消息，格式为 `id, 无/说话人, tag1, tag2, ...`。
 

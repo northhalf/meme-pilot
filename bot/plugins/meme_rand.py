@@ -167,7 +167,14 @@ async def got_rand_selection(
 
                 session_manager.remove_selection(user_id)
                 await present_candidates(
-                    bot, event, matcher, new_results, prompt_suffix="回复 0 换一批"
+                    bot,
+                    event,
+                    matcher,
+                    new_results,
+                    page_index=0,
+                    total_pages=1,
+                    prompt_suffix="回复 0 换一批",
+                    use_reject=True,
                 )
                 return
 

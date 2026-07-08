@@ -146,7 +146,7 @@ class TestInfo:
     async def test_info_entry_count_and_ranking(
         self, index_manager: IndexManager
     ) -> None:
-        """返回正确的条目总数与 speaker 使用频率排行前三名。"""
+        """返回正确的条目总数与 speaker 使用频率排行（前 10，不足 10 则全返回）。"""
         metadata_store = index_manager._metadata_store
         # speaker 使用频次：甲 x4, 乙 x3, 丙 x2, None x1
         for _ in range(4):
@@ -161,8 +161,21 @@ class TestInfo:
 
         assert isinstance(info, IndexInfo)
         assert info.entry_count == 10
-        assert info.speaker_ranking == [("甲", 4), ("乙", 3), ("丙", 2)]
+        assert info.speaker_ranking == [("甲", 4), ("乙", 3), ("丙", 2), (None, 1)]
         assert info.status == "空闲"
+
+    @pytest.mark.anyio
+    async def test_info_ranking_truncates_to_ten(self, index_manager: IndexManager) -> None:
+        """speaker 种类超过 10 个时，排行截断到前 10。"""
+        metadata_store = index_manager._metadata_store
+        for i in range(12):
+            metadata_store.add(f"m{i}.jpg", f"文本{i}", speaker=f"speaker{i}")
+
+        info = await index_manager.info()
+
+        assert len(info.speaker_ranking) == 10
+        # 每个 speaker 各 1 条，排序稳定：按 count 降序、speaker 升序
+        assert info.speaker_ranking[0][1] == 1
 
     @pytest.mark.anyio
     async def test_info_status_processing(

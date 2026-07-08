@@ -21,7 +21,6 @@ from .ai_matcher import (
     AIMatchCandidate,
     AIMatchResult,
     RerankProvider,
-    VectorQueryProvider,
 )
 from .image_optimizer import ImageOptimizer, OptimizeResult
 from .index_manager import (
@@ -34,10 +33,11 @@ from .index_manager import (
     SyncResult,
     resolve_unique_filename,
 )
-from .keyword_searcher import KeywordSearcher, SearchResult
+from .keyword_searcher import KeywordSearcher
 from .metadata_store import MemeEntry, MetadataStore
-from .protocols import EmbeddingProvider, MetadataEntryProvider
+from .protocols import EmbeddingProvider, MetadataEntryProvider, VectorQueryProvider
 from .rerank_service import RerankService
+from .types import SearchResult
 from .vector_store import VectorHit, VectorStore
 
 # OCR providers（导入失败时标记为不可用）
@@ -93,12 +93,12 @@ __all__ = [
     "EmbeddingProvider",
     "MetadataEntryProvider",
     "OcrProvider",
+    "VectorQueryProvider",
     # ai_matcher
     "AIMatcher",
     "AIMatchCandidate",
     "AIMatchResult",
     "RerankProvider",
-    "VectorQueryProvider",
     # image_optimizer
     "ImageOptimizer",
     "OptimizeResult",

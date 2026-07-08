@@ -6,26 +6,7 @@
 
 ## Protocol
 
-> `MetadataEntryProvider` 已归一到 `protocols.py`，详见 [protocols.md](protocols.md)。
-
----
-
-### `VectorQueryProvider`
-
-```python
-class VectorQueryProvider(Protocol):
-    def count(self) -> int: ...
-    async def query(
-        self, query_embedding: list[float], n_results: int = 10
-    ) -> list[VectorHit]: ...
-```
-
-| 方法 | 参数 | 返回 | 说明 |
-|------|------|------|------|
-| `count` | 无 | `int` | 当前向量数 |
-| `query` | `query_embedding: list[float]`；`n_results: int = 10` | `list[VectorHit]` | 召回 Top-N，按 `similarity` 降序 |
-
-`AIMatcher` 依赖此协议做向量召回与空库判断，而非直接依赖具体的 `VectorStore` 实现，便于测试用 mock 替换。
+> `MetadataEntryProvider`、`VectorQueryProvider` 已归一到 `protocols.py`，详见 [protocols.md](protocols.md)。`VectorQueryProvider` 为 `ai_matcher` 与 `semantic_searcher` 共用的统一接口（`count` + `async query`）；本模块同时使用其 `count`（判空库）与 `query`（召回 Top-N）。
 
 ---
 

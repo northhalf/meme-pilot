@@ -4,13 +4,13 @@
 """
 
 import logging
-from dataclasses import dataclass, field
-from typing import Protocol
 
 import pylcs
 import jieba.posseg as pseg
 
-from bot.engine.metadata_store import MemeEntry
+from .metadata_store import MemeEntry
+from .protocols import MetadataStoreProvider
+from .types import SearchResult
 
 logger = logging.getLogger(__name__)
 
@@ -18,35 +18,6 @@ logger = logging.getLogger(__name__)
 # uj=助词(的/地/得), ul=语气词(了), uz=时态助词(着/了/过)
 # us=结构助词(所/得以), y=语气词(吗/呢/吧), e=叹词(嗯/哦)
 _PARTICLE_POS_TAGS: frozenset[str] = frozenset({"uj", "ul", "uz", "us", "y", "e"})
-
-
-class MetadataStoreProvider(Protocol):
-    """元数据提供者协议。"""
-
-    def get_all_entries(self) -> dict[int, MemeEntry]:
-        """返回全部条目，key=int(id)。"""
-        ...
-
-
-@dataclass
-class SearchResult:
-    """单条关键词搜索结果。
-
-    Attributes:
-        entry_id: 索引 id（int）。
-        image_path: memes/ 目录下相对路径。
-        text: OCR 文本（无空格）。
-        similarity: 相似度分数，0-100。
-        speaker: 说话人，可能为 None。
-        tags: 标记词列表。
-    """
-
-    entry_id: int
-    image_path: str
-    text: str
-    similarity: float
-    speaker: str | None = None
-    tags: list[str] = field(default_factory=list)
 
 
 def _remove_particles(text: str) -> str:
@@ -84,21 +55,21 @@ class KeywordSearcher:
 
     Attributes:
         threshold: 最低相似度阈值，默认 60。
-        limit: 最大返回结果数，默认 10。
+        limit: 最大返回结果数；None 表示返回全部匹配，默认 None。
     """
 
     def __init__(
         self,
         metadata_store: MetadataStoreProvider,
         threshold: float = 60.0,
-        limit: int = 10,
+        limit: int | None = None,
     ) -> None:
         """初始化关键词搜索引擎。
 
         Args:
             metadata_store: 元数据存储，需实现 get_all_entries() 方法。
             threshold: 最低相似度阈值，默认 60。
-            limit: 最大返回结果数，默认 10。
+            limit: 最大返回结果数；None 表示返回全部匹配，默认 None。
         """
         self._metadata_store = metadata_store
         self._threshold = threshold
@@ -198,7 +169,7 @@ class KeywordSearcher:
         1. 精确子串层：用「原始输入去所有空白、保留助词」的关键词做子串匹配；
            命中则只返回包含该子串的条目（similarity=100.0）。
         2. LCS 模糊回退层：仅当第一层未命中时启用，用「去助词+去空白」的关键词
-           走现有 LCS 模糊匹配（阈值 60，Top 10）。
+           走现有 LCS 模糊匹配（阈值 60，全量匹配）。
 
         Args:
             keyword: 用户输入的搜索关键词。
@@ -208,7 +179,8 @@ class KeywordSearcher:
             IndexManager.search() 负责持锁。
 
         Returns:
-            按相似度降序排列的搜索结果列表，最多返回 limit 条。无匹配时返回空列表。
+            按相似度降序排列的搜索结果列表；limit=None 时返回全部匹配，否则最多返回 limit 条。
+            无匹配时返回空列表。
         """
         keyword = keyword.strip()
         if not keyword:
@@ -231,7 +203,11 @@ class KeywordSearcher:
                 "关键词精确子串命中：keyword=%r, 命中=%d, 返回=%d",
                 keyword,
                 len(exact_results),
-                min(len(exact_results), self._limit),
+                (
+                    len(exact_results)
+                    if self._limit is None
+                    else min(len(exact_results), self._limit)
+                ),
             )
             return exact_results[: self._limit]
 
@@ -245,6 +221,6 @@ class KeywordSearcher:
             "关键词搜索完成：keyword=%r, 匹配=%d, 返回=%d",
             keyword,
             len(results),
-            min(len(results), self._limit),
+            len(results) if self._limit is None else min(len(results), self._limit),
         )
         return results[: self._limit]

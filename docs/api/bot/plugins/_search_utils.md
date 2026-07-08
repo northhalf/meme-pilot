@@ -2,6 +2,33 @@
 
 > 以下划线开头避免 NoneBot2 自动加载为插件。提供 `format_metadata_line`、`resolve_selection`、`present_candidates`、`dispatch_search_results`、`execute_search`、`handle_got_selection` 和 `got_intercept_bypass` 供各插件复用。
 
+## 常量与类型
+
+### `PAGE_SIZE: int = 10`
+
+每页展示的候选条数。
+
+### `NEXT_PAGE_TRIGGER: str = "n"`
+
+用户回复该词触发"下一页"。
+
+### `PresentOptions`（`@dataclass(frozen=True)`）
+
+候选展示选项，控制列表行相似度展示与翻页。
+
+| 字段 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `show_similarity` | `bool` | `False` | 是否在列表行末尾展示相似度百分比 |
+| `similarity_scale` | `Literal["ratio", "score"]` | `"score"` | 相似度量纲；`ratio`=0–1，`score`=0–100 |
+| `next_trigger` | `str \| None` | `None` | 下一页触发词；`None` 表示不支持翻页（如 `/rand`） |
+| `page_size` | `int` | `PAGE_SIZE` | 每页条数 |
+
+各命令传参：`/sim` 用 `show_similarity=True, similarity_scale="ratio", next_trigger="n"`；`/search` 与兜底搜索用 `show_similarity=True, similarity_scale="score", next_trigger="n"`；`/rand` 用默认值（不展示相似度、不翻页）。
+
+### `_similarity_percent(similarity, scale) -> int`
+
+把相似度归一为 0–100 整数百分比；`ratio` 乘 100，`score` 直接取整；clamp 到 `[0, 100]`。仅展示层归一，不改 `SearchResult.similarity` 存储语义。
+
 ## 函数
 
 ### `format_metadata_line(entry_id, speaker, tags) -> str`
@@ -18,9 +45,9 @@
 |------|------|
 | `str` | `tags` 为空时为 `id, 无/说话人`；否则为 `id, 无/说话人, tag1, tag2, ...`（speaker 缺失时显示为 `"无"`） |
 
-### `execute_search(bot, event, cmd_matcher, keyword) -> None`
+### `execute_search(bot, event, cmd_matcher, keyword, *, options=PresentOptions()) -> None`
 
-核心关键词搜索逻辑。流程：获取 IndexManager → 执行关键词搜索 → 通过 `dispatch_search_results` 统一分发结果（空/单/多结果）。单结果或用户完成选择时，先发送图片再发送 `format_metadata_line()` 元数据文本消息；多结果时注册 session 并启动超时任务。
+核心关键词搜索逻辑。流程：获取 IndexManager → 执行关键词搜索 → 通过 `dispatch_search_results` 统一分发结果（空/单/多结果，透传 `options`）。单结果或用户完成选择时，先发送图片再发送 `format_metadata_line()` 元数据文本消息；多结果时注册 session 并启动超时任务。
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
@@ -28,6 +55,7 @@
 | `event` | `MessageEvent` | 消息事件（兼容私聊和群聊@） |
 | `cmd_matcher` | `Matcher` | 调用方的 Matcher（用于 send/finish） |
 | `keyword` | `str` | 搜索关键词 |
+| `options` | `PresentOptions` | 展示选项（相似度与翻页），默认 `PresentOptions()` |
 
 | | 说明 |
 |--|------|
@@ -35,7 +63,7 @@
 
 多结果分支中，create_selection 后调用 `session_manager.reset_current_task()` 清除已结束的 handle task 引用。
 
-### `present_candidates(bot, event, cmd_matcher, candidates, *, prompt_suffix="") -> None`
+### `present_candidates(bot, event, cmd_matcher, candidates, *, options=PresentOptions(), page_index=0, total_pages=1, prompt_suffix="") -> None`
 
 展示候选列表并创建选择会话（仅处理多结果）。
 
@@ -44,12 +72,15 @@
 | `bot` | `Bot` | OneBot V11 Bot 实例 |
 | `event` | `MessageEvent` | 消息事件 |
 | `cmd_matcher` | `Matcher` | 调用方的 Matcher（用于 send） |
-| `candidates` | `list[SearchResult]` | 候选结果列表 |
+| `candidates` | `list[SearchResult]` | 当前页候选结果切片 |
+| `options` | `PresentOptions` | 展示选项（相似度与翻页） |
+| `page_index` | `int` | 当前页索引（从 0 开始），默认 0 |
+| `total_pages` | `int` | 总页数，默认 1 |
 | `prompt_suffix` | `str` | 附加在提示末尾的可选文本（如 `"回复 0 换一批"`） |
 
-流程：格式化候选列表（`format_metadata_line`）→ 存储 `candidates` 与 `selection_id` 到 `matcher.state` → send 列表 → 创建 `timeout_session` 超时任务 → `session_manager.create_selection` 注册选择会话 → `reset_current_task` 清理已结束的 handle task。
+流程：格式化候选列表（`format_metadata_line`，按 `options` 追加相似度百分比）-> 存储 `candidates` 与 `selection_id` 到 `matcher.state` -> send 列表（仅当 `page_index+1 < total_pages` 追加"回复 n 看下一页"）-> 创建 `timeout_session` 超时任务 -> `session_manager.create_selection` 注册选择会话 -> `reset_current_task` 清理已结束的 handle task。每次调用重置 `SESSION_EXPIRE_TIMEOUT`。
 
-### `dispatch_search_results(bot, event, cmd_matcher, results, *, prompt_suffix="") -> None`
+### `dispatch_search_results(bot, event, cmd_matcher, results, *, options=PresentOptions(), prompt_suffix="") -> None`
 
 统一处理搜索结果：空结果 → 单结果 → 多结果。
 
@@ -58,7 +89,8 @@
 | `bot` | `Bot` | OneBot V11 Bot 实例 |
 | `event` | `MessageEvent` | 消息事件 |
 | `cmd_matcher` | `Matcher` | 调用方的 Matcher（用于 send/finish） |
-| `results` | `list[SearchResult]` | 搜索结果列表 |
+| `results` | `list[SearchResult]` | 搜索结果全量列表 |
+| `options` | `PresentOptions` | 展示选项（相似度与翻页） |
 | `prompt_suffix` | `str` | 多结果时传给 `present_candidates` 的附加提示 |
 
 ### `resolve_selection(matcher, candidates, text) -> SearchResult | str`
@@ -76,7 +108,7 @@
 | `SearchResult` | 选择成功时返回对应结果 |
 | `str` | 错误消息（无效编号、candidates 为空等） |
 
-### `handle_got_selection(bot, event, matcher, selection_msg, error_label) -> None`
+### `handle_got_selection(bot, event, matcher, selection_msg, error_label="搜索", *, options=PresentOptions()) -> None`
 
 处理 got 选择编号的共享逻辑。供 `meme_search.py`、`meme_sim.py` 和 `meme_plain_text.py` 的 `got("selection")` 包装器调用。
 
@@ -87,12 +119,13 @@
 | `matcher` | `Matcher` | NoneBot2 Matcher 实例 |
 | `selection_msg` | `Message` | 用户回复的选择编号消息 |
 | `error_label` | `str` | 异常日志中的操作标签，默认"搜索" |
+| `options` | `PresentOptions` | 展示选项（相似度与翻页） |
 
 | 返回 | 说明 |
 |------|------|
 | `None` | 通过 `matcher.finish()` 直接回复 |
 
-逻辑：got 入口通过 `handler_context` 更新 current_task → `/help`/`/cancel` 旁路拦截 → 选择会话检查 → `resolve_selection` → 发送图片 → 发送 `format_metadata_line()` 元数据行 → 清理会话。
+逻辑：got 入口通过 `handler_context` 更新 current_task -> `/help`/`/cancel` 旁路拦截 -> 选择会话检查 -> `next_trigger` 命中则翻页（切下一页调 `present_candidates` 重置超时；末页 `reject("没有更多结果了")` 保持当前页）-> 否则 `resolve_selection` -> 发送图片 -> 发送 `format_metadata_line()` 元数据行 -> 清理会话。
 
 ### `got_intercept_bypass(user_id, matcher, text, help_text) -> bool`
 

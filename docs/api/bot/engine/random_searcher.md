@@ -32,7 +32,7 @@ class RandomSearcher:
 
 ## 依赖协议
 
-- `keyword_searcher.MetadataStoreProvider` — 需要 `get_all_entries()` 获取全量条目（全库随机时使用）
+- `protocols.MetadataStoreProvider` — 需要 `get_all_entries()` 获取全量条目（全库随机时使用）
 - `KeywordSearcher.search()` — 关键词搜索（有关键词时使用）
 
 ## 行为说明

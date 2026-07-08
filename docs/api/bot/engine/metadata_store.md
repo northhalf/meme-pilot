@@ -97,7 +97,7 @@ CREATE INDEX IF NOT EXISTS idx_meme_tag_tag ON meme_tag(tag);
 |--|------|------|
 | **返回** | `dict[int, MemeEntry]` | key 为 `int(id)`，value 为 `MemeEntry`；`tags` 从 `meme_tag` 组装 |
 
-实现 `keyword_searcher.MetadataStoreProvider` 协议。
+实现 `protocols.MetadataStoreProvider` 协议。
 
 ---
 

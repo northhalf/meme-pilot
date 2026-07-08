@@ -14,7 +14,7 @@ import re
 import openai
 from openai import AsyncOpenAI
 
-from bot.engine.ai_matcher import AIMatchCandidate
+from .ai_matcher import AIMatchCandidate
 from .retry_config import api_retry
 
 logger = logging.getLogger(__name__)

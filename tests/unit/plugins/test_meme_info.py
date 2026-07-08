@@ -154,9 +154,45 @@ class TestHandleInfoNormalReply:
         assert "表情包数量：256" in reply
         assert "1. Alice 100" in reply
         assert "2. Bob 50" in reply
+        assert "排行（前 10）：" in reply
         assert "当前机器人状态：正在处理命令" in reply
         assert "内存占用：1024 MB / 4096 MB (25.0%)" in reply
         assert "CPU占用：12.5%" in reply
+
+    @pytest.mark.asyncio
+    @patch("bot.plugins.meme_info.psutil.cpu_percent", return_value=12.5)
+    @patch("bot.plugins.meme_info.psutil.virtual_memory")
+    @patch("bot.plugins.meme_info.get_index_manager")
+    @patch.object(meme_info, "is_authorized", return_value=True)
+    async def test_ranking_renders_top_ten(
+        self,
+        mock_auth: MagicMock,
+        mock_get_index_manager: MagicMock,
+        mock_virtual_memory: MagicMock,
+        mock_cpu_percent: MagicMock,
+    ) -> None:
+        """speaker 排行 10 项时全部渲染。"""
+        mock_index_manager = MagicMock()
+        mock_index_manager.info = AsyncMock(
+            return_value=IndexInfo(
+                entry_count=100,
+                speaker_ranking=[(f"s{i}", 10 - i) for i in range(10)],
+                status="空闲",
+            )
+        )
+        mock_get_index_manager.return_value = mock_index_manager
+        mem_mock = MagicMock()
+        mem_mock.used = 512 * 1024 * 1024
+        mem_mock.total = 2048 * 1024 * 1024
+        mem_mock.percent = 25.0
+        mock_virtual_memory.return_value = mem_mock
+
+        matcher = _make_matcher()
+        await handle_info(_make_bot(), _make_event(), matcher)
+
+        reply = matcher.finish.call_args[0][0]
+        assert "排行（前 10）：" in reply
+        assert "10. s9 1" in reply
 
     @pytest.mark.asyncio
     @patch("bot.plugins.meme_info.psutil.cpu_percent", side_effect=RuntimeError("cpu fail"))

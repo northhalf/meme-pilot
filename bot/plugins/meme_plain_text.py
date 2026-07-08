@@ -21,10 +21,19 @@ from nonebot.rule import to_me
 
 from bot.auth import is_authorized, log_unauthorized
 from bot.plugins._help_text import HELP_TEXT
-from bot.plugins._search_utils import execute_search, handle_got_selection
+from bot.plugins._search_utils import (
+    NEXT_PAGE_TRIGGER,
+    PresentOptions,
+    execute_search,
+    handle_got_selection,
+)
 from bot.session import session_manager
 
 logger = logging.getLogger(__name__)
+
+SEARCH_OPTIONS = PresentOptions(
+    show_similarity=True, similarity_scale="score", next_trigger=NEXT_PAGE_TRIGGER
+)
 
 # ---------------------------------------------------------------------------
 # 兜底：纯文本 → /search；未知斜杠命令 → 回复帮助摘要
@@ -65,7 +74,7 @@ async def handle_plain_text(bot: Bot, event: MessageEvent, matcher: Matcher) -> 
             await matcher.finish("已有命令在处理中，请先 /cancel")
             return
 
-        await execute_search(bot, event, matcher, text)
+        await execute_search(bot, event, matcher, text, options=SEARCH_OPTIONS)
     except asyncio.CancelledError:
         raise FinishedException
 
@@ -77,4 +86,6 @@ async def got_selection(
     matcher: Matcher,
     selection_msg: Message = Arg("selection"),
 ) -> None:
-    await handle_got_selection(bot, event, matcher, selection_msg, "兜底搜索")
+    await handle_got_selection(
+        bot, event, matcher, selection_msg, "兜底搜索", options=SEARCH_OPTIONS
+    )

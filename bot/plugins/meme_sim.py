@@ -16,12 +16,18 @@ from nonebot.rule import to_me
 from bot.app_state import get_index_manager
 from bot.auth import is_authorized, log_unauthorized
 from bot.plugins._search_utils import (
+    NEXT_PAGE_TRIGGER,
+    PresentOptions,
     dispatch_search_results,
     handle_got_selection,
 )
 from bot.session import session_manager
 
 logger = logging.getLogger(__name__)
+
+SIM_OPTIONS = PresentOptions(
+    show_similarity=True, similarity_scale="ratio", next_trigger=NEXT_PAGE_TRIGGER
+)
 
 sim_cmd = on_command("sim", rule=to_me(), priority=5, block=True)
 
@@ -75,14 +81,16 @@ async def handle_sim(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
 
         # 执行语义搜索
         try:
-            results = await index_manager.semantic_search(description)
+            results = await index_manager.semantic_search(description, limit=None)
         except asyncio.TimeoutError:
             logger.info("用户 %s 的 /sim 等待读锁超时", user_id)
             session_manager.deactivate_chat(user_id)
             await matcher.finish("索引更新较慢，请稍后再试")
             return
         except ValueError:
-            logger.warning("用户 %s 的 /sim embedding 异常: description=%r", user_id, description)
+            logger.warning(
+                "用户 %s 的 /sim embedding 异常: description=%r", user_id, description
+            )
             session_manager.deactivate_chat(user_id)
             await matcher.finish("AI 服务暂时不可用，稍后重试")
             return
@@ -98,7 +106,7 @@ async def handle_sim(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
             await matcher.finish("没有找到匹配的表情包 🙁")
             return
 
-        await dispatch_search_results(bot, event, matcher, results)
+        await dispatch_search_results(bot, event, matcher, results, options=SIM_OPTIONS)
     except asyncio.CancelledError:
         session_manager.deactivate_chat(user_id)
         raise FinishedException
@@ -119,4 +127,6 @@ async def got_sim_selection(
         matcher: NoneBot2 Matcher 实例。
         selection_msg: 用户回复的选择编号消息。
     """
-    await handle_got_selection(bot, event, matcher, selection_msg, "/sim")
+    await handle_got_selection(
+        bot, event, matcher, selection_msg, "/sim", options=SIM_OPTIONS
+    )

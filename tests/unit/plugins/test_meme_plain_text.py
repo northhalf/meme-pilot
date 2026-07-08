@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from bot.engine.keyword_searcher import SearchResult
+from bot.engine.types import SearchResult
 
 # ---------------------------------------------------------------------------
 # 在导入插件前 mock nonebot.on_message，
@@ -167,3 +167,41 @@ class TestHandlePlainTextAsSearch:
 
         _mock_message.finish.assert_not_called()
         bot.send.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# 兜底传参 options 测试
+# ---------------------------------------------------------------------------
+
+
+class TestHandlePlainTextOptions:
+    """兜底搜索传参 options 测试。"""
+
+    @pytest.mark.asyncio
+    @patch.object(meme_plain_text, "execute_search", new_callable=AsyncMock)
+    @patch.object(meme_plain_text.session_manager, "activate_chat", return_value=True)
+    @patch.object(meme_plain_text, "is_authorized", return_value=True)
+    async def test_plain_text_passes_score_options(
+        self,
+        mock_auth: MagicMock,
+        mock_activate: MagicMock,
+        mock_exec: AsyncMock,
+    ) -> None:
+        """兜底搜索应传 show_similarity=True、scale=score、next_trigger=n。
+
+        Args:
+            mock_auth: is_authorized 的 mock。
+            mock_activate: activate_chat 的 mock。
+            mock_exec: 替换 execute_search 的 AsyncMock。
+        """
+        _reset_mocks()
+
+        await handle_plain_text(
+            _make_bot(), _make_event("111", "加班"), _make_matcher()
+        )
+
+        mock_exec.assert_awaited_once()
+        opts = mock_exec.call_args.kwargs["options"]
+        assert opts.show_similarity is True
+        assert opts.similarity_scale == "score"
+        assert opts.next_trigger == "n"

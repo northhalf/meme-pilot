@@ -18,12 +18,13 @@ from bot.config import read_add_command_timeout, read_read_lock_timeout
 from bot.session import session_manager
 from .ai_matcher import AIMatcher, AIMatchResult
 from .image_optimizer import OptimizeResult
-from .keyword_searcher import KeywordSearcher, SearchResult
+from .keyword_searcher import KeywordSearcher
 from .metadata_store import MemeEntry
 from .protocols import EmbeddingProvider
 from .random_searcher import RandomSearcher
 from .rwlock import IndexRwLock
 from .semantic_searcher import SemanticSearcher
+from .types import SearchResult
 from .utils import vector_norm
 from .vector_store import VectorHit
 
@@ -466,15 +467,15 @@ class IndexManager:
                 raise RuntimeError("RandomSearcher 未注入")
             return self._random_searcher.search_random(keyword)
 
-    async def semantic_search(self, description: str, limit: int = 10) -> list[SearchResult]:
+    async def semantic_search(self, description: str, limit: int | None = 10) -> list[SearchResult]:
         """语义搜索入口。锁外 embed，持读锁查询。
 
         Args:
             description: 用户自然语言描述。
-            limit: 返回结果数量上限，默认 10。
+            limit: 返回结果数量上限；None 表示全库召回，默认 10。
 
         Returns:
-            语义相似度 Top-N SearchResult 列表；空库时返回空列表。
+            语义相似度 SearchResult 列表；空库时返回空列表。
 
         Raises:
             asyncio.TimeoutError: 等待读锁超时。
@@ -782,7 +783,7 @@ class IndexManager:
         speaker_ranking = sorted(
             speaker_counts.items(),
             key=lambda item: (-item[1], item[0] or ""),
-        )[:3]
+        )[:10]
 
         if self._refresh_active:
             status = "正在刷新索引"

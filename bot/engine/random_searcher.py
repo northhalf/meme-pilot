@@ -3,11 +3,9 @@
 import logging
 import random
 
-from bot.engine.keyword_searcher import (
-    KeywordSearcher,
-    MetadataStoreProvider,
-    SearchResult,
-)
+from .keyword_searcher import KeywordSearcher
+from .protocols import MetadataStoreProvider
+from .types import SearchResult
 
 logger = logging.getLogger(__name__)
 

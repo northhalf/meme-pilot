@@ -19,10 +19,19 @@ from nonebot.params import Arg
 from nonebot.rule import to_me
 
 from bot.auth import is_authorized, log_unauthorized
-from bot.plugins._search_utils import execute_search, handle_got_selection
+from bot.plugins._search_utils import (
+    NEXT_PAGE_TRIGGER,
+    PresentOptions,
+    execute_search,
+    handle_got_selection,
+)
 from bot.session import session_manager
 
 logger = logging.getLogger(__name__)
+
+SEARCH_OPTIONS = PresentOptions(
+    show_similarity=True, similarity_scale="score", next_trigger=NEXT_PAGE_TRIGGER
+)
 
 search_cmd = on_command("search", rule=to_me(), priority=5, block=True)
 
@@ -63,7 +72,7 @@ async def handle_search(bot: Bot, event: MessageEvent, matcher: Matcher) -> None
             return
 
         logger.info("用户 %s 搜索关键词: %r", user_id, keyword)
-        await execute_search(bot, event, matcher, keyword)
+        await execute_search(bot, event, matcher, keyword, options=SEARCH_OPTIONS)
     except asyncio.CancelledError:
         session_manager.deactivate_chat(user_id)
         raise FinishedException
@@ -76,4 +85,6 @@ async def got_selection(
     matcher: Matcher,
     selection_msg: Message = Arg("selection"),
 ) -> None:
-    await handle_got_selection(bot, event, matcher, selection_msg, "/search")
+    await handle_got_selection(
+        bot, event, matcher, selection_msg, "/search", options=SEARCH_OPTIONS
+    )

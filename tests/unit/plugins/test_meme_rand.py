@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from bot.engine.keyword_searcher import SearchResult
+from bot.engine.types import SearchResult
 
 # ---------------------------------------------------------------------------
 # 在导入插件前 mock nonebot.on_command，避免 NoneBot2 完整初始化。
@@ -210,6 +210,11 @@ class TestGotRandSelection:
             mock_present.assert_awaited_once()
             args = mock_present.call_args
             assert args.kwargs.get("prompt_suffix") == "回复 0 换一批"
+            # 换一批补齐 page_index=0, total_pages=1（单页，不翻页）
+            assert args.kwargs.get("page_index") == 0
+            assert args.kwargs.get("total_pages") == 1
+            # 换一批在 got 内，必须用 reject 重新等待，否则 matcher 结束
+            assert args.kwargs.get("use_reject") is True
 
     @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.resolve_selection")
@@ -240,3 +245,45 @@ class TestGotRandSelection:
             mock_remove_sel.assert_called_once_with("12345")
             matcher.send.assert_awaited_once()
             matcher.finish.assert_awaited_once()
+
+
+# ===========================================================================
+# /rand 传参 options 测试
+# ===========================================================================
+
+
+class TestHandleRandOptions:
+    """/rand 传参 options 测试。"""
+
+    @pytest.mark.asyncio
+    @patch.object(meme_rand.session_manager, "activate_chat", return_value=True)
+    @patch.object(meme_rand, "is_authorized", return_value=True)
+    @patch.object(meme_rand, "dispatch_search_results", new_callable=AsyncMock)
+    async def test_rand_uses_default_options(
+        self,
+        mock_dispatch: AsyncMock,
+        mock_auth: MagicMock,
+        mock_activate: MagicMock,
+    ) -> None:
+        """/rand 不显式传 options（用默认 PresentOptions，不展示相似度/不翻页）。
+
+        mock 无法捕获函数默认参数，故断言不显式传 options；
+        默认 PresentOptions（show_similarity=False、next_trigger=None）
+        的字段值由 _search_utils 单元测试保证。
+
+        Args:
+            mock_dispatch: 替换 dispatch_search_results 的 AsyncMock。
+            mock_auth: is_authorized 的 mock。
+            mock_activate: activate_chat 的 mock。
+        """
+        with patch.object(meme_rand, "get_index_manager") as mock_get_im:
+            mock_get_im.return_value.random_search = AsyncMock(
+                return_value=[_make_search_result()]
+            )
+            await handle_rand(_make_bot(), _make_event(), _make_matcher())
+
+            mock_dispatch.assert_awaited_once()
+            kwargs = mock_dispatch.call_args.kwargs
+            # /rand 不显式传 options，使用 dispatch_search_results 的默认 PresentOptions()
+            assert "options" not in kwargs
+            assert kwargs["prompt_suffix"] == "回复 0 换一批"

@@ -68,6 +68,13 @@ class TestUpsertAndQuery:
         hits = await store.query([0.0, 0.0], n_results=3)
         assert len(hits) == 3
 
+    async def test_query_none_returns_all(self, store: VectorStore) -> None:
+        """n_results=None 时返回全库所有向量。"""
+        for i in range(5):
+            await store.upsert(i, [float(i), 0.0])
+        hits = await store.query([0.0, 0.0], n_results=None)
+        assert len(hits) == 5
+
 
 class TestRemove:
     async def test_remove_existing(self, store: VectorStore) -> None:

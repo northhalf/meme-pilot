@@ -103,12 +103,12 @@ class VectorHit:
 
 ---
 
-### `async query(query_embedding: list[float], n_results: int = 10) -> list[VectorHit]`
+### `async query(query_embedding: list[float], n_results: int | None = 10) -> list[VectorHit]`
 
 | 参数 | 类型 | 默认 | 说明 |
 |------|------|------|------|
 | `query_embedding` | `list[float]` | 必填 | 查询向量 |
-| `n_results` | `int` | `10` | 召回条数 |
+| `n_results` | `int \| None` | `10` | 召回条数上限；`None` 表示全库召回（取 `count()`） |
 
 | | 类型 | 说明 |
 |--|------|------|

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from nonebot.exception import RejectedException
 
-from bot.engine.keyword_searcher import SearchResult
+from bot.engine.types import SearchResult
 
 
 def _make_search_result(
@@ -180,6 +180,133 @@ class TestPresentCandidates:
         sent_text = cmd.send.call_args[0][0]
         assert "回复 0 换一批" in sent_text
 
+    @pytest.mark.asyncio
+    @patch("bot.plugins._search_utils.session_manager.create_selection")
+    @patch("bot.plugins._search_utils.timeout_session", new_callable=AsyncMock)
+    async def test_show_similarity_score_appends_percent(
+        self, mock_timeout: AsyncMock, mock_create_selection: MagicMock
+    ) -> None:
+        """score 量纲下列表行末尾追加百分比。"""
+        from bot.plugins._search_utils import PresentOptions, present_candidates
+
+        candidates = [_make_search_result(entry_id=1, text="甲", similarity=82.0)]
+        cmd = _make_matcher()
+        cmd.state = {}
+        opts = PresentOptions(show_similarity=True, similarity_scale="score", next_trigger="n")
+
+        await present_candidates(_make_bot(), _make_event("111"), cmd, candidates, options=opts)
+
+        sent_text = cmd.send.call_args[0][0]
+        assert "1. 甲 -- 1, 无, 82%" in sent_text
+
+    @pytest.mark.asyncio
+    @patch("bot.plugins._search_utils.session_manager.create_selection")
+    @patch("bot.plugins._search_utils.timeout_session", new_callable=AsyncMock)
+    async def test_show_similarity_ratio_appends_percent(
+        self, mock_timeout: AsyncMock, mock_create_selection: MagicMock
+    ) -> None:
+        """ratio 量纲下 0.82 -> 82%。"""
+        from bot.plugins._search_utils import PresentOptions, present_candidates
+
+        candidates = [_make_search_result(entry_id=1, text="甲", similarity=0.82)]
+        cmd = _make_matcher()
+        cmd.state = {}
+        opts = PresentOptions(show_similarity=True, similarity_scale="ratio", next_trigger="n")
+
+        await present_candidates(_make_bot(), _make_event("111"), cmd, candidates, options=opts)
+
+        assert "82%" in cmd.send.call_args[0][0]
+
+    @pytest.mark.asyncio
+    @patch("bot.plugins._search_utils.session_manager.create_selection")
+    @patch("bot.plugins._search_utils.timeout_session", new_callable=AsyncMock)
+    async def test_next_page_hint_shown_when_has_next(
+        self, mock_timeout: AsyncMock, mock_create_selection: MagicMock
+    ) -> None:
+        """有下一页时追加"回复 n 看下一页"。"""
+        from bot.plugins._search_utils import PresentOptions, present_candidates
+
+        candidates = [_make_search_result(entry_id=1, text="甲")]
+        cmd = _make_matcher()
+        cmd.state = {}
+        opts = PresentOptions(next_trigger="n")
+
+        await present_candidates(
+            _make_bot(), _make_event("111"), cmd, candidates,
+            options=opts, page_index=0, total_pages=3,
+        )
+
+        assert "回复 n 看下一页" in cmd.send.call_args[0][0]
+
+    @pytest.mark.asyncio
+    @patch("bot.plugins._search_utils.session_manager.create_selection")
+    @patch("bot.plugins._search_utils.timeout_session", new_callable=AsyncMock)
+    async def test_next_page_hint_hidden_on_last_page(
+        self, mock_timeout: AsyncMock, mock_create_selection: MagicMock
+    ) -> None:
+        """末页不追加"回复 n 看下一页"。"""
+        from bot.plugins._search_utils import PresentOptions, present_candidates
+
+        candidates = [_make_search_result(entry_id=1, text="甲")]
+        cmd = _make_matcher()
+        cmd.state = {}
+        opts = PresentOptions(next_trigger="n")
+
+        await present_candidates(
+            _make_bot(), _make_event("111"), cmd, candidates,
+            options=opts, page_index=2, total_pages=3,
+        )
+
+        assert "回复 n 看下一页" not in cmd.send.call_args[0][0]
+
+    @pytest.mark.asyncio
+    @patch("bot.plugins._search_utils.session_manager.create_selection")
+    @patch("bot.plugins._search_utils.timeout_session", new_callable=AsyncMock)
+    async def test_default_options_no_similarity_no_next_hint(
+        self, mock_timeout: AsyncMock, mock_create_selection: MagicMock
+    ) -> None:
+        """/rand 默认 options：无相似度、无"回复 n"。"""
+        from bot.plugins._search_utils import present_candidates
+
+        candidates = [_make_search_result(entry_id=1, text="甲", similarity=0.0)]
+        cmd = _make_matcher()
+        cmd.state = {}
+
+        await present_candidates(
+            _make_bot(), _make_event("111"), cmd, candidates,
+            page_index=0, total_pages=1, prompt_suffix="回复 0 换一批",
+        )
+
+        sent_text = cmd.send.call_args[0][0]
+        assert "%" not in sent_text
+        assert "回复 n 看下一页" not in sent_text
+        assert "回复 0 换一批" in sent_text
+
+    @pytest.mark.asyncio
+    @patch("bot.plugins._search_utils.session_manager.create_selection")
+    @patch("bot.plugins._search_utils.timeout_session", new_callable=AsyncMock)
+    async def test_use_reject_calls_reject_not_send(
+        self, mock_timeout: AsyncMock, mock_create_selection: MagicMock
+    ) -> None:
+        """use_reject=True 时用 matcher.reject 重新等待，而非 send。
+
+        守护 got handler 内换一批/翻页后 matcher 不结束、可继续交互。
+        """
+        from bot.plugins._search_utils import present_candidates
+
+        candidates = [_make_search_result(entry_id=1, text="甲")]
+        cmd = _make_matcher()
+        cmd.state = {}
+
+        await present_candidates(
+            _make_bot(), _make_event("111"), cmd, candidates, use_reject=True
+        )
+
+        cmd.reject.assert_awaited_once()
+        cmd.send.assert_not_awaited()
+        # 选择会话在 reject 之前创建
+        mock_create_selection.assert_called_once()
+
 
 class TestDispatchSearchResults:
     """dispatch_search_results 测试。"""
@@ -227,26 +354,60 @@ class TestDispatchSearchResults:
     async def test_multiple_results_calls_present_candidates(
         self, mock_present: AsyncMock
     ) -> None:
-        """多结果时应调用 present_candidates 并传递 prompt_suffix。"""
-        from bot.plugins._search_utils import dispatch_search_results
+        """多结果时应存分页状态、切第 1 页并传 options/prompt_suffix。"""
+        from bot.plugins._search_utils import dispatch_search_results, PresentOptions
 
         results = [
-            _make_search_result(entry_id=1, text="甲"),
-            _make_search_result(entry_id=2, text="乙"),
+            _make_search_result(entry_id=i, text=f"甲{i}") for i in range(1, 4)
         ]
         cmd = _make_matcher()
+        opts = PresentOptions(show_similarity=True, similarity_scale="score", next_trigger="n")
 
         await dispatch_search_results(
             _make_bot(),
             _make_event("111"),
             cmd,
             results,
+            options=opts,
             prompt_suffix="回复 0 换一批",
         )
 
         mock_present.assert_awaited_once()
-        args = mock_present.call_args
-        assert args.kwargs.get("prompt_suffix") == "回复 0 换一批"
+        kwargs = mock_present.call_args.kwargs
+        assert kwargs["options"] is opts
+        assert kwargs["page_index"] == 0
+        assert kwargs["total_pages"] == 1
+        assert kwargs["prompt_suffix"] == "回复 0 换一批"
+        # 第 1 页切片
+        assert mock_present.call_args.args[3] == results[0:10]
+        # 分页状态
+        assert cmd.state["all_results"] == results
+        assert cmd.state["page_index"] == 0
+        assert cmd.state["total_pages"] == 1
+
+    @pytest.mark.asyncio
+    @patch(
+        "bot.plugins._search_utils.present_candidates", new_callable=AsyncMock
+    )
+    async def test_multiple_results_paginates_when_over_page_size(
+        self, mock_present: AsyncMock
+    ) -> None:
+        """结果数 > page_size 时切第 1 页，total_pages 正确。"""
+        from bot.plugins._search_utils import dispatch_search_results, PresentOptions
+
+        results = [
+            _make_search_result(entry_id=i, text=f"甲{i}") for i in range(1, 26)
+        ]  # 25 条
+        cmd = _make_matcher()
+        opts = PresentOptions(next_trigger="n")  # page_size=10
+
+        await dispatch_search_results(_make_bot(), _make_event("111"), cmd, results, options=opts)
+
+        kwargs = mock_present.call_args.kwargs
+        assert kwargs["page_index"] == 0
+        assert kwargs["total_pages"] == 3
+        assert len(mock_present.call_args.args[3]) == 10  # 第 1 页 10 条
+        assert cmd.state["total_pages"] == 3
 
 
 class TestExecuteSearch:
@@ -326,14 +487,14 @@ class TestExecuteSearch:
 
     @pytest.mark.asyncio
     @patch(
-        "bot.plugins._search_utils.present_candidates", new_callable=AsyncMock
+        "bot.plugins._search_utils.dispatch_search_results", new_callable=AsyncMock
     )
     @patch("bot.plugins._search_utils.get_index_manager")
-    async def test_multiple_results_delegates_to_present_candidates(
-        self, mock_get_im: MagicMock, mock_present: AsyncMock
+    async def test_multiple_results_delegates_to_dispatch(
+        self, mock_get_im: MagicMock, mock_dispatch: AsyncMock
     ) -> None:
-        """多个结果时应委托给 present_candidates。"""
-        from bot.plugins._search_utils import execute_search
+        """多个结果时应委托给 dispatch_search_results 并透传 options。"""
+        from bot.plugins._search_utils import execute_search, PresentOptions
 
         results = [
             _make_search_result(entry_id=1, text="甲"),
@@ -343,12 +504,11 @@ class TestExecuteSearch:
         bot = _make_bot()
         event = _make_event("111")
         cmd = _make_matcher()
+        opts = PresentOptions(show_similarity=True, similarity_scale="score", next_trigger="n")
 
-        await execute_search(bot, event, cmd, "加班")
+        await execute_search(bot, event, cmd, "加班", options=opts)
 
-        mock_present.assert_awaited_once_with(
-            bot, event, cmd, results, prompt_suffix=""
-        )
+        mock_dispatch.assert_awaited_once_with(bot, event, cmd, results, options=opts)
 
     @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.get_index_manager")
@@ -451,3 +611,199 @@ class TestFormatMetadataLine:
         """speaker 和 tags 都为空时只显示 id 和"无"。"""
         from bot.plugins._search_utils import format_metadata_line
         assert format_metadata_line(12, None, []) == "12, 无"
+
+
+class TestSimilarityPercent:
+    """_similarity_percent 量纲归一测试。"""
+
+    def test_ratio_to_percent(self) -> None:
+        """ratio 量纲 0–1 乘 100 后取整。"""
+        from bot.plugins._search_utils import _similarity_percent
+        assert _similarity_percent(0.82, "ratio") == 82
+        assert _similarity_percent(1.0, "ratio") == 100
+        assert _similarity_percent(0.0, "ratio") == 0
+
+    def test_score_to_percent(self) -> None:
+        """score 量纲 0–100 直接取整。"""
+        from bot.plugins._search_utils import _similarity_percent
+        assert _similarity_percent(82.0, "score") == 82
+        assert _similarity_percent(100.0, "score") == 100
+        assert _similarity_percent(60.0, "score") == 60
+
+    def test_clamp_out_of_range(self) -> None:
+        """越界值 clamp 到 [0, 100]。"""
+        from bot.plugins._search_utils import _similarity_percent
+        assert _similarity_percent(1.05, "ratio") == 100  # 浮点越界 clamp
+        assert _similarity_percent(-0.1, "ratio") == 0
+        assert _similarity_percent(105.0, "score") == 100  # score 量纲越界 clamp
+
+
+class TestPresentOptionsDefaults:
+    """PresentOptions 默认值 = /rand 行为。"""
+
+    def test_defaults(self) -> None:
+        """PresentOptions 默认值匹配 /rand 零回归行为。"""
+        from bot.plugins._search_utils import PresentOptions, PAGE_SIZE, NEXT_PAGE_TRIGGER
+        opts = PresentOptions()
+        assert opts.show_similarity is False
+        assert opts.similarity_scale == "score"
+        assert opts.next_trigger is None
+        assert opts.page_size == PAGE_SIZE == 10
+        assert NEXT_PAGE_TRIGGER == "n"
+
+
+class TestHandleGotSelectionPagination:
+    """handle_got_selection 翻页测试。"""
+
+    @pytest.mark.asyncio
+    @patch("bot.plugins._search_utils.session_manager.handler_context")
+    @patch("bot.plugins._search_utils.present_candidates", new_callable=AsyncMock)
+    @patch("bot.plugins._search_utils.session_manager.remove_selection")
+    @patch("bot.plugins._search_utils.session_manager.get_selection")
+    @patch("bot.plugins._search_utils.got_intercept_bypass", new_callable=AsyncMock)
+    async def test_next_trigger_advances_page(
+        self,
+        mock_bypass: AsyncMock,
+        mock_get_selection: MagicMock,
+        mock_remove_selection: MagicMock,
+        mock_present: AsyncMock,
+        mock_ctx: MagicMock,
+    ) -> None:
+        """回复 n 且有下一页时，page_index +1 并重渲染。"""
+        from contextlib import contextmanager
+
+        from bot.plugins._search_utils import handle_got_selection, PresentOptions
+
+        mock_bypass.return_value = False
+        mock_get_selection.return_value = MagicMock()  # selection 有效
+        all_results = [
+            _make_search_result(entry_id=i, text=f"甲{i}") for i in range(1, 26)
+        ]
+        matcher = _make_matcher()
+        matcher.state = {
+            "all_results": all_results,
+            "page_index": 0,
+            "total_pages": 3,
+            "candidates": all_results[0:10],
+        }
+        event = _make_event("111")
+        event.get_plaintext.return_value = "n"
+        msg = MagicMock()
+        msg.extract_plain_text.return_value = "n"
+        opts = PresentOptions(
+            show_similarity=True, similarity_scale="score", next_trigger="n"
+        )
+
+        @contextmanager
+        def _ctx(uid, m):
+            yield
+
+        mock_ctx.side_effect = _ctx
+
+        await handle_got_selection(
+            _make_bot(), event, matcher, msg, "搜索", options=opts
+        )
+
+        assert matcher.state["page_index"] == 1
+        mock_present.assert_awaited_once()
+        assert mock_present.call_args.kwargs["page_index"] == 1
+        assert len(mock_present.call_args.args[3]) == 10  # 第 2 页 10 条
+        # 翻页在 got 内，必须用 reject 重新等待，否则 matcher 结束
+        assert mock_present.call_args.kwargs["use_reject"] is True
+
+    @pytest.mark.asyncio
+    @patch("bot.plugins._search_utils.session_manager.handler_context")
+    @patch("bot.plugins._search_utils.session_manager.get_selection")
+    @patch("bot.plugins._search_utils.got_intercept_bypass", new_callable=AsyncMock)
+    async def test_next_trigger_on_last_page_rejects(
+        self,
+        mock_bypass: AsyncMock,
+        mock_get_selection: MagicMock,
+        mock_ctx: MagicMock,
+    ) -> None:
+        """末页回复 n 时 reject"没有更多结果了"，page_index 不变。"""
+        from contextlib import contextmanager
+
+        from bot.plugins._search_utils import handle_got_selection, PresentOptions
+
+        mock_bypass.return_value = False
+        mock_get_selection.return_value = MagicMock()
+        all_results = [
+            _make_search_result(entry_id=i, text=f"甲{i}") for i in range(1, 4)
+        ]
+        matcher = _make_matcher()
+        matcher.state = {
+            "all_results": all_results,
+            "page_index": 0,
+            "total_pages": 1,
+            "candidates": all_results,
+        }
+        event = _make_event("111")
+        event.get_plaintext.return_value = "n"
+        msg = MagicMock()
+        msg.extract_plain_text.return_value = "n"
+        opts = PresentOptions(next_trigger="n")
+
+        @contextmanager
+        def _ctx(uid, m):
+            yield
+
+        mock_ctx.side_effect = _ctx
+
+        await handle_got_selection(
+            _make_bot(), event, matcher, msg, "搜索", options=opts
+        )
+
+        matcher.reject.assert_awaited_once()
+        assert "没有更多结果了" in matcher.reject.call_args[0][0]
+        assert matcher.state["page_index"] == 0
+
+    @pytest.mark.asyncio
+    @patch("bot.plugins._search_utils.MessageSegment")
+    @patch("bot.plugins._search_utils.session_manager.remove_selection")
+    @patch("bot.plugins._search_utils.session_manager.get_selection")
+    @patch("bot.plugins._search_utils.got_intercept_bypass", new_callable=AsyncMock)
+    async def test_valid_selection_sends_image_without_similarity(
+        self,
+        mock_bypass: AsyncMock,
+        mock_get_selection: MagicMock,
+        mock_remove_selection: MagicMock,
+        mock_segment: MagicMock,
+    ) -> None:
+        """有效编号选中后发图 + 元数据行（不含相似度）。
+
+        本测试不 patch handler_context，走真实 session_manager 实现
+        （与现有 TestGotInterceptBypass 一致）。handler_context 仅存储
+        matcher 引用，不会调用 matcher 方法，故与 MagicMock matcher 兼容。
+        """
+        from bot.plugins._search_utils import handle_got_selection, PresentOptions
+
+        mock_bypass.return_value = False
+        mock_get_selection.return_value = MagicMock()
+        candidate = _make_search_result(
+            entry_id=7, image_path="a.jpg", speaker="小明", similarity=82.0
+        )
+        matcher = _make_matcher()
+        matcher.state = {
+            "candidates": [candidate],
+            "page_index": 0,
+            "total_pages": 1,
+            "all_results": [candidate],
+        }
+        event = _make_event("111")
+        event.get_plaintext.return_value = "1"
+        msg = MagicMock()
+        msg.extract_plain_text.return_value = "1"
+        opts = PresentOptions(
+            show_similarity=True, similarity_scale="score", next_trigger="n"
+        )
+
+        await handle_got_selection(
+            _make_bot(), event, matcher, msg, "搜索", options=opts
+        )
+
+        matcher.send.assert_awaited_once()
+        matcher.finish.assert_awaited_once()
+        finished_text = matcher.finish.call_args[0][0]
+        assert "7, 小明" in finished_text
+        assert "%" not in finished_text

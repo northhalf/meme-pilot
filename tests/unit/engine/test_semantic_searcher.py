@@ -13,15 +13,22 @@ class MockMetadataStore:
     def __init__(self, entries: dict[int, MemeEntry]) -> None:
         self._entries = entries
 
-    def get_entry(self, entry_id: int) -> MemeEntry | None:
-        return self._entries.get(entry_id)
+    def get_all_entries(self) -> dict[int, MemeEntry]:
+        return self._entries
 
 
 class MockVectorStore:
     def __init__(self, hits: list[VectorHit]) -> None:
         self._hits = hits
 
-    async def query(self, query_embedding: list[float], n_results: int = 10) -> list[VectorHit]:
+    def count(self) -> int:
+        return len(self._hits)
+
+    async def query(
+        self, query_embedding: list[float], n_results: int | None = 10
+    ) -> list[VectorHit]:
+        if n_results is None:
+            return list(self._hits)
         return self._hits[:n_results]
 
 
@@ -81,3 +88,21 @@ async def test_search_semantic_respects_limit(sample_entries: dict[int, MemeEntr
     assert len(results) == 2
     assert results[0].entry_id == 1
     assert results[1].entry_id == 2
+
+
+@pytest.mark.asyncio
+async def test_search_semantic_limit_none_returns_all(
+    sample_entries: dict[int, MemeEntry],
+) -> None:
+    """limit=None 时全库召回，不截断。"""
+    hits = [
+        VectorHit(entry_id=1, similarity=0.95),
+        VectorHit(entry_id=2, similarity=0.85),
+        VectorHit(entry_id=3, similarity=0.75),
+    ]
+    searcher = SemanticSearcher(MockMetadataStore(sample_entries), MockVectorStore(hits))
+
+    results = await searcher.search_semantic([0.1] * 1024, limit=None)
+
+    assert len(results) == 3
+    assert [r.entry_id for r in results] == [1, 2, 3]

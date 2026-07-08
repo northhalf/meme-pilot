@@ -172,21 +172,24 @@ class VectorStore:
         await asyncio.to_thread(self._remove_many_sync, entry_ids)
 
     def _query_sync(
-        self, query_embedding: list[float], n_results: int
+        self, query_embedding: list[float], n_results: int | None
     ) -> list[VectorHit]:
         """同步召回 Top-N（内部持 _lock，entry_id 转 int 返回）。
 
         Args:
             query_embedding: 查询向量。
-            n_results: 召回条数上限。
+            n_results: 召回条数上限；None 表示全库召回。
 
         Returns:
             按 similarity 降序排列的 VectorHit 列表；collection 为空时返回 []。
         """
         with self._lock:
             collection = self._require_collection()
-            if collection.count() == 0:
+            total = collection.count()
+            if total == 0:
                 return []
+            if n_results is None or n_results > total:
+                n_results = total
             result = collection.query(
                 query_embeddings=[query_embedding],
                 n_results=n_results,
@@ -201,13 +204,13 @@ class VectorStore:
         return hits
 
     async def query(
-        self, query_embedding: list[float], n_results: int = 10
+        self, query_embedding: list[float], n_results: int | None = 10
     ) -> list[VectorHit]:
         """召回 Top-N，entry_id 转 int 返回。
 
         Args:
             query_embedding: 查询向量。
-            n_results: 召回条数上限，默认 10。
+            n_results: 召回条数上限，默认 10；None 表示全库召回。
 
         Returns:
             按 similarity 降序排列的 VectorHit 列表；collection 为空时返回 []。

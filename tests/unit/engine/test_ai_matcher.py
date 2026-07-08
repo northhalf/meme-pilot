@@ -22,9 +22,11 @@ class MockVectorStore:
         self._count = count
         self._error = error
 
-    async def query(self, query_embedding: list[float], n_results: int = 10) -> list[VectorHit]:
+    async def query(self, query_embedding: list[float], n_results: int | None = 10) -> list[VectorHit]:
         if self._error is not None:
             raise self._error
+        if n_results is None:
+            return list(self._hits)
         return self._hits[:n_results]
 
     def count(self) -> int:
@@ -180,9 +182,9 @@ class TestEmbeddingRecall:
         class CountingVectorStore(MockVectorStore):
             def __init__(self) -> None:
                 super().__init__(hits=[VectorHit(1, 0.9)], count=1)
-                self.last_n: int = 0
+                self.last_n: int | None = 0
 
-            async def query(self, query_embedding, n_results=10):
+            async def query(self, query_embedding: list[float], n_results: int | None = 10) -> list[VectorHit]:
                 self.last_n = n_results
                 return await super().query(query_embedding, n_results)
 

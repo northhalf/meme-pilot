@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from bot.engine.keyword_searcher import SearchResult
+from bot.engine.types import SearchResult
 
 _mock_cmd = MagicMock()
 _mock_cmd.handle.return_value = lambda fn: fn
@@ -85,7 +85,7 @@ class TestHandleSimDelegation:
 
             await handle_sim(_make_bot(), _make_event(text="/sim 心累的加班"), _make_matcher())
 
-            mock_semantic.assert_awaited_once_with("心累的加班")
+            mock_semantic.assert_awaited_once_with("心累的加班", limit=None)
 
     @pytest.mark.asyncio
     @patch.object(meme_sim.session_manager, "activate_chat", return_value=True)
@@ -162,3 +162,37 @@ class TestHandleSimErrors:
             await handle_sim(_make_bot(), _make_event(), matcher)
 
             matcher.finish.assert_awaited_once_with("AI 服务暂时不可用，稍后重试")
+
+
+class TestHandleSimOptions:
+    """/sim 传参 options 测试。"""
+
+    @pytest.mark.asyncio
+    @patch.object(meme_sim.session_manager, "activate_chat", return_value=True)
+    @patch.object(meme_sim, "is_authorized", return_value=True)
+    @patch.object(meme_sim, "dispatch_search_results", new_callable=AsyncMock)
+    async def test_sim_passes_ratio_options(
+        self,
+        mock_dispatch: AsyncMock,
+        mock_auth: MagicMock,
+        mock_activate: MagicMock,
+    ) -> None:
+        """/sim 应传 show_similarity=True、scale=ratio、next_trigger=n。
+
+        Args:
+            mock_dispatch: 替换 dispatch_search_results 的 AsyncMock。
+            mock_auth: is_authorized 的 mock。
+            mock_activate: activate_chat 的 mock。
+        """
+        with patch.object(meme_sim, "get_index_manager") as mock_get_im:
+            mock_get_im.return_value.semantic_search = AsyncMock(
+                return_value=[_make_search_result()]
+            )
+
+            await handle_sim(_make_bot(), _make_event(), _make_matcher())
+
+            mock_dispatch.assert_awaited_once()
+            opts = mock_dispatch.call_args.kwargs["options"]
+            assert opts.show_similarity is True
+            assert opts.similarity_scale == "ratio"
+            assert opts.next_trigger == "n"

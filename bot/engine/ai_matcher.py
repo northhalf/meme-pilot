@@ -8,7 +8,7 @@ from dataclasses import dataclass, field, replace
 from typing import Protocol
 
 from .metadata_store import MemeEntry
-from .protocols import EmbeddingProvider, MetadataEntryProvider
+from .protocols import EmbeddingProvider, MetadataEntryProvider, VectorQueryProvider
 from .utils import vector_norm
 from .vector_store import VectorHit
 
@@ -36,32 +36,6 @@ class AIMatchCandidate:
     similarity: float
     speaker: str | None = None
     tags: list[str] = field(default_factory=list)
-
-
-class VectorQueryProvider(Protocol):
-    """向量查询提供者协议。
-
-    AIMatcher 依赖此协议做向量召回与空库判断，
-    而非直接依赖具体的 VectorStore 实现，便于测试用 mock 替换。
-    """
-
-    def count(self) -> int:
-        """返回当前向量数。"""
-        ...
-
-    async def query(
-        self, query_embedding: list[float], n_results: int = 10
-    ) -> list[VectorHit]:
-        """召回 Top-N。
-
-        Args:
-            query_embedding: 查询向量。
-            n_results: 召回数量上限。
-
-        Returns:
-            按 similarity 降序排列的 VectorHit 列表。
-        """
-        ...
 
 
 class RerankProvider(Protocol):

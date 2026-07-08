@@ -30,6 +30,7 @@ from bot.engine.keyword_searcher import KeywordSearcher
 from bot.engine.metadata_store import MemeEntry
 from bot.engine.random_searcher import RandomSearcher
 from bot.engine.semantic_searcher import SemanticSearcher
+from bot.engine.vector_store import VectorHit
 
 # 哨兵值，区分「不修改字段」与显式的 None
 _UNSET = object()
@@ -156,14 +157,14 @@ class FakeVectorStore:
         for i in entry_ids:
             self._vecs.pop(i, None)
 
-    async def query(self, query_embedding, n_results=10) -> list:
-        from bot.engine.vector_store import VectorHit
-
+    async def query(self, query_embedding: list[float], n_results: int | None = 10) -> list[VectorHit]:
         sims = [
             (eid, sum(a * b for a, b in zip(query_embedding, vec)))
             for eid, vec in self._vecs.items()
         ]
         sims.sort(key=lambda x: -x[1])
+        if n_results is None:
+            return [VectorHit(entry_id=eid, similarity=s) for eid, s in sims]
         return [VectorHit(entry_id=eid, similarity=s) for eid, s in sims[:n_results]]
 
     async def rebuild_all(self, items) -> None:

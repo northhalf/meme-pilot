@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from bot.engine.keyword_searcher import SearchResult
+from bot.engine.types import SearchResult
 
 # ---------------------------------------------------------------------------
 # 在导入插件前 mock nonebot.on_command，避免 NoneBot2 完整初始化。
@@ -212,7 +212,36 @@ class TestHandleSearchDelegation:
 
         await handle_search(bot, event, matcher)
 
-        mock_exec.assert_awaited_once_with(bot, event, matcher, "测试关键词")
+        mock_exec.assert_awaited_once()
+        # options 由 test_search_passes_score_options 专门验证；此处只校验 positional 委托
+        assert mock_exec.call_args[0] == (bot, event, matcher, "测试关键词")
+
+    @pytest.mark.asyncio
+    @patch.object(meme_search, "execute_search", new_callable=AsyncMock)
+    @patch.object(meme_search.session_manager, "activate_chat", return_value=True)
+    @patch.object(meme_search, "is_authorized", return_value=True)
+    async def test_search_passes_score_options(
+        self,
+        mock_auth: MagicMock,
+        mock_activate: MagicMock,
+        mock_exec: AsyncMock,
+    ) -> None:
+        """/search 应传 show_similarity=True、scale=score、next_trigger=n。
+
+        Args:
+            mock_auth: is_authorized 的 mock。
+            mock_activate: activate_chat 的 mock。
+            mock_exec: 替换 execute_search 的 AsyncMock。
+        """
+        await handle_search(
+            _make_bot(), _make_event(text="/search 测试"), _make_matcher()
+        )
+
+        mock_exec.assert_awaited_once()
+        opts = mock_exec.call_args.kwargs["options"]
+        assert opts.show_similarity is True
+        assert opts.similarity_scale == "score"
+        assert opts.next_trigger == "n"
 
 
 # ===========================================================================
