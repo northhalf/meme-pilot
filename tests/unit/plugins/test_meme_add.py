@@ -257,6 +257,39 @@ class TestDownloadImageRetry:
         assert mock_client.get.await_count == 2
 
     @pytest.mark.asyncio
+    async def test_remote_protocol_error_retries_and_succeeds(self) -> None:
+        """服务端中途断连（RemoteProtocolError）应重试，最终成功时返回内容。
+
+        RemoteProtocolError 属于 ProtocolError 分支而非 NetworkError 子类，
+        用于回归「Server disconnected without sending a response」未重试的问题。
+        """
+        good_response = MagicMock()
+        good_response.status_code = 200
+        good_response.headers = {"content-type": "image/jpeg"}
+        good_response.content = b"fake_image"
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.get = AsyncMock(
+            side_effect=[
+                httpx.RemoteProtocolError(
+                    "Server disconnected without sending a response."
+                ),
+                good_response,
+            ]
+        )
+
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            content, response = await meme_add._download_image(
+                "https://img.example.com/a.jpg"
+            )
+
+        assert content == b"fake_image"
+        assert response is good_response
+        assert mock_client.get.await_count == 2
+
+    @pytest.mark.asyncio
     async def test_5xx_exhausts_retries_and_fails(self) -> None:
         """5xx 持续返回时，重试耗尽后抛出 DownloadServerError。"""
         bad_response = MagicMock()

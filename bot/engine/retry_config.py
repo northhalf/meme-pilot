@@ -27,8 +27,9 @@ def api_retry(
 ):
     """网络请求通用重试装饰器工厂。
 
-    默认重试：httpx 网络/连接/超时异常、Python 内置 ConnectionError / TimeoutError，
-    以及调用方传入的额外异常（如 OpenAI API 异常）。
+    默认重试：httpx 网络/连接/超时异常、服务端中途断连（RemoteProtocolError）、
+    Python 内置 ConnectionError / TimeoutError，以及调用方传入的额外异常
+    （如 OpenAI API 异常）。
 
     不重试：ValueError、FileNotFoundError 等本地/业务异常。
     """
@@ -36,6 +37,7 @@ def api_retry(
         httpx.NetworkError,
         httpx.ConnectError,
         httpx.TimeoutException,
+        httpx.RemoteProtocolError,
         ConnectionError,
         TimeoutError,
     ) + extra_exceptions

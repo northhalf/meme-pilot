@@ -4,16 +4,10 @@ import logging
 from typing import Protocol
 
 from bot.engine.keyword_searcher import SearchResult
-from bot.engine.metadata_store import MemeEntry
+from bot.engine.protocols import MetadataEntryProvider
 from bot.engine.vector_store import VectorHit
 
 logger = logging.getLogger(__name__)
-
-
-class MetadataEntryProvider(Protocol):
-    """按 id 取 MemeEntry 的协议。"""
-
-    def get_entry(self, entry_id: int) -> MemeEntry | None: ...
 
 
 class VectorQueryProvider(Protocol):

@@ -44,6 +44,7 @@ def api_retry(
 - `httpx.NetworkError`
 - `httpx.ConnectError`
 - `httpx.TimeoutException`
+- `httpx.RemoteProtocolError`（服务端中途断连，属 `ProtocolError` 分支，非 `NetworkError` 子类）
 - `ConnectionError`
 - `TimeoutError`
 - `extra_exceptions` 中传入的异常（如 `openai.APIConnectionError`、`google.genai.errors.APIError` 等）

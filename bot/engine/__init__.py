@@ -20,7 +20,6 @@ from .ai_matcher import (
     AIMatcher,
     AIMatchCandidate,
     AIMatchResult,
-    MetadataEntryProvider,
     RerankProvider,
     VectorQueryProvider,
 )
@@ -37,7 +36,7 @@ from .index_manager import (
 )
 from .keyword_searcher import KeywordSearcher, SearchResult
 from .metadata_store import MemeEntry, MetadataStore
-from .protocols import EmbeddingProvider
+from .protocols import EmbeddingProvider, MetadataEntryProvider
 from .rerank_service import RerankService
 from .vector_store import VectorHit, VectorStore
 
@@ -68,7 +67,10 @@ except ImportError as exc:
 
 # Embedding providers
 try:
-    from .openai_embedding import OpenAIEmbeddingService, create_openai_embedding_service
+    from .openai_embedding import (
+        OpenAIEmbeddingService,
+        create_openai_embedding_service,
+    )
 
     register_embedding("openai", create_openai_embedding_service)
 except ImportError as exc:
@@ -76,7 +78,10 @@ except ImportError as exc:
     logger.warning("OpenAI Embedding provider 不可用: %s", exc)
 
 try:
-    from .google_embedding import GoogleEmbeddingService, create_google_embedding_service
+    from .google_embedding import (
+        GoogleEmbeddingService,
+        create_google_embedding_service,
+    )
 
     register_embedding("google", create_google_embedding_service)
 except ImportError as exc:
@@ -86,12 +91,12 @@ except ImportError as exc:
 __all__ = [
     # protocols
     "EmbeddingProvider",
+    "MetadataEntryProvider",
     "OcrProvider",
     # ai_matcher
     "AIMatcher",
     "AIMatchCandidate",
     "AIMatchResult",
-    "MetadataEntryProvider",
     "RerankProvider",
     "VectorQueryProvider",
     # image_optimizer

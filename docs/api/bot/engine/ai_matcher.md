@@ -6,18 +6,7 @@
 
 ## Protocol
 
-### `MetadataEntryProvider`
-
-```python
-class MetadataEntryProvider(Protocol):
-    def get_entry(self, entry_id: int) -> MemeEntry | None: ...
-```
-
-| 方法 | 参数 | 返回 | 说明 |
-|------|------|------|------|
-| `get_entry` | `entry_id: int` — 索引 id | `MemeEntry \| None` | 按 id 取条目；不存在返回 `None` |
-
-`AIMatcher` 依赖此协议按 id 取 `MemeEntry` 构建候选，而非直接依赖具体的 `MetadataStore` 实现，便于测试用 mock 替换。与 `keyword_searcher.MetadataStoreProvider`（`get_all_entries`）接口不同，此协议只暴露 `AIMatcher` 实际使用的 `get_entry`。
+> `MetadataEntryProvider` 已归一到 `protocols.py`，详见 [protocols.md](protocols.md)。
 
 ---
 

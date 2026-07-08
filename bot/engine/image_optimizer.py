@@ -7,6 +7,7 @@
 import asyncio
 import logging
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -157,11 +158,52 @@ class ImageOptimizer:
                 saved=saved,
             )
 
-    def _compress_jpeg(self, path: Path, original_size: int) -> int:
-        """压缩 JPEG 文件。
+    def _ensure_rgb(self, img: Image.Image) -> Image.Image:
+        """非 RGB 模式转 RGB，否则原样返回。
 
-        去除 EXIF/元数据，以高质量重新编码。
-        非 RGB 模式自动转换。
+        Args:
+            img: 已打开的 PIL 图片对象。
+
+        Returns:
+            RGB 模式的 Image（若需转换则返回新对象）。
+        """
+        if img.mode != "RGB":
+            return img.convert("RGB")
+        return img
+
+    def _compress_simple(
+        self,
+        path: Path,
+        original_size: int,
+        *,
+        format: str,
+        preprocess: Callable[[Image.Image], Image.Image] | None = None,
+        **save_kwargs: Any,
+    ) -> int:
+        """通用压缩骨架：打开 -> 可选预处理 -> 原子保存 -> 关闭。
+
+        Args:
+            path: 图片文件路径。
+            original_size: 原始文件大小（字节）。
+            format: PIL 保存格式（如 "JPEG"/"PNG"/"WEBP"）。
+            preprocess: 可选预处理函数，接收 Image 返回 Image（如模式转换）。
+            **save_kwargs: 传递给 _atomic_save 的保存参数。
+
+        Returns:
+            最终文件大小（字节）。若压缩后更大则保留原文件并返回原始大小。
+        """
+        img = Image.open(path)
+        try:
+            if preprocess is not None:
+                img = preprocess(img)
+            return self._atomic_save(
+                img, path, original_size, format=format, **save_kwargs
+            )
+        finally:
+            img.close()
+
+    def _compress_jpeg(self, path: Path, original_size: int) -> int:
+        """压缩 JPEG：去 EXIF/元数据，非 RGB 转 RGB，高质量重编码。
 
         Args:
             path: JPEG 文件路径。
@@ -170,26 +212,18 @@ class ImageOptimizer:
         Returns:
             最终文件大小（字节）。若压缩后更大则保留原文件并返回原始大小。
         """
-        img = Image.open(path)
-        try:
-            if img.mode != "RGB":
-                img = img.convert("RGB")
-            return self._atomic_save(
-                img,
-                path,
-                original_size,
-                format="JPEG",
-                quality=self._jpeg_quality,
-                optimize=True,
-                progressive=True,
-            )
-        finally:
-            img.close()
+        return self._compress_simple(
+            path,
+            original_size,
+            format="JPEG",
+            preprocess=self._ensure_rgb,
+            quality=self._jpeg_quality,
+            optimize=True,
+            progressive=True,
+        )
 
     def _compress_png(self, path: Path, original_size: int) -> int:
-        """压缩 PNG 文件。
-
-        以 optimize=True 重新保存，像素数据不变（真正无损）。
+        """压缩 PNG：以 optimize=True 重新保存，像素数据不变（真正无损）。
 
         Args:
             path: PNG 文件路径。
@@ -198,18 +232,10 @@ class ImageOptimizer:
         Returns:
             最终文件大小（字节）。若压缩后更大则保留原文件并返回原始大小。
         """
-        img = Image.open(path)
-        try:
-            return self._atomic_save(
-                img, path, original_size, format="PNG", optimize=True
-            )
-        finally:
-            img.close()
+        return self._compress_simple(path, original_size, format="PNG", optimize=True)
 
     def _compress_webp(self, path: Path, original_size: int) -> int:
-        """压缩 WebP 文件。
-
-        以无损模式重新编码（lossless=True, method=6）。
+        """压缩 WebP：无损模式重编码（lossless=True, method=6）。
 
         Args:
             path: WebP 文件路径。
@@ -218,19 +244,14 @@ class ImageOptimizer:
         Returns:
             最终文件大小（字节）。若压缩后更大则保留原文件并返回原始大小。
         """
-        img = Image.open(path)
-        try:
-            return self._atomic_save(
-                img,
-                path,
-                original_size,
-                format="WEBP",
-                lossless=True,
-                quality=self._webp_quality,
-                method=6,
-            )
-        finally:
-            img.close()
+        return self._compress_simple(
+            path,
+            original_size,
+            format="WEBP",
+            lossless=True,
+            quality=self._webp_quality,
+            method=6,
+        )
 
     def _compress_gif(self, path: Path, original_size: int) -> int:
         """压缩 GIF 文件。

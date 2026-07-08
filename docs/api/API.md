@@ -60,6 +60,11 @@ class EmbeddingProvider(Protocol):  # 无 @runtime_checkable
     async def embed(self, text: str) -> list[float]  # 1024 维
 ```
 
+```python
+class MetadataEntryProvider(Protocol):  # 无 @runtime_checkable
+    def get_entry(self, entry_id: int) -> MemeEntry | None  # 按 id 取条目
+```
+
 ### `docs/api/bot/engine/ai_matcher.md`
 
 ```python

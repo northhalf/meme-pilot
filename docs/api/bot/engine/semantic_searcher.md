@@ -4,11 +4,9 @@
 
 ## 本地依赖协议
 
-```python
-class MetadataEntryProvider(Protocol):
-    """按 id 取 MemeEntry 的协议。"""
-    def get_entry(self, entry_id: int) -> MemeEntry | None: ...
+`MetadataEntryProvider` 已归一到 `protocols.py`（详见 [protocols.md](protocols.md)），此处仅保留 `SemanticSearcher` 独有的 `VectorQueryProvider`。
 
+```python
 class VectorQueryProvider(Protocol):
     """向量查询协议。"""
     async def query(

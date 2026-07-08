@@ -295,7 +295,7 @@ class TestResolveUniqueFilename:
     def test_conflict_appends_suffix(self, tmp_path: Path) -> None:
         (tmp_path / "a.jpg").write_text("x")
         p = resolve_unique_filename(tmp_path, "a.jpg")
-        assert p == tmp_path / "a_2.jpg"
+        assert p == tmp_path / "a_1.jpg"
 
 
 # ---------------------------------------------------------------------------
@@ -493,7 +493,7 @@ class TestAdd:
     async def test_add_duplicate_archives_old_image_with_unique_name(
         self, index_manager: IndexManager
     ) -> None:
-        """多次替换同名旧图时，memes_replaced/ 中应生成 _2、_3 等不冲突文件名。"""
+        """多次替换同名旧图时，memes_replaced/ 中应生成 _1、_2 等不冲突文件名。"""
 
         class ConstantOcrProvider:
             async def ocr(self, image_path: str) -> str:
@@ -516,8 +516,8 @@ class TestAdd:
         archived = await index_manager._run_sync(
             index_manager._move_to_replaced, "old.jpg"
         )
-        assert archived == str(replaced_dir / "old_2.jpg")
-        assert (replaced_dir / "old_2.jpg").exists()
+        assert archived == str(replaced_dir / "old_1.jpg")
+        assert (replaced_dir / "old_1.jpg").exists()
 
     @pytest.mark.anyio
     async def test_add_duplicate_upsert_failure_rolls_back_speaker_and_tags(

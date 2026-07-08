@@ -8,7 +8,7 @@ from dataclasses import dataclass, field, replace
 from typing import Protocol
 
 from .metadata_store import MemeEntry
-from .protocols import EmbeddingProvider
+from .protocols import EmbeddingProvider, MetadataEntryProvider
 from .utils import vector_norm
 from .vector_store import VectorHit
 
@@ -36,27 +36,6 @@ class AIMatchCandidate:
     similarity: float
     speaker: str | None = None
     tags: list[str] = field(default_factory=list)
-
-
-class MetadataEntryProvider(Protocol):
-    """元数据条目提供者协议。
-
-    AIMatcher 依赖此协议按 id 取 MemeEntry 构建候选，
-    而非直接依赖具体的 MetadataStore 实现，便于测试用 mock 替换。
-    与 keyword_searcher.MetadataStoreProvider（get_all_entries）接口不同，
-    此协议只暴露 AIMatcher 实际使用的 get_entry。
-    """
-
-    def get_entry(self, entry_id: int) -> MemeEntry | None:
-        """按 id 取条目。
-
-        Args:
-            entry_id: 索引 id。
-
-        Returns:
-            匹配的 MemeEntry；不存在时返回 None。
-        """
-        ...
 
 
 class VectorQueryProvider(Protocol):

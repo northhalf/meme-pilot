@@ -45,7 +45,7 @@ def resolve_unique_filename(target_dir: Path, filename: str) -> Path:
         return candidate
     stem = Path(filename).stem
     suffix = Path(filename).suffix
-    for n in itertools.count(2):
+    for n in itertools.count(1):
         candidate = target_dir / f"{stem}_{n}{suffix}"
         if not candidate.exists():
             return candidate
@@ -1050,7 +1050,9 @@ class IndexManager:
 
                 src = self._memes_dir / entry.image_path
                 if src.exists():
-                    dst = self._resolve_unique_deleted_path(entry.image_path)
+                    dst = resolve_unique_filename(
+                        self._deleted_dir, Path(entry.image_path).name
+                    )
                     dst.parent.mkdir(parents=True, exist_ok=True)
                     src.rename(dst)
 
@@ -1064,29 +1066,6 @@ class IndexManager:
             not_found_ids=not_found_ids,
             failed_ids=failed_ids,
         )
-
-    def _resolve_unique_deleted_path(self, image_path: str) -> Path:
-        """生成 memes_deleted/ 下的唯一目标路径（冲突时追加 _n）。
-
-        Args:
-            image_path: 原始图片相对路径（memes/ 下文件名）。
-
-        Returns:
-            memes_deleted/ 下不冲突的完整路径。
-        """
-        dst = self._deleted_dir / Path(image_path).name
-        if not dst.exists():
-            return dst
-
-        stem = dst.stem
-        suffix = dst.suffix
-        parent = dst.parent
-        n = 1
-        while True:
-            candidate = parent / f"{stem}_{n}{suffix}"
-            if not candidate.exists():
-                return candidate
-            n += 1
 
     def _move_to_replaced(self, filename: str) -> str:
         """将被替换的文件移动到 memes_replaced/ 目录。
