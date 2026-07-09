@@ -17,7 +17,7 @@
 import logging
 import sqlite3
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +63,7 @@ class DuplicateEntryError(sqlite3.IntegrityError):
         super().__init__(f"重复字段冲突: {detail}")
 
 
-@dataclass
+@dataclass(frozen=True)
 class MemeEntry:
     """单条表情包元数据。
 
@@ -102,6 +102,7 @@ class MetadataStore:
         self._conn: sqlite3.Connection | None = None
         self._lock = threading.Lock()
         self._text_to_id: dict[str, int] = {}
+        self._entries: dict[int, MemeEntry] = {}
 
     def load(self) -> None:
         """打开连接、建表/索引、重建 _text_to_id。
@@ -122,14 +123,33 @@ class MetadataStore:
             for stmt in _SCHEMA:
                 self._conn.execute(stmt)
             self._conn.commit()
+            rows = list(
+                self._conn.execute(
+                    "SELECT id, image_path, text, speaker FROM meme ORDER BY id"
+                )
+            )
+            tags_by_id: dict[int, list[str]] = {}
+            for row in self._conn.execute(
+                "SELECT meme_id, tag FROM meme_tag ORDER BY meme_id, tag"
+            ):
+                tags_by_id.setdefault(row["meme_id"], []).append(row["tag"])
+            self._entries = {
+                row["id"]: MemeEntry(
+                    id=row["id"],
+                    image_path=row["image_path"],
+                    text=row["text"],
+                    speaker=row["speaker"],
+                    tags=tags_by_id.get(row["id"], []),
+                )
+                for row in rows
+            }
             self._text_to_id = {
-                row["text"]: row["id"]
-                for row in self._conn.execute("SELECT id, text FROM meme")
+                entry.text: eid for eid, entry in self._entries.items()
             }
         logger.info(
             "MetadataStore 加载完成: %s, 共 %d 条记录",
             self._db_path,
-            len(self._text_to_id),
+            len(self._entries),
         )
 
     def close(self) -> None:
@@ -157,65 +177,29 @@ class MetadataStore:
     # ------------------------------------------------------------------
 
     def get_all_entries(self) -> dict[int, MemeEntry]:
-        """返回全部条目，key=int(id)，tags 从 meme_tag 组装。
+        """返回全部条目，key=int(id)。
+
+        命中 _entries 缓存，返回浅拷贝 dict（value 共享 frozen MemeEntry）。
 
         Returns:
-            id → MemeEntry 映射。
+            id → MemeEntry 映射（value 为缓存内 frozen 引用，不可修改）。
         """
         with self._lock:
-            conn = self._require_conn()
-            rows = list(
-                conn.execute(
-                    "SELECT id, image_path, text, speaker FROM meme ORDER BY id"
-                )
-            )
-            tags_by_id: dict[int, list[str]] = {}
-            for row in conn.execute(
-                "SELECT meme_id, tag FROM meme_tag ORDER BY meme_id, tag"
-            ):
-                tags_by_id.setdefault(row["meme_id"], []).append(row["tag"])
-        return {
-            row["id"]: MemeEntry(
-                id=row["id"],
-                image_path=row["image_path"],
-                text=row["text"],
-                speaker=row["speaker"],
-                tags=tags_by_id.get(row["id"], []),
-            )
-            for row in rows
-        }
+            return self._entries.copy()
 
     def get_entry(self, entry_id: int) -> MemeEntry | None:
         """按 id 查询单条记录。
+
+        命中 _entries 缓存，返回共享 frozen 引用（O(1)）。
 
         Args:
             entry_id: 索引 id。
 
         Returns:
-            对应 MemeEntry；id 不存在时返回 None。
+            对应 MemeEntry（缓存内 frozen 引用，不可修改）；id 不存在时返回 None。
         """
         with self._lock:
-            conn = self._require_conn()
-            row = conn.execute(
-                "SELECT id, image_path, text, speaker FROM meme WHERE id = ?",
-                (entry_id,),
-            ).fetchone()
-            if row is None:
-                return None
-            tags = [
-                r["tag"]
-                for r in conn.execute(
-                    "SELECT tag FROM meme_tag WHERE meme_id = ? ORDER BY tag",
-                    (entry_id,),
-                )
-            ]
-        return MemeEntry(
-            id=row["id"],
-            image_path=row["image_path"],
-            text=row["text"],
-            speaker=row["speaker"],
-            tags=tags,
-        )
+            return self._entries.get(entry_id)
 
     def get_by_filename(self, image_path: str) -> MemeEntry | None:
         """按图片路径查询。
@@ -259,18 +243,13 @@ class MetadataStore:
         return int(row["next_id"])
 
     def entry_count(self) -> int:
-        """条目总数。
+        """条目总数（读缓存，O(1)）。
 
         Returns:
-            meme 表当前行数。
+            _entries 当前长度。
         """
         with self._lock:
-            row = (
-                self._require_conn()
-                .execute("SELECT COUNT(*) AS c FROM meme")
-                .fetchone()
-            )
-        return int(row["c"])
+            return len(self._entries)
 
     def get_all_text(self) -> list[tuple[int, str]]:
         """返回全部 (id, text)，供 sync 阶段0 全量重 embed 用。
@@ -324,6 +303,13 @@ class MetadataStore:
             self._write_tags(entry_id, tags)
             conn.commit()
             self._text_to_id[text] = entry_id
+            self._entries[entry_id] = MemeEntry(
+                id=entry_id,
+                image_path=image_path,
+                text=text,
+                speaker=speaker,
+                tags=sorted(set(tags or [])),
+            )
         return entry_id
 
     def add_with_id(
@@ -365,6 +351,13 @@ class MetadataStore:
             self._write_tags(entry_id, tags)
             conn.commit()
             self._text_to_id[text] = entry_id
+            self._entries[entry_id] = MemeEntry(
+                id=entry_id,
+                image_path=image_path,
+                text=text,
+                speaker=speaker,
+                tags=sorted(set(tags or [])),
+            )
         return entry_id
 
     def update(
@@ -441,6 +434,21 @@ class MetadataStore:
             if old_text in self._text_to_id and self._text_to_id[old_text] == entry_id:
                 del self._text_to_id[old_text]
             self._text_to_id[new_text] = entry_id
+
+            # 维护 _entries（frozen，用 replace 生成新对象替换缓存槽位）
+            old_entry = self._entries.get(entry_id)
+            if old_entry is not None:
+                self._entries[entry_id] = replace(
+                    old_entry,
+                    image_path=(
+                        image_path if image_path is not _UNSET else old_entry.image_path
+                    ),
+                    text=new_text,
+                    speaker=(
+                        speaker if speaker is not _UNSET else old_entry.speaker
+                    ),
+                    tags=sorted(set(tags)) if tags is not None else old_entry.tags,
+                )
         return True
 
     def remove(self, entry_id: int) -> bool:
@@ -464,6 +472,7 @@ class MetadataStore:
             text = row["text"]
             if self._text_to_id.get(text) == entry_id:
                 del self._text_to_id[text]
+            self._entries.pop(entry_id, None)
         return True
 
     # ------------------------------------------------------------------

@@ -9,6 +9,7 @@
 - `meme_tag` 关联表存多值标记词，`ON DELETE CASCADE` 随 `meme` 行删除。
 - `check_same_thread=False` + 内部 `threading.Lock` 串行化所有 sqlite 访问；公开方法为同步，调用方用 `asyncio.to_thread` 包装以避免阻塞事件循环。
 - `_text_to_id` 内存反向索引（`text → id`），`load()` 时全量重建，增删同步维护，加速去重判定。
+- `_entries` 内存缓存（`id → MemeEntry`），`load()` 时全量重建，`add`/`add_with_id`/`update`/`remove` 在 `_lock` 内增量维护；`get_all_entries`/`get_entry`/`entry_count` 直接读缓存，`MemeEntry` 为 `frozen` 故可安全共享引用。
 - `text` 与 `image_path` 均有 `UNIQUE INDEX` 约束：DB 层兜底保证唯一性，重复插入会触发 `DuplicateEntryError`；调用方（`IndexManager`）仍应在 `add` 前用 `get_id_by_text` 做去重检查，避免不必要的写入失败。
 
 ## 数据类
@@ -16,7 +17,7 @@
 ### `MemeEntry`
 
 ```python
-@dataclass
+@dataclass(frozen=True)
 class MemeEntry:
     id: int
     image_path: str
@@ -32,6 +33,8 @@ class MemeEntry:
 | `text` | `str` | 必填 | OCR 去除所有空白后的文本（无空格） |
 | `speaker` | `str \| None` | `None` | 说话人，可空；可通过 `/setspeaker` 命令设置 |
 | `tags` | `list[str]` | `[]` | 标记词列表，从 `meme_tag` 组装（本次为空 `[]`） |
+
+`frozen=True`：实例构造后字段不可赋值（对 `frozen` dataclass 赋值会抛 `FrozenInstanceError`）。`MetadataStore` 内部以 `_entries` 缓存持有 `MemeEntry` 引用，查询方法返回的 value 即缓存内共享的 frozen 引用，调用方不可修改字段。
 
 ---
 
@@ -62,6 +65,21 @@ CREATE INDEX IF NOT EXISTS idx_meme_tag_tag ON meme_tag(tag);
 
 ## `MetadataStore` 类
 
+### `_entries` 缓存
+
+`_entries`（`dict[int, MemeEntry]`）为全量条目内存缓存，与 `_text_to_id` 并列维护：
+
+- `load()`：遍历 `meme` 表与 `meme_tag` 表全量重建；`meme_tag` 以 `ORDER BY meme_id, tag` 读取，保证 tags 升序。
+- `add` / `add_with_id`：写入 DB 后在 `_lock` 内向 `_entries` 插入新构造的 `MemeEntry`，tags 用 `sorted(set(tags or []))`。
+- `update`：因 `MemeEntry` 为 `frozen`，用 `dataclasses.replace` 基于旧实例生成新对象替换缓存槽位；`text` 变更时同步维护 `_text_to_id`。
+- `remove`：删除 DB 行后在 `_lock` 内 `_entries.pop(entry_id, None)`。
+
+tags 一致性：内存侧用 `sorted(set(tags or []))`（去重 + 升序），与 SQL 侧 `INSERT OR IGNORE INTO meme_tag`（`PRIMARY KEY (meme_id, tag)` 去重）+ `load()` 读回 `ORDER BY tag`（升序）对齐，即写入后缓存内的 tags 与下一次 `load()` 重建结果一致。
+
+`get_all_entries` / `get_entry` / `entry_count` 均直接读 `_entries`，不走 DB，详见各方法说明。
+
+---
+
 ### `__init__(db_path: str) -> None`
 
 | 参数 | 类型 | 默认 | 说明 |
@@ -77,7 +95,7 @@ CREATE INDEX IF NOT EXISTS idx_meme_tag_tag ON meme_tag(tag);
 | **返回** | `None` | |
 | **异常** | `sqlite3.DatabaseError` | 数据库文件存在但非 sqlite 格式（损坏） |
 
-打开连接、建表/建索引、重建 `_text_to_id`。`PRAGMA foreign_keys = ON`。`load()` 前不可调用其他方法。
+打开连接、建表/建索引、重建 `_text_to_id` 与 `_entries`。`PRAGMA foreign_keys = ON`。`load()` 前不可调用其他方法。
 
 ---
 
@@ -95,9 +113,9 @@ CREATE INDEX IF NOT EXISTS idx_meme_tag_tag ON meme_tag(tag);
 
 | | 类型 | 说明 |
 |--|------|------|
-| **返回** | `dict[int, MemeEntry]` | key 为 `int(id)`，value 为 `MemeEntry`；`tags` 从 `meme_tag` 组装 |
+| **返回** | `dict[int, MemeEntry]` | 命中 `_entries` 缓存，返回浅拷贝 dict（key 为 `int(id)`），value 为缓存内共享的 frozen `MemeEntry` 引用 |
 
-实现 `protocols.MetadataStoreProvider` 协议。
+实现 `protocols.MetadataStoreProvider` 协议。返回的 dict 为浅拷贝，调用方可安全遍历；但 value 为共享 frozen 引用，不可修改字段。
 
 ---
 
@@ -109,7 +127,7 @@ CREATE INDEX IF NOT EXISTS idx_meme_tag_tag ON meme_tag(tag);
 
 | | 类型 | 说明 |
 |--|------|------|
-| **返回** | `MemeEntry \| None` | 匹配条目；不存在时返回 `None` |
+| **返回** | `MemeEntry \| None` | 命中 `_entries` 缓存，O(1) 返回共享 frozen 引用；id 不存在时返回 `None` |
 
 ---
 
@@ -153,7 +171,7 @@ CREATE INDEX IF NOT EXISTS idx_meme_tag_tag ON meme_tag(tag);
 
 | | 类型 | 说明 |
 |--|------|------|
-| **返回** | `int` | `meme` 表条目总数 |
+| **返回** | `int` | 读 `len(_entries)`，O(1) 返回缓存内条目总数（与 `meme` 表行数一致） |
 
 ---
 
@@ -180,7 +198,7 @@ CREATE INDEX IF NOT EXISTS idx_meme_tag_tag ON meme_tag(tag);
 |--|------|------|
 | **返回** | `int` | 自动分配的最小空洞 id |
 
-调用方需在调用前用 `get_id_by_text` 自行去重；`add` 不会检查 `text` 是否已存在。写入后同步更新 `_text_to_id`。
+调用方需在调用前用 `get_id_by_text` 自行去重；`add` 不会检查 `text` 是否已存在。写入后同步更新 `_text_to_id` 与 `_entries`。
 
 ---
 
@@ -198,7 +216,7 @@ CREATE INDEX IF NOT EXISTS idx_meme_tag_tag ON meme_tag(tag);
 |--|------|------|
 | **返回** | `int` | 写入的 id（即传入的 `entry_id`） |
 
-供 `scripts/migrate_json_to_db.py` 迁移旧索引时保留原 id 使用。
+供 `scripts/migrate_json_to_db.py` 迁移旧索引时保留原 id 使用。写入后同步更新 `_text_to_id` 与 `_entries`。
 
 ---
 
@@ -216,6 +234,8 @@ CREATE INDEX IF NOT EXISTS idx_meme_tag_tag ON meme_tag(tag);
 |--|------|------|
 | **返回** | `bool` | `True` 找到并更新；`False` id 不存在 |
 
+`text` 变更时同步维护 `_text_to_id`；因 `MemeEntry` 为 `frozen`，`_entries` 内对应槽位用 `dataclasses.replace` 基于旧实例生成新对象替换。
+
 ---
 
 ### `remove(entry_id: int) -> bool`
@@ -228,4 +248,4 @@ CREATE INDEX IF NOT EXISTS idx_meme_tag_tag ON meme_tag(tag);
 |--|------|------|
 | **返回** | `bool` | `True` 删除成功；`False` id 不存在 |
 
-删除 `meme` 行后 `CASCADE` 删除 `meme_tag` 关联行，同步维护 `_text_to_id`。
+删除 `meme` 行后 `CASCADE` 删除 `meme_tag` 关联行，同步维护 `_text_to_id` 与 `_entries`。

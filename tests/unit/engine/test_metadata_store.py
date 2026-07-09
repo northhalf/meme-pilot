@@ -1,5 +1,6 @@
 """MetadataStore 单元测试。"""
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -268,3 +269,147 @@ class TestDuplicateEntryError:
         assert eid is not None
         # 改成自身 image_path/text 不应抛
         assert store.update(eid, image_path="a.jpg", text="加班") is True
+
+
+class TestFrozenAndEntriesCache:
+    """MemeEntry frozen 与 _entries 缓存重建测试。"""
+
+    def test_meme_entry_is_frozen(self, store: MetadataStore) -> None:
+        """MemeEntry frozen 后字段不可赋值，抛 FrozenInstanceError。"""
+        import dataclasses
+
+        store.add("a.jpg", "甲")
+        entry = store.get_entry(1)
+        assert entry is not None
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            entry.image_path = "b.jpg"  # type: ignore[misc]
+
+    def test_load_rebuilds_entries_and_text_to_id(
+        self, tmp_sqlite_path: Path
+    ) -> None:
+        """load 后 _entries 与 _text_to_id 同步填充，含 tags。"""
+        s1 = MetadataStore(str(tmp_sqlite_path))
+        s1.load()
+        s1.add("a.jpg", "甲", tags=["搞笑", "猫"])
+        s1.close()
+
+        s2 = MetadataStore(str(tmp_sqlite_path))
+        s2.load()
+        assert 1 in s2._entries
+        assert s2._entries[1].text == "甲"
+        assert s2._entries[1].tags == ["搞笑", "猫"]
+        assert s2._text_to_id == {"甲": 1}
+        s2.close()
+
+
+class TestWriteMaintainsEntriesCache:
+    """写操作同步维护 _entries 缓存。"""
+
+    def test_add_updates_entries_cache(self, store: MetadataStore) -> None:
+        """add 后 _entries 同步含新条目，_text_to_id 同步。"""
+        eid = store.add("a.jpg", "甲", tags=["搞笑", "猫"])
+        assert eid in store._entries
+        assert store._entries[eid].text == "甲"
+        assert store._entries[eid].tags == ["搞笑", "猫"]
+        assert store._text_to_id["甲"] == eid
+
+    def test_add_dedup_sort_tags_in_cache(self, store: MetadataStore) -> None:
+        """缓存 tags 去重 + 字典序排序，与 SQL 存储一致。"""
+        eid = store.add("b.jpg", "乙", tags=["x", "x", "a"])
+        assert store._entries[eid].tags == ["a", "x"]
+        # 与 get_entry（当前仍走 SQL）返回的 tags 一致
+        entry = store.get_entry(eid)
+        assert entry is not None
+        assert entry.tags == store._entries[eid].tags
+
+    def test_add_with_id_updates_entries_cache(self, store: MetadataStore) -> None:
+        """add_with_id 同步维护 _entries。"""
+        store.add_with_id(5, "e.jpg", "戊", tags=["t"])
+        assert 5 in store._entries
+        assert store._entries[5].tags == ["t"]
+        assert store._text_to_id["戊"] == 5
+
+    def test_update_refreshes_entries_cache(self, store: MetadataStore) -> None:
+        """update 后 _entries 同步更新字段，_text_to_id 同步 text。"""
+        eid = store.add("a.jpg", "甲", tags=["旧"])
+        store.update(eid, text="乙", tags=["新1", "新2"])
+        assert store._entries[eid].text == "乙"
+        assert store._entries[eid].tags == ["新1", "新2"]
+        assert "甲" not in store._text_to_id
+        assert store._text_to_id["乙"] == eid
+
+    def test_update_image_path_in_cache(self, store: MetadataStore) -> None:
+        """update image_path 同步到 _entries。"""
+        eid = store.add("old.jpg", "甲")
+        store.update(eid, image_path="new.jpg")
+        assert store._entries[eid].image_path == "new.jpg"
+
+    def test_update_nonexistent_leaves_cache(self, store: MetadataStore) -> None:
+        """id 不存在时不动缓存。"""
+        store.update(999, image_path="x.jpg")
+        assert 999 not in store._entries
+
+    def test_remove_updates_entries_cache(self, store: MetadataStore) -> None:
+        """remove 后 _entries 与 _text_to_id 同步删除。"""
+        eid = store.add("a.jpg", "甲")
+        store.remove(eid)
+        assert eid not in store._entries
+        assert "甲" not in store._text_to_id
+
+
+class TestReadPathHitsCache:
+    """读路径命中缓存，返回共享 frozen 引用。"""
+
+    def test_get_entry_returns_cached_reference(self, store: MetadataStore) -> None:
+        """get_entry 返回缓存内同一对象引用（is 判定）。"""
+        eid = store.add("a.jpg", "甲")
+        entry = store.get_entry(eid)
+        assert entry is store._entries[eid]
+
+    def test_get_all_entries_returns_copy_sharing_values(
+        self, store: MetadataStore
+    ) -> None:
+        """get_all_entries 返回新 dict，value 共享 frozen 引用。"""
+        eid = store.add("a.jpg", "甲")
+        result = store.get_all_entries()
+        assert result is not store._entries  # 新 dict（浅拷贝）
+        assert result[eid] is store._entries[eid]  # value 共享
+
+    def test_get_all_entries_no_sql_after_cache(self, store: MetadataStore) -> None:
+        """缓存命中后多次 get_all_entries 不触发 SQL。
+
+        sqlite3.Connection 为不可变 C 类型，无法 monkeypatch execute，
+        故用代理包装 _conn 统计 execute 调用次数。
+        """
+        store.add("a.jpg", "甲")
+        real_conn = store._conn
+        assert real_conn is not None
+
+        class _CountingConn:
+            """代理 sqlite3.Connection，统计 execute 调用次数。"""
+
+            def __init__(self, real: sqlite3.Connection) -> None:
+                self._real = real
+                self.execute_count = 0
+
+            def execute(self, *args: object, **kwargs: object) -> object:
+                self.execute_count += 1
+                return self._real.execute(*args, **kwargs)
+
+            def __getattr__(self, name: str) -> object:
+                return getattr(self._real, name)
+
+        counter = _CountingConn(real_conn)
+        store._conn = counter  # type: ignore[assignment]
+        try:
+            for _ in range(3):
+                store.get_all_entries()
+        finally:
+            store._conn = real_conn
+        assert counter.execute_count == 0
+
+    def test_entry_count_reads_cache_len(self, store: MetadataStore) -> None:
+        """entry_count 等于 len(_entries)。"""
+        store.add("a.jpg", "甲")
+        store.add("b.jpg", "乙")
+        assert store.entry_count() == len(store._entries) == 2

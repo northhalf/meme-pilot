@@ -1049,6 +1049,24 @@ class TestRefresh:
         await index_manager.close()
 
 
+@pytest.mark.anyio
+async def test_scan_meme_files_called_once_per_sync(
+    index_manager: IndexManager,
+) -> None:
+    """sync 内 _scan_meme_files 仅调用一次（phase1/phase2 复用同一快照）。"""
+    call_count = 0
+    original = index_manager._scan_meme_files
+
+    def counting_scan() -> set[str]:
+        nonlocal call_count
+        call_count += 1
+        return original()
+
+    index_manager._scan_meme_files = counting_scan  # type: ignore[assignment]
+    await index_manager.refresh()
+    assert call_count == 1
+
+
 # ---------------------------------------------------------------------------
 # random_search / semantic_search 测试
 # ---------------------------------------------------------------------------

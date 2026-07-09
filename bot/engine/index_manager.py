@@ -1146,10 +1146,13 @@ class IndexManager:
         """
         self._memes_dir.mkdir(parents=True, exist_ok=True)
         failed: list[str] = []
+        existing_files = self._scan_meme_files()  # 仅扫一次，phase1/phase2 复用
 
         await self._sync_phase0_consistency(failed)
-        deleted_count = await self._sync_phase1_delete()
-        added_count, deduped_count, no_text_count = await self._sync_phase2_add(failed)
+        deleted_count = await self._sync_phase1_delete(existing_files)
+        added_count, deduped_count, no_text_count = await self._sync_phase2_add(
+            existing_files, failed
+        )
 
         logger.info(
             "索引同步完成: 新增=%d, 删除=%d, 去重=%d, 无文字移走=%d, 失败=%d",
@@ -1252,13 +1255,15 @@ class IndexManager:
             items.append((eid, vec))
         await self._vector_store.rebuild_all(items)
 
-    async def _sync_phase1_delete(self) -> int:
+    async def _sync_phase1_delete(self, existing: set[str]) -> int:
         """阶段1：删除 memes/ 已不存在的图片对应记录。先 sqlite 后 chroma。
+
+        Args:
+            existing: sync 开始时扫描的 memes/ 文件名集合（复用上游快照）。
 
         Returns:
             本次删除的图片数量。
         """
-        existing = self._scan_meme_files()
         entries = await self._run_sync(self._metadata_store.get_all_entries)
         deleted = 0
         for eid, entry in entries.items():
@@ -1271,16 +1276,18 @@ class IndexManager:
                 deleted += 1
         return deleted
 
-    async def _sync_phase2_add(self, failed: list[str]) -> tuple[int, int, int]:
+    async def _sync_phase2_add(
+        self, existing: set[str], failed: list[str]
+    ) -> tuple[int, int, int]:
         """阶段2：新图并行 OCR→embed，串行三分类（无文字移图 / 去重删新图 / 正常新增）。
 
         Args:
+            existing: sync 开始时扫描的 memes/ 文件名集合（复用上游快照）。
             failed: 失败文件名收集列表，处理异常或 upsert 失败回滚的文件名追加至此。
 
         Returns:
             (added, deduped, no_text_moved) 三元组：新增、去重删除、无文字移走数量。
         """
-        existing = self._scan_meme_files()
         entries = await self._run_sync(self._metadata_store.get_all_entries)
         existing_paths = {e.image_path for e in entries.values()}
         new_files = sorted(f for f in existing if f not in existing_paths)
