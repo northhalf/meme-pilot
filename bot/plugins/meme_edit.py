@@ -67,17 +67,20 @@ async def handle_edit(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
         text_part = raw.removeprefix("/edittext").removeprefix("edittext").strip()
         parts = text_part.split(maxsplit=1)
         if len(parts) < 2:
+            session_manager.deactivate_chat(user_id)
             await matcher.finish("用法：/edittext <entry_id> <新文本>")
             return
 
         try:
             entry_id = int(parts[0])
         except ValueError:
+            session_manager.deactivate_chat(user_id)
             await matcher.finish("entry_id 必须为数字")
             return
 
         new_text = "".join(parts[1].split())  # 统一去空白
         if not new_text:
+            session_manager.deactivate_chat(user_id)
             await matcher.finish("新文本不能为空")
             return
 

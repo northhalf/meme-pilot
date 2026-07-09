@@ -76,6 +76,7 @@ async def handle_delete(bot: Bot, event: MessageEvent, matcher: Matcher) -> None
         text_part = raw.removeprefix("/del").removeprefix("del").strip()
         tokens = text_part.split()
         if not tokens:
+            session_manager.deactivate_chat(user_id)
             await matcher.finish("用法：/del <id>...")
             return
 
@@ -84,6 +85,7 @@ async def handle_delete(bot: Bot, event: MessageEvent, matcher: Matcher) -> None
             try:
                 entry_ids.append(int(token))
             except ValueError:
+                session_manager.deactivate_chat(user_id)
                 await matcher.finish("id 必须为数字")
                 return
 

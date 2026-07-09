@@ -66,12 +66,14 @@ async def handle_setspeaker(bot: Bot, event: MessageEvent, matcher: Matcher) -> 
         text_part = raw.removeprefix("/setspeaker").removeprefix("setspeaker").strip()
         parts = text_part.split(maxsplit=1)
         if len(parts) < 1:
+            session_manager.deactivate_chat(user_id)
             await matcher.finish("用法：/setspeaker <entry_id> [说话人]")
             return
 
         try:
             entry_id = int(parts[0])
         except ValueError:
+            session_manager.deactivate_chat(user_id)
             await matcher.finish("entry_id 必须为数字")
             return
 
@@ -83,6 +85,7 @@ async def handle_setspeaker(bot: Bot, event: MessageEvent, matcher: Matcher) -> 
         store = get_metadata_store()
         entry = store.get_entry(entry_id)
         if entry is None:
+            session_manager.deactivate_chat(user_id)
             await matcher.finish(f"未找到 id 为 {entry_id} 的表情包")
             return
 

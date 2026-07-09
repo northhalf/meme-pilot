@@ -65,12 +65,14 @@ async def handle_addtag(bot: Bot, event: MessageEvent, matcher: Matcher) -> None
         text_part = raw.removeprefix("/addtag").removeprefix("addtag").strip()
         parts = text_part.split(maxsplit=1)
         if len(parts) < 2:
+            session_manager.deactivate_chat(user_id)
             await matcher.finish("用法：/addtag <entry_id> <tag> [<tag>...]")
             return
 
         try:
             entry_id = int(parts[0])
         except ValueError:
+            session_manager.deactivate_chat(user_id)
             await matcher.finish("entry_id 必须为数字")
             return
 
@@ -81,15 +83,14 @@ async def handle_addtag(bot: Bot, event: MessageEvent, matcher: Matcher) -> None
         store = get_metadata_store()
         entry = store.get_entry(entry_id)
         if entry is None:
+            session_manager.deactivate_chat(user_id)
             await matcher.finish(f"未找到 id 为 {entry_id} 的表情包")
             return
 
         # 确认消息（纯文本，不发送图片）
         current_tags_text = ", ".join(entry.tags) if entry.tags else "(无)"
         current_tags_set = set(entry.tags)
-        new_tags_text = ", ".join(
-            [tag for tag in tags if tag not in current_tags_set]
-        )
+        new_tags_text = ", ".join([tag for tag in tags if tag not in current_tags_set])
         await matcher.send(
             f"当前 OCR 文本：{entry.text}\n"
             f"当前标签：{current_tags_text}\n"
