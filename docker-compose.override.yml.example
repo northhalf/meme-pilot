@@ -1,0 +1,8 @@
+# 开发者本地构建加速代理（复制为 docker-compose.override.yml 后按需修改/删除）
+# docker compose 会自动加载 docker-compose.override.yml
+services:
+  bot:
+    build:
+      args:
+        - http_proxy=http://127.0.0.1:10808
+        - https_proxy=http://127.0.0.1:10808

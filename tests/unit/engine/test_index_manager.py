@@ -23,6 +23,8 @@ from bot.engine.index_manager import (
     OcrError,
     RefreshInProgressError,
     SyncResult,
+    WriteOp,
+    _WriteRequest,
     resolve_unique_filename,
 )
 from bot.engine.image_optimizer import OptimizeResult
@@ -169,6 +171,9 @@ class FakeVectorStore:
 
     async def rebuild_all(self, items) -> None:
         self._vecs = {eid: list(vec) for eid, vec in items}
+
+    async def get_all_ids(self) -> set[int]:
+        return set(self._vecs.keys())
 
     def has(self, entry_id) -> bool:
         return entry_id in self._vecs
@@ -1151,3 +1156,124 @@ class TestSemanticSearch:
         index_manager._semantic_searcher = None
         with pytest.raises(RuntimeError, match="SemanticSearcher 未注入"):
             await index_manager.semantic_search("任意描述")
+
+
+# ---------------------------------------------------------------------------
+# F8: _get_chroma_ids 改用 get_all_ids
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_get_chroma_ids_uses_get_all_ids(
+    index_manager: IndexManager,
+) -> None:
+    """_get_chroma_ids 应通过 get_all_ids 取全量 id，不再走零向量 query。"""
+    vs = cast(FakeVectorStore, index_manager._vector_store)
+    # 放入若干向量
+    await vs.upsert(1, [1.0])
+    await vs.upsert(2, [2.0])
+    await vs.upsert(42, [3.0])
+
+    # spy：若走到 query 路径则直接失败
+    async def spy_query(
+        query_embedding: list[float], n_results: int = 10
+    ) -> list[VectorHit]:
+        raise AssertionError("_get_chroma_ids 不应再调用 query")
+
+    vs.query = spy_query  # type: ignore[method-assign]
+
+    ids = await index_manager._get_chroma_ids()
+    assert ids == {1, 2, 42}
+
+
+# ---------------------------------------------------------------------------
+# F6: add() 内部超时取消入队 future + worker 跳过 done future
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_add_timeout_cancels_enqueued_future(
+    index_manager: IndexManager,
+) -> None:
+    """add() 内部超时应取消已入队的 future，避免孤儿写入。"""
+    index_manager.add_user_timeout = 0.1
+    (Path(index_manager._memes_dir) / "x.jpg").write_bytes(b"fake")
+
+    # 让 _write_entry 永久挂起，模拟写操作卡住
+    hang_event = asyncio.Event()
+
+    async def hanging_write(
+        filename: str,
+        text: str,
+        embedding: list[float],
+        speaker: str | None = None,
+        tags: list[str] | None = None,
+    ) -> AddResult:
+        await hang_event.wait()
+        raise AssertionError("不应走到这里")
+
+    index_manager._write_entry = hanging_write  # type: ignore[method-assign]
+
+    with pytest.raises(asyncio.TimeoutError):
+        await index_manager.add("x.jpg")
+
+    # 清理挂住的 worker
+    await index_manager.close()
+
+
+@pytest.mark.anyio
+async def test_write_worker_skips_cancelled_future(
+    index_manager: IndexManager,
+) -> None:
+    """worker 取出 future 已 done 的请求时应跳过，不调用 _write_entry。"""
+    loop = asyncio.get_running_loop()
+
+    # 已取消的 future（done()==True），应被 worker 跳过
+    cancelled_future: asyncio.Future[AddResult] = loop.create_future()
+    assert cancelled_future.cancel() is True
+    skip_req = _WriteRequest(
+        op=WriteOp.ADD,
+        future=cancelled_future,  # type: ignore[arg-type]
+        filename="skip.jpg",
+        text="t",
+        embedding=[1.0],
+    )
+
+    # 正常 future，应被 worker 处理
+    normal_future: asyncio.Future[AddResult] = loop.create_future()
+    normal_req = _WriteRequest(
+        op=WriteOp.ADD,
+        future=normal_future,  # type: ignore[arg-type]
+        filename="normal.jpg",
+        text="hello",
+        embedding=[1.0],
+    )
+
+    # spy _write_entry：记录调用，返回 dummy AddResult
+    write_calls: list[str] = []
+
+    async def spy_write(
+        filename: str,
+        text: str,
+        embedding: list[float],
+        speaker: str | None = None,
+        tags: list[str] | None = None,
+    ) -> AddResult:
+        write_calls.append(filename)
+        return AddResult(entry_id=1, reason="added", text=text)
+
+    index_manager._write_entry = spy_write  # type: ignore[method-assign]
+
+    await index_manager._write_queue.put(skip_req)
+    await index_manager._write_queue.put(normal_req)
+
+    index_manager._ensure_write_worker()
+    # 让 worker 有机会处理两个请求
+    await asyncio.sleep(0.05)
+
+    # cancelled 请求未被写入，正常请求被写入
+    assert write_calls == ["normal.jpg"]
+    assert normal_future.done()
+    assert normal_future.result().reason == "added"
+
+    await index_manager.close()

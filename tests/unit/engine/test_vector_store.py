@@ -112,3 +112,24 @@ class TestRebuildAll:
         await store.upsert(1, [1.0, 0.0])
         await store.rebuild_all([])
         assert store.count() == 0
+
+
+class TestGetAllIds:
+    async def test_get_all_ids_empty(self, store: VectorStore) -> None:
+        """空 collection 时返回空集。"""
+        assert await store.get_all_ids() == set()
+
+    async def test_get_all_ids_returns_all(self, store: VectorStore) -> None:
+        """upsert 多条后返回全部 entry_id。"""
+        await store.upsert(1, [1.0, 0.0])
+        await store.upsert(2, [0.0, 1.0])
+        await store.upsert(42, [1.0, 1.0])
+        assert await store.get_all_ids() == {1, 2, 42}
+
+    async def test_get_all_ids_after_remove(self, store: VectorStore) -> None:
+        """remove 后被删 id 不再出现在集合中。"""
+        await store.upsert(1, [1.0, 0.0])
+        await store.upsert(2, [0.0, 1.0])
+        await store.upsert(42, [1.0, 1.0])
+        await store.remove(2)
+        assert await store.get_all_ids() == {1, 42}

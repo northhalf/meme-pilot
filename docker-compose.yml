@@ -11,7 +11,7 @@ services:
       - WS_PORT=3001
       - TZ=Asia/Shanghai
     ports:
-      - "6099:6099"
+      - "127.0.0.1:6099:6099"
     volumes:
       - ./napcat/config:/app/napcat/config
       - ./napcat/qq:/app/.config/QQ
@@ -24,9 +24,6 @@ services:
     build:
       context: .
       network: host
-      args:
-        - http_proxy=http://127.0.0.1:10808
-        - https_proxy=http://127.0.0.1:10808
       dockerfile: bot/Dockerfile
     image: meme-pilot
     container_name: qq-meme-bot

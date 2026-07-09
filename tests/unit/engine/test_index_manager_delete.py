@@ -111,6 +111,9 @@ class FakeVectorStore:
     ) -> list:
         return []
 
+    async def get_all_ids(self) -> set[int]:
+        return set()
+
     async def rebuild_all(self, items: list[tuple[int, list[float]]]) -> None:
         pass
 

@@ -29,6 +29,7 @@ venv/
 
 # Docker
 *.log
+docker-compose.override.yml
 
 # 日志目录
 log/

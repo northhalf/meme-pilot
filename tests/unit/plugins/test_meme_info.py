@@ -252,3 +252,97 @@ class TestHandleInfoNormalReply:
         assert "内存占用：获取失败" in reply
         assert "CPU占用：获取失败" in reply
         assert "表情包数量：10" in reply
+
+
+# ===========================================================================
+# F13：状态覆写测试
+# ===========================================================================
+
+
+class TestHandleInfoStatusOverride:
+    """F13：engine 仅感知刷新态，"正在处理命令"由插件层覆写。"""
+
+    @pytest.mark.asyncio
+    @patch("bot.plugins.meme_info.psutil.cpu_percent", return_value=12.5)
+    @patch("bot.plugins.meme_info.psutil.virtual_memory")
+    @patch("bot.plugins.meme_info.get_index_manager")
+    @patch.object(meme_info, "is_authorized", return_value=True)
+    async def test_info_overrides_status_when_session_active(
+        self,
+        mock_auth: MagicMock,
+        mock_get_index_manager: MagicMock,
+        mock_virtual_memory: MagicMock,
+        mock_cpu_percent: MagicMock,
+    ) -> None:
+        """engine 返回"空闲"且有活跃会话时，插件层应覆写为"正在处理命令"。"""
+        from bot.session import session_manager
+
+        mock_index_manager = MagicMock()
+        mock_index_manager.info = AsyncMock(
+            return_value=IndexInfo(entry_count=0, speaker_ranking=[], status="空闲")
+        )
+        mock_get_index_manager.return_value = mock_index_manager
+
+        mem_mock = MagicMock()
+        mem_mock.used = 512 * 1024 * 1024
+        mem_mock.total = 2048 * 1024 * 1024
+        mem_mock.percent = 25.0
+        mock_virtual_memory.return_value = mem_mock
+
+        user_id = "f13_active_001"
+        # 确保干净起始状态后激活会话
+        session_manager.deactivate_chat(user_id)
+        try:
+            assert session_manager.activate_chat(user_id, "search", MagicMock()) is True
+            assert session_manager.has_active_session() is True
+
+            matcher = _make_matcher()
+            await handle_info(_make_bot(), _make_event(user_id), matcher)
+
+            matcher.finish.assert_awaited_once()
+            reply = matcher.finish.call_args[0][0]
+            assert "当前机器人状态：正在处理命令" in reply
+        finally:
+            session_manager.deactivate_chat(user_id)
+
+    @pytest.mark.asyncio
+    @patch("bot.plugins.meme_info.psutil.cpu_percent", return_value=12.5)
+    @patch("bot.plugins.meme_info.psutil.virtual_memory")
+    @patch("bot.plugins.meme_info.get_index_manager")
+    @patch.object(meme_info, "is_authorized", return_value=True)
+    async def test_info_keeps_idle_when_no_session(
+        self,
+        mock_auth: MagicMock,
+        mock_get_index_manager: MagicMock,
+        mock_virtual_memory: MagicMock,
+        mock_cpu_percent: MagicMock,
+    ) -> None:
+        """engine 返回"空闲"且无活跃会话时，状态保持"空闲"（覆写不触发）。"""
+        from bot.session import session_manager
+
+        mock_index_manager = MagicMock()
+        mock_index_manager.info = AsyncMock(
+            return_value=IndexInfo(entry_count=0, speaker_ranking=[], status="空闲")
+        )
+        mock_get_index_manager.return_value = mock_index_manager
+
+        mem_mock = MagicMock()
+        mem_mock.used = 512 * 1024 * 1024
+        mem_mock.total = 2048 * 1024 * 1024
+        mem_mock.percent = 25.0
+        mock_virtual_memory.return_value = mem_mock
+
+        user_id = "f13_idle_001"
+        # 确保该用户无活跃会话，避免全局 session_manager 污染
+        session_manager.deactivate_chat(user_id)
+        try:
+            assert session_manager.has_active_session() is False
+
+            matcher = _make_matcher()
+            await handle_info(_make_bot(), _make_event(user_id), matcher)
+
+            matcher.finish.assert_awaited_once()
+            reply = matcher.finish.call_args[0][0]
+            assert "当前机器人状态：空闲" in reply
+        finally:
+            session_manager.deactivate_chat(user_id)

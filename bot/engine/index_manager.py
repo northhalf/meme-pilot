@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from bot.config import read_add_command_timeout, read_read_lock_timeout
-from bot.session import session_manager
 from .ai_matcher import AIMatcher, AIMatchResult
 from .image_optimizer import OptimizeResult
 from .keyword_searcher import KeywordSearcher
@@ -242,7 +241,7 @@ class VectorStoreProtocol(Protocol):
     """向量存储协议（IndexManager 编排所需接口子集）。
 
     仅声明 IndexManager 实际调用的方法（load/count/upsert/remove/
-    remove_many/query/rebuild_all）。
+    remove_many/query/get_all_ids/rebuild_all）。
     """
 
     def load(self) -> None: ...
@@ -254,6 +253,7 @@ class VectorStoreProtocol(Protocol):
     async def query(
         self, query_embedding: list[float], n_results: int = 10
     ) -> list[VectorHit]: ...
+    async def get_all_ids(self) -> set[int]: ...
     async def rebuild_all(self, items: list[tuple[int, list[float]]]) -> None: ...
     def close(self) -> None: ...
 
@@ -467,7 +467,9 @@ class IndexManager:
                 raise RuntimeError("RandomSearcher 未注入")
             return self._random_searcher.search_random(keyword)
 
-    async def semantic_search(self, description: str, limit: int | None = 10) -> list[SearchResult]:
+    async def semantic_search(
+        self, description: str, limit: int | None = 10
+    ) -> list[SearchResult]:
         """语义搜索入口。锁外 embed，持读锁查询。
 
         Args:
@@ -492,7 +494,9 @@ class IndexManager:
         async with self._rwlock.read(timeout=self.read_timeout):
             if self._vector_store.count() == 0:
                 return []
-            return await self._semantic_searcher.search_semantic(query_vector, limit=limit)
+            return await self._semantic_searcher.search_semantic(
+                query_vector, limit=limit
+            )
 
     async def ai_match(self, description: str) -> AIMatchResult | None:
         """AI 描述匹配。
@@ -540,29 +544,36 @@ class IndexManager:
         if self._refresh_active:
             raise RefreshInProgressError("索引正在批量刷新，请稍后再试")
 
-        text, embedding = await self._process_image_pipeline(filename)
+        async with asyncio.timeout(self.add_user_timeout):
+            text, embedding = await self._process_image_pipeline(filename)
 
-        # TOCTOU 防护
-        if self._shutting_down:
-            raise IndexAddCancelledError("Bot 正在关闭")
-        if self._refresh_active:
-            raise RefreshInProgressError("索引正在批量刷新，请稍后再试")
+            # TOCTOU 防护
+            if self._shutting_down:
+                raise IndexAddCancelledError("Bot 正在关闭")
+            if self._refresh_active:
+                raise RefreshInProgressError("索引正在批量刷新，请稍后再试")
 
-        self._ensure_write_worker()
-        loop = asyncio.get_running_loop()
-        future = loop.create_future()
-        await self._write_queue.put(
-            _WriteRequest(
-                op=WriteOp.ADD,
-                future=future,
-                filename=filename,
-                text=text,
-                speaker=speaker,
-                tags=tags,
-                embedding=embedding,
+            self._ensure_write_worker()
+            loop = asyncio.get_running_loop()
+            future = loop.create_future()
+            await self._write_queue.put(
+                _WriteRequest(
+                    op=WriteOp.ADD,
+                    future=future,
+                    filename=filename,
+                    text=text,
+                    speaker=speaker,
+                    tags=tags,
+                    embedding=embedding,
+                )
             )
-        )
-        return await future
+            try:
+                return await future
+            except asyncio.CancelledError:
+                # 超时/取消时取消已入队的 future，worker 据此跳过写入避免孤儿条目
+                if not future.done():
+                    future.cancel()
+                raise
 
     async def edit_text(self, entry_id: int, new_text: str) -> EditTextResult:
         """修改指定条目的 OCR 文本。
@@ -787,8 +798,6 @@ class IndexManager:
 
         if self._refresh_active:
             status = "正在刷新索引"
-        elif session_manager.has_active_session():
-            status = "正在处理命令"
         else:
             status = "空闲"
 
@@ -848,6 +857,12 @@ class IndexManager:
                     except asyncio.QueueEmpty:
                         break
                 raise
+
+            if req.future.done():
+                # 已被取消/放弃的请求，跳过不写，避免孤儿写入
+                if self._write_queue.empty():
+                    self._write_drained.set()
+                continue
 
             try:
                 async with self._rwlock.write():
@@ -1208,17 +1223,12 @@ class IndexManager:
             await self._vector_store.remove_many(list(orphans))
 
     async def _get_chroma_ids(self) -> set[int]:
-        """获取 chroma 当前所有 id（用 query 全量召回实现）。
+        """获取 chroma 当前所有 id（用 collection.get() 取全量，与 embedding 维度无关）。
 
         Returns:
             chroma 中现存向量对应的 entry_id 集合；chroma 为空时返回空集。
         """
-        if self._vector_store.count() == 0:
-            return set()
-        # 用零向量召回最多 count 条，提取 id
-        n = self._vector_store.count()
-        hits = await self._vector_store.query([0.0] * 1024, n_results=n)
-        return {h.entry_id for h in hits}
+        return await self._vector_store.get_all_ids()
 
     async def _rebuild_all_from_sqlite(
         self, entries: dict[int, MemeEntry], failed: list[str]

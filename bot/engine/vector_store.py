@@ -253,3 +253,21 @@ class VectorStore:
         """
         with self._lock:
             return int(self._require_collection().count())
+
+    def _get_all_ids_sync(self) -> set[int]:
+        """同步取 collection 全部 id（内部持 _lock，id 转 int）。
+
+        Returns:
+            collection 中全部向量对应的 entry_id 集合；为空时返回空集。
+        """
+        with self._lock:
+            result = self._require_collection().get(include=[])
+        return {int(i) for i in (result.get("ids") or [])}
+
+    async def get_all_ids(self) -> set[int]:
+        """返回 collection 中全部向量对应的 entry_id 集合；为空时返回空集。
+
+        Returns:
+            entry_id 集合。
+        """
+        return await asyncio.to_thread(self._get_all_ids_sync)

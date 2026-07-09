@@ -184,10 +184,7 @@ async def got_image(
 
             # 调用 IndexManager 处理
             try:
-                result = await asyncio.wait_for(
-                    index_manager.add(filename, speaker=speaker, tags=tags),
-                    timeout=index_manager.add_user_timeout,
-                )
+                result = await index_manager.add(filename, speaker=speaker, tags=tags)
             except RefreshInProgressError as exc:
                 logger.info("用户 %s 的 /add 被拒绝：%s", user_id, exc)
                 msg = "索引正在刷新，请稍后再试"

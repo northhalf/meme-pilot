@@ -16,6 +16,7 @@ from nonebot.rule import to_me
 
 from bot.app_state import get_index_manager
 from bot.auth import is_authorized, log_unauthorized
+from bot.session import session_manager
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,10 @@ async def handle_info(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
             logger.exception("获取索引信息失败")
             await matcher.finish("索引信息获取失败，请稍后再试")
             return
+
+        # engine 只感知刷新态；"正在处理命令"属应用层语义，由插件层覆写
+        if info.status == "空闲" and session_manager.has_active_session():
+            info.status = "正在处理命令"
 
         # 读取硬件信息
         try:

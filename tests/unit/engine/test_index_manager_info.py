@@ -113,6 +113,9 @@ class FakeVectorStore:
     async def rebuild_all(self, items: list[tuple[int, list[float]]]) -> None:
         pass
 
+    async def get_all_ids(self) -> set[int]:
+        return set()
+
 
 @pytest.fixture
 async def index_manager(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -178,10 +181,10 @@ class TestInfo:
         assert info.speaker_ranking[0][1] == 1
 
     @pytest.mark.anyio
-    async def test_info_status_processing(
+    async def test_info_status_decoupled_from_session(
         self, index_manager: IndexManager
     ) -> None:
-        """存在活跃会话时状态为"正在处理命令"。"""
+        """engine 不再感知 bot.session：激活会话后 status 仍为"空闲"（证明解耦）。"""
         matcher = MagicMock()
         user_id = "user_1"
 
@@ -189,11 +192,12 @@ class TestInfo:
             activated = session_manager.activate_chat(user_id, "search", matcher)
             assert activated is True
 
+            # 会话活跃时 engine 仍报告空闲（命令态由插件层覆写）
             info = await index_manager.info()
-            assert info.status == "正在处理命令"
+            assert info.status == "空闲"
         finally:
             session_manager.deactivate_chat(user_id)
 
-        # 会话已清理，状态恢复空闲
+        # 会话清理后仍空闲
         info_after = await index_manager.info()
         assert info_after.status == "空闲"

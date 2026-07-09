@@ -239,7 +239,7 @@ class DeleteResult:
 class IndexInfo:
     entry_count: int
     speaker_ranking: list[tuple[str | None, int]]  # speaker 使用频率排行，上限前 10
-    status: str
+    status: str  # engine 的 info() 仅返回 "正在刷新索引"/"空闲"；"正在处理命令" 由 /info 插件层基于 session 覆写
 
 class IndexManager:
     SUPPORTED_EXTENSIONS: frozenset[str]
@@ -395,6 +395,7 @@ class VectorStore:
     # n_results=None 时全库召回（取 collection.count()）
     async def rebuild_all(self, items: list[tuple[int, list[float]]]) -> None
     def count(self) -> int
+    async def get_all_ids(self) -> set[int]  # 取 collection 全部 entry_id（collection.get(include=[])，与 embedding 维度无关）；空 collection 返回空集
 ```
 
 基于 chromadb `PersistentClient`，HNSW cosine collection（默认 `memes`）。`id` 内部转 `str`，对外保持 `int`，与 sqlite 一一对应。`load/close/count` 同步，其余 async（内部 `asyncio.to_thread`）。

@@ -58,6 +58,7 @@ jobs:
   publish:
     needs: test
     runs-on: ubuntu-latest
+    environment: deploy   # 发布需审批
 
     steps:
       - name: Checkout
