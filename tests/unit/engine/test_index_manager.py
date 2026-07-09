@@ -246,7 +246,7 @@ def index_manager(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         random_searcher=random_searcher,
         semantic_searcher=semantic_searcher,
     )
-    manager.load()
+    asyncio.run(manager.load())
     return manager
 
 
@@ -314,7 +314,7 @@ class TestLoadAndCount:
         md = FakeMetadataStore()
         vs = FakeVectorStore()
         m = IndexManager(metadata_store=md, vector_store=vs, memes_dir=str(tmp_path))
-        m.load()
+        asyncio.run(m.load())
         assert m.entry_count == 0
 
     def test_entry_count_reflects_store(self, index_manager: IndexManager) -> None:
