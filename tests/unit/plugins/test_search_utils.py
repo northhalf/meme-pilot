@@ -529,6 +529,82 @@ class TestExecuteSearch:
         _cmd.finish.assert_awaited_once()
         assert "搜索服务暂时不可用" in _cmd.finish.call_args[0][0]
 
+    @pytest.mark.asyncio
+    @patch("bot.plugins._search_utils.get_index_manager")
+    async def test_timeout_deactivates_session(self, mock_get_im: MagicMock) -> None:
+        """搜索超时时应 deactivate 会话，不泄漏。
+
+        构造已激活会话，mock search 抛 asyncio.TimeoutError，
+        execute_search 的错误分支应 deactivate_chat 使会话回归空闲。
+        """
+        import asyncio
+
+        from bot.plugins._search_utils import execute_search
+        from bot.session import session_manager
+
+        user_id = "f2_timeout_001"
+        # 确保干净起始状态后激活会话
+        session_manager.deactivate_chat(user_id)
+        session_manager.activate_chat(user_id, "search", _make_matcher())
+        assert session_manager.get_or_create_chat(user_id).active is True
+
+        mock_get_im.return_value = _make_index_manager(
+            search_side_effect=asyncio.TimeoutError()
+        )
+        _cmd = MagicMock()
+        _cmd.finish = AsyncMock()
+
+        await execute_search(_make_bot(), _make_event(user_id), _cmd, "加班")
+
+        # 错误分支应 deactivate，会话不再活跃
+        assert session_manager.get_or_create_chat(user_id).active is False
+
+    @pytest.mark.asyncio
+    @patch("bot.plugins._search_utils.get_index_manager")
+    async def test_runtime_error_deactivates_session(
+        self, mock_get_im: MagicMock
+    ) -> None:
+        """IndexManager 未初始化时应 deactivate 会话，不泄漏。"""
+        from bot.plugins._search_utils import execute_search
+        from bot.session import session_manager
+
+        user_id = "f2_runtime_001"
+        session_manager.deactivate_chat(user_id)
+        session_manager.activate_chat(user_id, "search", _make_matcher())
+        assert session_manager.get_or_create_chat(user_id).active is True
+
+        mock_get_im.side_effect = RuntimeError("not initialized")
+        _cmd = MagicMock()
+        _cmd.finish = AsyncMock()
+
+        await execute_search(_make_bot(), _make_event(user_id), _cmd, "加班")
+
+        assert session_manager.get_or_create_chat(user_id).active is False
+
+    @pytest.mark.asyncio
+    @patch("bot.plugins._search_utils.get_index_manager")
+    async def test_search_exception_deactivates_session(
+        self, mock_get_im: MagicMock
+    ) -> None:
+        """search() 抛非预期异常时应 deactivate 会话，不泄漏。"""
+        from bot.plugins._search_utils import execute_search
+        from bot.session import session_manager
+
+        user_id = "f2_exc_001"
+        session_manager.deactivate_chat(user_id)
+        session_manager.activate_chat(user_id, "search", _make_matcher())
+        assert session_manager.get_or_create_chat(user_id).active is True
+
+        mock_get_im.return_value = _make_index_manager(
+            search_side_effect=RuntimeError("pylcs 错误")
+        )
+        _cmd = MagicMock()
+        _cmd.finish = AsyncMock()
+
+        await execute_search(_make_bot(), _make_event(user_id), _cmd, "加班")
+
+        assert session_manager.get_or_create_chat(user_id).active is False
+
 
 class TestGotInterceptBypass:
     """got_intercept_bypass 测试。"""

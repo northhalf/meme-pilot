@@ -813,6 +813,7 @@ class IndexManager:
             raise RefreshInProgressError("已有刷新任务在运行")
 
         self._refresh_active = True
+        self._refresh_task = asyncio.current_task()
         try:
             if not self._write_queue.empty():
                 self._write_drained.clear()
@@ -822,6 +823,8 @@ class IndexManager:
                 return await self._run_sync_internal()
         finally:
             self._refresh_active = False
+            if self._refresh_task is asyncio.current_task():
+                self._refresh_task = None
 
     def _ensure_write_worker(self) -> None:
         """确保 Write Worker task 已启动（延迟启动）。"""
@@ -1492,6 +1495,10 @@ class IndexManager:
         text = "".join(
             text.split()
         )  # 统一去除所有空白（plan line 46 约定 + T8 不变量）
+        if not text:
+            # 空文本不 embed，由下游 no_text 分支移图
+            # （避免 provider 对空串抛 ValueError 导致 no_text 分支不可达）
+            return text, []
         if self._embedding_provider is None:
             raise EmbeddingError("Embedding 服务未注入")
         try:

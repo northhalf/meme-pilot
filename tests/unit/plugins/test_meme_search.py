@@ -244,6 +244,56 @@ class TestHandleSearchDelegation:
         assert opts.next_trigger == "n"
 
 
+# ---------------------------------------------------------------------------
+# 错误路径会话收口
+# ---------------------------------------------------------------------------
+
+
+class TestHandleSearchErrorDeactivation:
+    """搜索错误路径会话泄漏测试。"""
+
+    @pytest.mark.asyncio
+    @patch("bot.plugins._search_utils.dispatch_search_results", new_callable=AsyncMock)
+    @patch("bot.plugins._search_utils.get_index_manager")
+    @patch.object(meme_search, "is_authorized", return_value=True)
+    async def test_dispatch_exception_deactivates_session(
+        self,
+        mock_auth: MagicMock,
+        mock_get_im: MagicMock,
+        mock_dispatch: AsyncMock,
+    ) -> None:
+        """dispatch_search_results 抛非预期异常时入口应兜底 deactivate 会话。
+
+        使用真实 execute_search：mock get_index_manager 返回正常结果，
+        mock dispatch_search_results 抛 RuntimeError。异常经 execute_search
+        传播至 handle_search 的 except Exception 收口，应 deactivate 后 re-raise。
+        """
+        from bot.session import session_manager
+
+        user_id = "f2_search_dispatch_001"
+        # 确保干净起始状态
+        session_manager.deactivate_chat(user_id)
+
+        # 构造正常 search 返回非空结果，使 execute_search 进入 dispatch 分支
+        im = MagicMock()
+        im.search = AsyncMock(return_value=[_make_search_result()])
+        mock_get_im.return_value = im
+        # dispatch_search_results 抛非预期异常
+        mock_dispatch.side_effect = RuntimeError("dispatch boom")
+
+        bot = _make_bot()
+        event = _make_event(user_id=user_id, text="/search 测试")
+        matcher = _make_matcher()
+
+        # activate_chat 用真实 session_manager，会话应被激活
+        assert session_manager.get_or_create_chat(user_id).active is False
+        with pytest.raises(RuntimeError, match="dispatch boom"):
+            await handle_search(bot, event, matcher)
+
+        # 入口 except Exception 兜底 deactivate，会话不再活跃
+        assert session_manager.get_or_create_chat(user_id).active is False
+
+
 # ===========================================================================
 # got_selection 测试
 # ===========================================================================

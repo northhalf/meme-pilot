@@ -76,6 +76,13 @@ async def handle_search(bot: Bot, event: MessageEvent, matcher: Matcher) -> None
     except asyncio.CancelledError:
         session_manager.deactivate_chat(user_id)
         raise FinishedException
+    except FinishedException:
+        session_manager.deactivate_chat(user_id)
+        raise
+    except Exception:
+        logger.exception("用户 %s 的 /search 处理异常", user_id)
+        session_manager.deactivate_chat(user_id)
+        raise
 
 
 @search_cmd.got("selection")

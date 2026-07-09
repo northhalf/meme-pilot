@@ -50,7 +50,12 @@ async def handle_info(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
             await matcher.finish("服务未就绪，请稍后再试")
             return
 
-        info = await index_manager.info()
+        try:
+            info = await index_manager.info()
+        except Exception:
+            logger.exception("获取索引信息失败")
+            await matcher.finish("索引信息获取失败，请稍后再试")
+            return
 
         # 读取硬件信息
         try:

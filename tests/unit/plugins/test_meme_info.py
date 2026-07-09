@@ -111,6 +111,30 @@ class TestHandleInfoGroupChat:
         assert "当前机器人状态：空闲" in reply
 
 
+class TestHandleInfoIndexFailure:
+    """索引信息获取失败测试。"""
+
+    @pytest.mark.asyncio
+    @patch("bot.plugins.meme_info.get_index_manager")
+    @patch.object(meme_info, "is_authorized", return_value=True)
+    async def test_info_failure_returns_error_message(
+        self,
+        mock_auth: MagicMock,
+        mock_get_index_manager: MagicMock,
+    ) -> None:
+        """index_manager.info() 抛异常时应回复失败提示且不向上抛出。"""
+        mock_index_manager = MagicMock()
+        mock_index_manager.info = AsyncMock(side_effect=RuntimeError("db locked"))
+        mock_get_index_manager.return_value = mock_index_manager
+
+        matcher = _make_matcher()
+        # 不应抛出未捕获异常
+        await handle_info(_make_bot(), _make_event(), matcher)
+
+        mock_index_manager.info.assert_awaited_once()
+        matcher.finish.assert_awaited_once_with("索引信息获取失败，请稍后再试")
+
+
 class TestHandleInfoNormalReply:
     """正常回复内容测试。"""
 

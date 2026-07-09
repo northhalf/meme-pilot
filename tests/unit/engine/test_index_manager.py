@@ -438,6 +438,60 @@ async def test_close_cancels_pending_add(index_manager: IndexManager) -> None:
         await task
 
 
+@pytest.mark.anyio
+async def test_process_image_pipeline_empty_text(
+    index_manager: IndexManager,
+) -> None:
+    """OCR 返回空串时 _process_image_pipeline 应短路返回 ('', []) 且不调用 embed。"""
+
+    class EmptyOcrProvider:
+        async def ocr(self, image_path: str) -> str:
+            return ""
+
+    class SpyEmbeddingProvider:
+        async def embed(self, text: str) -> list[float]:
+            raise AssertionError("空文本不应调用 embed")
+
+    index_manager._ocr_provider = EmptyOcrProvider()
+    index_manager._embedding_provider = SpyEmbeddingProvider()
+    (Path(index_manager._memes_dir) / "blank.jpg").write_bytes(b"fake")
+
+    text, embedding = await index_manager._process_image_pipeline("blank.jpg")
+    assert text == ""
+    assert embedding == []
+
+
+@pytest.mark.anyio
+async def test_close_cancels_running_refresh(
+    index_manager: IndexManager,
+) -> None:
+    """close() 应取消正在运行的 refresh task 并正常关闭 stores。"""
+    entered = asyncio.Event()
+    blocked = asyncio.Event()
+    original = index_manager._run_sync_internal
+
+    async def hanging_sync() -> SyncResult:
+        entered.set()
+        await blocked.wait()  # 永不完成，模拟 refresh 长期持锁
+        return await original()
+
+    index_manager._run_sync_internal = hanging_sync
+
+    (Path(index_manager._memes_dir) / "a.jpg").write_bytes(b"fake")
+    task = asyncio.create_task(index_manager.refresh())
+    await entered.wait()
+
+    # F7: refresh 运行中应已记录自身 task，供 close() 取消
+    assert index_manager._refresh_task is task
+
+    await index_manager.close()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    # finally 应清理 _refresh_task
+    assert index_manager._refresh_task is None
+
+
 # ---------------------------------------------------------------------------
 # add 测试
 # ---------------------------------------------------------------------------
@@ -555,6 +609,28 @@ class TestAdd:
         # 验证旧图仍在 memes/（upsert 失败时不应移动旧图），新图应已被清理
         assert (Path(index_manager._memes_dir) / "old.jpg").exists()
         assert not (Path(index_manager._memes_dir) / "new.jpg").exists()
+
+    @pytest.mark.anyio
+    async def test_add_no_text_moves_file(self, index_manager: IndexManager) -> None:
+        """无文字图片 add() 应移入 meme_no_text/ 并返回 reason=no_text。"""
+
+        class EmptyOcrProvider:
+            async def ocr(self, image_path: str) -> str:
+                return ""
+
+        index_manager._ocr_provider = EmptyOcrProvider()
+        memes_dir = Path(index_manager._memes_dir)
+        no_text_dir = Path(index_manager._no_text_dir)
+        (memes_dir / "blank.jpg").write_bytes(b"fake")
+
+        result = await index_manager.add("blank.jpg")
+        assert result.reason == "no_text"
+        assert result.moved_to is not None
+        assert not (memes_dir / "blank.jpg").exists()
+        assert Path(result.moved_to).exists()
+        assert Path(result.moved_to).parent == no_text_dir
+
+        await index_manager.close()
 
 
 # ---------------------------------------------------------------------------
@@ -943,6 +1019,29 @@ class TestRefresh:
         assert result.added == 0
         assert not (memes_dir / "new.jpg").exists()
         assert (replaced_dir / "new.jpg").exists()
+
+    @pytest.mark.anyio
+    async def test_refresh_no_text_moved(self, index_manager: IndexManager) -> None:
+        """refresh 遇到无文字新图应移入 meme_no_text/，计入 no_text_moved 且不计入 failed。"""
+
+        class EmptyOcrProvider:
+            async def ocr(self, image_path: str) -> str:
+                return ""
+
+        index_manager._ocr_provider = EmptyOcrProvider()
+        memes_dir = Path(index_manager._memes_dir)
+        no_text_dir = Path(index_manager._no_text_dir)
+        (memes_dir / "blank.jpg").write_bytes(b"fake")
+
+        result = await index_manager.refresh()
+        assert result.no_text_moved == 1
+        assert result.added == 0
+        assert "blank.jpg" not in result.failed
+        assert not (memes_dir / "blank.jpg").exists()
+        moved_files = list(no_text_dir.glob("blank*"))
+        assert len(moved_files) == 1
+
+        await index_manager.close()
 
 
 # ---------------------------------------------------------------------------

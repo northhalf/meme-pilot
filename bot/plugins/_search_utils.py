@@ -298,6 +298,7 @@ async def execute_search(
         index_manager = get_index_manager()
     except RuntimeError:
         logger.error("IndexManager 尚未初始化")
+        session_manager.deactivate_chat(user_id)
         await cmd_matcher.finish("服务未就绪，请稍后再试")
         return
 
@@ -306,10 +307,12 @@ async def execute_search(
         results = await index_manager.search(keyword)
     except asyncio.TimeoutError:
         logger.info("用户 %s 的搜索等待读锁超时", user_id)
+        session_manager.deactivate_chat(user_id)
         await cmd_matcher.finish("索引更新较慢，请稍后再试")
         return
     except Exception:
         logger.exception("关键词搜索异常: keyword=%r", keyword)
+        session_manager.deactivate_chat(user_id)
         await cmd_matcher.finish("搜索服务暂时不可用，稍后重试")
         return
 

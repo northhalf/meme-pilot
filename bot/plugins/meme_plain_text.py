@@ -77,6 +77,13 @@ async def handle_plain_text(bot: Bot, event: MessageEvent, matcher: Matcher) -> 
         await execute_search(bot, event, matcher, text, options=SEARCH_OPTIONS)
     except asyncio.CancelledError:
         raise FinishedException
+    except FinishedException:
+        session_manager.deactivate_chat(user_id)
+        raise
+    except Exception:
+        logger.exception("用户 %s 的兜底搜索处理异常", user_id)
+        session_manager.deactivate_chat(user_id)
+        raise
 
 
 @catch_all.got("selection")
