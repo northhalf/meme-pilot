@@ -669,6 +669,7 @@ def get_semantic_searcher() -> SemanticSearcher
 
 NoneBot2 命令插件，注册 `/refresh` 命令。
 
+- 注册：`on_command("refresh", rule=to_me(), priority=5, block=True, aliases={"r"})`
 - 依赖：`app_state.get_index_manager()`、`auth.is_authorized()`
 - 同步：`IndexManager.refresh() -> SyncResult`
 - 群聊：授权用户群聊 @bot 调用时回复"此命令仅限私聊使用"
@@ -771,7 +772,7 @@ HELP_TEXT: str  # 命令帮助摘要文本
 
 NoneBot2 命令插件，注册 `/help` 命令。
 
-- 注册：`on_command("help", rule=to_me(), priority=5, block=True)`
+- 注册：`on_command("help", rule=to_me(), priority=5, block=True, aliases={"h"})`
 - 依赖：`auth.is_authorized()`
 - 群聊：支持群聊 @bot 触发
 
@@ -779,7 +780,7 @@ NoneBot2 命令插件，注册 `/help` 命令。
 
 NoneBot2 命令插件，注册 `/cancel` 命令。
 
-- 注册：`on_command("cancel", rule=to_me(), priority=5, block=True)`
+- 注册：`on_command("cancel", rule=to_me(), priority=5, block=True, aliases={"c"})`
 - 依赖：`auth.is_authorized()`、`bot.session.session_manager`
 - 行为：授权用户私聊或群聊 @bot 调用 → `execute_cancel()` 取消活跃会话；无活跃会话时回复"当前没有活跃的会话"
 - 旁路：`/cancel` 在 `got` 等待阶段可通过 `got_intercept_bypass` 旁路触发，不受会话互斥影响
@@ -818,6 +819,7 @@ NoneBot2 命令插件，注册 `/cancel` 命令。
 
 NoneBot2 命令插件，注册 `/add` 命令。
 
+- 注册：`on_command("add", rule=to_me(), priority=5, block=True, aliases={"a"})`，参数经 `CommandArg()` 提取（短命令 `/a` 等价）
 - 依赖：`app_state.get_index_manager()`、`auth.is_authorized()`、`bot.session.session_manager`、`bot.session.timeout_session`、`bot.plugins._search_utils.got_intercept_bypass`、`bot.config.read_session_timeout()`
 - 管道：`IndexManager.add(filename, speaker=speaker, tags=tags) -> AddResult`
 - 图片下载：`httpx.AsyncClient`，30s 超时
@@ -833,6 +835,7 @@ NoneBot2 命令插件，注册 `/add` 命令。
 
 NoneBot2 命令插件，注册 `/edittext` 命令。
 
+- 注册：`on_command("edittext", rule=to_me(), priority=5, block=True, aliases={"e"})`，参数经 `CommandArg()` 提取（短命令 `/e` 等价）
 - 依赖：`app_state.get_index_manager()`、`auth.is_authorized()`、`bot.session.session_manager`、`bot.session.timeout_session`、`bot.plugins._search_utils.got_intercept_bypass`
 - 管道：`IndexManager.edit_text() -> EditTextResult`
 - 流程：`/edittext <id> <新文本>` → 发送确认消息（含图片） → 用户回复「确认」后执行修改 → 更新 sqlite 元数据、chroma 向量、关键词搜索索引
@@ -843,6 +846,7 @@ NoneBot2 命令插件，注册 `/edittext` 命令。
 
 NoneBot2 命令插件，注册 `/setspeaker` 命令。
 
+- 注册：`on_command("setspeaker", rule=to_me(), priority=5, block=True, aliases={"sp"})`，参数经 `CommandArg()` 提取（短命令 `/sp` 等价）
 - 依赖：`app_state.get_index_manager()`、`app_state.get_metadata_store()`、`auth.is_authorized()`、`bot.session.session_manager`、`bot.session.timeout_session`、`bot.plugins._search_utils.got_intercept_bypass`、`bot.config.read_session_timeout()`
 - 管道：`IndexManager.set_speaker()`
 - 流程：`/setspeaker <id> [说话人]` → 发送图片与确认消息 → 用户回复「确认/yes」后执行修改 → 更新 sqlite 元数据；`[说话人]` 缺省时清空字段
@@ -853,6 +857,7 @@ NoneBot2 命令插件，注册 `/setspeaker` 命令。
 
 NoneBot2 命令插件，注册 `/addtag` 命令。
 
+- 注册：`on_command("addtag", rule=to_me(), priority=5, block=True, aliases={"at"})`，参数经 `CommandArg()` 提取（短命令 `/at` 等价）
 - 依赖：`app_state.get_index_manager()`、`app_state.get_metadata_store()`、`auth.is_authorized()`、`bot.session.session_manager`、`bot.session.timeout_session`、`bot.plugins._search_utils.got_intercept_bypass`
 - 管道：`IndexManager.add_tags()`
 - 流程：`/addtag <id> <tag> [<tag>...]` → 发送确认消息（含 OCR 文本、当前标签、新增标签） → 用户回复「确认/yes」后追加标签
@@ -863,6 +868,7 @@ NoneBot2 命令插件，注册 `/addtag` 命令。
 
 NoneBot2 命令插件，注册 `/del` 命令。
 
+- 注册：`on_command("del", rule=to_me(), priority=5, block=True, aliases={"d"})`，参数经 `CommandArg()` 提取（短命令 `/d` 等价）
 - 依赖：`app_state.get_index_manager()`、`app_state.get_metadata_store()`、`auth.is_authorized()`、`bot.session.session_manager`、`bot.session.timeout_session`、`bot.plugins._search_utils.got_intercept_bypass`
 - 管道：`IndexManager.delete()`
 - 流程：`/del <id>...` → 发送摘要确认消息 → 用户回复「确认/yes」后执行删除
@@ -915,6 +921,7 @@ NoneBot2 命令插件，注册 `/sim` 命令（语义相似度全库召回 + 分
 
 NoneBot2 命令插件，注册 `/search` 命令（薄包装，核心逻辑委托 `_search_utils`）。
 
+- 注册：`on_command("search", rule=to_me(), priority=5, block=True, aliases={"s"})`，参数经 `CommandArg()` 提取（短命令 `/s` 等价）
 - 依赖：`auth.is_authorized()`、`_search_utils.execute_search`、`_search_utils.handle_got_selection`、`bot.session.session_manager`
 - 流程：`handle_search` — 授权校验 → 会话检查 → 提取关键词 → `execute_search`（传入 SEARCH_OPTIONS：展示关键词相似度百分比 score + 回复 n 翻页）
 - 选择：`got_selection` — 薄包装，委托 `_search_utils.handle_got_selection()`；命中后先发送图片，再发送 `format_metadata_line()` 元数据文本消息

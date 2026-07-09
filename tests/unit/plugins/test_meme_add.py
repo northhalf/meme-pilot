@@ -86,6 +86,13 @@ def _make_response(content_type: str = "image/jpeg") -> MagicMock:
     return resp
 
 
+def _make_message(text: str = "") -> MagicMock:
+    """创建模拟的 Message 对象（CommandArg 注入）。"""
+    msg = MagicMock()
+    msg.extract_plain_text.return_value = text
+    return msg
+
+
 # ===========================================================================
 # /add 参数解析测试
 # ===========================================================================
@@ -102,7 +109,9 @@ class TestParseAddArgs:
         mock_sm.activate_chat.return_value = True
         mock_get_im.return_value = _make_index_manager()
         matcher = _make_matcher()
-        await handle_add(_make_bot(), _make_event("111", "/add"), matcher)
+        await handle_add(
+            _make_bot(), _make_event("111", "/add"), matcher, args=_make_message("")
+        )
         assert matcher.state["speaker"] is None
         assert matcher.state["tags"] == []
 
@@ -114,7 +123,12 @@ class TestParseAddArgs:
         mock_sm.activate_chat.return_value = True
         mock_get_im.return_value = _make_index_manager()
         matcher = _make_matcher()
-        await handle_add(_make_bot(), _make_event("111", "/add 小明"), matcher)
+        await handle_add(
+            _make_bot(),
+            _make_event("111", "/add 小明"),
+            matcher,
+            args=_make_message("小明"),
+        )
         assert matcher.state["speaker"] == "小明"
         assert matcher.state["tags"] == []
 
@@ -126,7 +140,32 @@ class TestParseAddArgs:
         mock_sm.activate_chat.return_value = True
         mock_get_im.return_value = _make_index_manager()
         matcher = _make_matcher()
-        await handle_add(_make_bot(), _make_event("111", "/add 小明 吐槽 加班"), matcher)
+        await handle_add(
+            _make_bot(),
+            _make_event("111", "/add 小明 吐槽 加班"),
+            matcher,
+            args=_make_message("小明 吐槽 加班"),
+        )
+        assert matcher.state["speaker"] == "小明"
+        assert matcher.state["tags"] == ["吐槽", "加班"]
+
+    @pytest.mark.asyncio
+    @patch.object(meme_add, "get_index_manager")
+    @patch.object(meme_add, "is_authorized", return_value=True)
+    @patch.object(meme_add, "session_manager")
+    async def test_short_command_extracts_speaker_and_tags(
+        self, mock_sm, mock_auth, mock_get_im
+    ) -> None:
+        """短命令 /a 的参数经 CommandArg 提取后应与 /add 一致。"""
+        mock_sm.activate_chat.return_value = True
+        mock_get_im.return_value = _make_index_manager()
+        matcher = _make_matcher()
+        await handle_add(
+            _make_bot(),
+            _make_event("111", "/a 小明 吐槽 加班"),
+            matcher,
+            args=_make_message("小明 吐槽 加班"),
+        )
         assert matcher.state["speaker"] == "小明"
         assert matcher.state["tags"] == ["吐槽", "加班"]
 
@@ -352,7 +391,9 @@ class TestHandleAdd:
     ) -> None:
         """非授权用户应调用 finish(None) 结束匹配。"""
         matcher = _make_matcher()
-        await handle_add(_make_bot(), _make_event("999"), matcher)
+        await handle_add(
+            _make_bot(), _make_event("999"), matcher, args=_make_message("")
+        )
 
         matcher.finish.assert_awaited_once_with(None)
         matcher.send.assert_not_awaited()
@@ -370,7 +411,7 @@ class TestHandleAdd:
         event.message_type = "group"
 
         matcher = _make_matcher()
-        await handle_add(_make_bot(), event, matcher)
+        await handle_add(_make_bot(), event, matcher, args=_make_message("测试"))
 
         matcher.finish.assert_awaited_once()
         call_args = matcher.finish.call_args[0][0]
@@ -392,7 +433,9 @@ class TestHandleAdd:
         mock_get_im.return_value = _make_index_manager()
 
         matcher = _make_matcher()
-        await handle_add(_make_bot(), _make_event("111"), matcher)
+        await handle_add(
+            _make_bot(), _make_event("111"), matcher, args=_make_message("")
+        )
 
         mock_sm.activate_chat.assert_called_once_with("111", "add", matcher)
 
@@ -408,7 +451,9 @@ class TestHandleAdd:
         mock_sm.activate_chat.return_value = False
 
         matcher = _make_matcher()
-        await handle_add(_make_bot(), _make_event("111"), matcher)
+        await handle_add(
+            _make_bot(), _make_event("111"), matcher, args=_make_message("")
+        )
 
         matcher.finish.assert_awaited_once()
         assert "已有命令在处理中" in matcher.finish.call_args[0][0]

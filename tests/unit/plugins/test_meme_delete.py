@@ -51,6 +51,13 @@ def _make_entry(entry_id: int, text: str) -> MagicMock:
     return entry
 
 
+def _make_message(text: str = "") -> MagicMock:
+    """创建模拟的 Message 对象（CommandArg 注入）。"""
+    msg = MagicMock()
+    msg.extract_plain_text.return_value = text
+    return msg
+
+
 # ---------------------------------------------------------------------------
 # handle_delete 测试
 # ---------------------------------------------------------------------------
@@ -69,7 +76,7 @@ class TestHandleDelete:
             event = _make_event()
             matcher = _make_matcher()
 
-            asyncio.run(handle_delete(bot, event, matcher))  # type: ignore[arg-type]
+            asyncio.run(handle_delete(bot, event, matcher, args=_make_message("")))  # type: ignore[arg-type]
 
             assert matcher.finish.call_count == 1
             assert matcher.finish.await_args[0][0] is None
@@ -83,7 +90,7 @@ class TestHandleDelete:
             event.message_type = "group"
             matcher = _make_matcher()
 
-            asyncio.run(handle_delete(bot, event, matcher))  # type: ignore[arg-type]
+            asyncio.run(handle_delete(bot, event, matcher, args=_make_message("")))  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once_with("此命令仅限私聊使用")
 
@@ -100,7 +107,7 @@ class TestHandleDelete:
             event = _make_event(text="/del")
             matcher = _make_matcher()
 
-            asyncio.run(handle_delete(bot, event, matcher))  # type: ignore[arg-type]
+            asyncio.run(handle_delete(bot, event, matcher, args=_make_message("")))  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
@@ -119,7 +126,7 @@ class TestHandleDelete:
             event = _make_event(text="/del abc")
             matcher = _make_matcher()
 
-            asyncio.run(handle_delete(bot, event, matcher))  # type: ignore[arg-type]
+            asyncio.run(handle_delete(bot, event, matcher, args=_make_message("abc")))  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once_with("id 必须为数字")
 
@@ -144,7 +151,7 @@ class TestHandleDelete:
             event = _make_event(text="/del 999 998")
             matcher = _make_matcher()
 
-            asyncio.run(handle_delete(bot, event, matcher))  # type: ignore[arg-type]
+            asyncio.run(handle_delete(bot, event, matcher, args=_make_message("999 998")))  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once_with("未找到任何表情包")
             mock_deactivate.assert_called_once()
@@ -181,7 +188,7 @@ class TestHandleDelete:
             event = _make_event(text="/del 42 43 44")
             matcher = _make_matcher()
 
-            asyncio.run(handle_delete(bot, event, matcher))  # type: ignore[arg-type]
+            asyncio.run(handle_delete(bot, event, matcher, args=_make_message("42 43 44")))  # type: ignore[arg-type]
 
             assert matcher.send.await_count == 1
             msg = matcher.send.await_args[0][0]
@@ -346,3 +353,47 @@ class TestGotConfirm:
             asyncio.run(got_confirm(bot, event, matcher, "CONFIRM_ARG_SENTINEL"))  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once_with("索引正在刷新，请稍后再试")
+
+
+# ---------------------------------------------------------------------------
+# 短命令 /d 测试
+# ---------------------------------------------------------------------------
+
+
+class TestShortCommandDelete:
+    """短命令 /d 通过 CommandArg 提取参数测试。"""
+
+    def test_short_command_extracts_ids(self) -> None:
+        """短命令 /d 的参数经 CommandArg 提取后应与 /del 一致。"""
+        with (
+            patch("bot.plugins.meme_delete.is_authorized", return_value=True),
+            patch(
+                "bot.plugins.meme_delete.session_manager.activate_chat",
+                return_value=True,
+            ),
+            patch("bot.plugins.meme_delete.get_metadata_store") as mock_store,
+            patch(
+                "bot.plugins.meme_delete.session_manager.create_selection"
+            ),
+            patch(
+                "bot.plugins.meme_delete.session_manager.reset_current_task"
+            ),
+            patch("bot.plugins.meme_delete.timeout_session", new_callable=MagicMock),
+            patch("bot.plugins.meme_delete.asyncio.create_task"),
+        ):
+            entry = MagicMock()
+            entry.text = "文本"
+            store = MagicMock()
+            store.get_entry.return_value = entry
+            mock_store.return_value = store
+
+            matcher = _make_matcher()
+            asyncio.run(
+                handle_delete(
+                    _make_bot(),
+                    _make_event(text="/d 12 42"),
+                    matcher,
+                    args=_make_message("12 42"),
+                )  # type: ignore[arg-type]
+            )
+            assert matcher.state["entry_ids"] == [12, 42]

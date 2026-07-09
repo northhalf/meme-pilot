@@ -59,6 +59,13 @@ def _make_entry(image_path: str = "test.jpg", text: str = "旧文本") -> MagicM
     return entry
 
 
+def _make_message(text: str = "") -> MagicMock:
+    """创建模拟的 Message 对象（CommandArg 注入）。"""
+    msg = MagicMock()
+    msg.extract_plain_text.return_value = text
+    return msg
+
+
 # ---------------------------------------------------------------------------
 # handle_edit 测试
 # ---------------------------------------------------------------------------
@@ -77,7 +84,7 @@ class TestHandleEdit:
             event = _make_event()
             matcher = _make_matcher()
 
-            asyncio.run(handle_edit(bot, event, matcher))  # type: ignore[arg-type]
+            asyncio.run(handle_edit(bot, event, matcher, args=_make_message("")))  # type: ignore[arg-type]
 
             assert matcher.finish.call_count == 1
             assert matcher.finish.await_args[0][0] is None
@@ -96,7 +103,7 @@ class TestHandleEdit:
             event.message_type = "group"
             matcher = _make_matcher()
 
-            asyncio.run(handle_edit(bot, event, matcher))  # type: ignore[arg-type]
+            asyncio.run(handle_edit(bot, event, matcher, args=_make_message("")))  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once_with("此命令仅限私聊使用")
 
@@ -112,7 +119,7 @@ class TestHandleEdit:
             event = _make_event(text="/edittext")
             matcher = _make_matcher()
 
-            asyncio.run(handle_edit(bot, event, matcher))  # type: ignore[arg-type]
+            asyncio.run(handle_edit(bot, event, matcher, args=_make_message("")))  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once()
             args, _ = matcher.finish.await_args
@@ -130,7 +137,7 @@ class TestHandleEdit:
             event = _make_event(text="/edittext abc 新文本")
             matcher = _make_matcher()
 
-            asyncio.run(handle_edit(bot, event, matcher))  # type: ignore[arg-type]
+            asyncio.run(handle_edit(bot, event, matcher, args=_make_message("abc 新文本")))  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once_with("entry_id 必须为数字")
 
@@ -151,7 +158,7 @@ class TestHandleEdit:
             event = _make_event(text="/edittext 5 新文本")
             matcher = _make_matcher()
 
-            asyncio.run(handle_edit(bot, event, matcher))  # type: ignore[arg-type]
+            asyncio.run(handle_edit(bot, event, matcher, args=_make_message("5 新文本")))  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once()
             args, _ = matcher.finish.await_args
@@ -170,9 +177,35 @@ class TestHandleEdit:
             event = _make_event(text="/edittext 5 新文本")
             matcher = _make_matcher()
 
-            asyncio.run(handle_edit(bot, event, matcher))  # type: ignore[arg-type]
+            asyncio.run(handle_edit(bot, event, matcher, args=_make_message("5 新文本")))  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once_with("已有命令在处理中，请先 /cancel")
+
+    def test_short_command_extracts_id_and_text(self) -> None:
+        """短命令 /e 的参数经 CommandArg 提取后应与 /edittext 一致。"""
+        with (
+            patch("bot.plugins.meme_edit.is_authorized", return_value=True),
+            patch(
+                "bot.plugins.meme_edit.session_manager.activate_chat", return_value=True
+            ),
+            patch("bot.plugins.meme_edit.get_metadata_store") as mock_store,
+            patch("bot.plugins.meme_edit.session_manager.create_selection"),
+            patch("bot.plugins.meme_edit.session_manager.reset_current_task"),
+            patch("bot.plugins.meme_edit.timeout_session", new_callable=MagicMock),
+            patch("bot.plugins.meme_edit.asyncio.create_task"),
+        ):
+            store = MagicMock()
+            store.get_entry.return_value = _make_entry(text="旧文本")
+            mock_store.return_value = store
+
+            bot = _make_bot()
+            event = _make_event(text="/e 5 新文本")
+            matcher = _make_matcher()
+
+            asyncio.run(handle_edit(bot, event, matcher, args=_make_message("5 新文本")))
+
+            assert matcher.state["entry_id"] == 5
+            assert matcher.state["new_text"] == "新文本"
 
 
 # ---------------------------------------------------------------------------

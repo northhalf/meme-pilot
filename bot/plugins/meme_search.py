@@ -15,7 +15,7 @@ from nonebot.adapters.onebot.v11 import (
 )
 from nonebot.exception import FinishedException
 from nonebot.matcher import Matcher
-from nonebot.params import Arg
+from nonebot.params import Arg, CommandArg
 from nonebot.rule import to_me
 
 from bot.auth import is_authorized, log_unauthorized
@@ -33,11 +33,13 @@ SEARCH_OPTIONS = PresentOptions(
     show_similarity=True, similarity_scale="score", next_trigger=NEXT_PAGE_TRIGGER
 )
 
-search_cmd = on_command("search", rule=to_me(), priority=5, block=True)
+search_cmd = on_command("search", rule=to_me(), priority=5, block=True, aliases={"s"})
 
 
 @search_cmd.handle()
-async def handle_search(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
+async def handle_search(
+    bot: Bot, event: MessageEvent, matcher: Matcher, args: Message = CommandArg()
+) -> None:
     """/search 命令入口。
 
     流程：授权校验 → 会话检查 → 提取关键词 → 调用 execute_search。
@@ -46,6 +48,7 @@ async def handle_search(bot: Bot, event: MessageEvent, matcher: Matcher) -> None
         bot: OneBot V11 Bot 实例。
         event: 消息事件。
         matcher: NoneBot2 Matcher 实例。
+        args: 命令参数（CommandArg 注入），含关键词的 Message 对象。
     """
     user_id = event.get_user_id()
     logger.info("用户 %s 调用 /search", user_id)
@@ -63,8 +66,7 @@ async def handle_search(bot: Bot, event: MessageEvent, matcher: Matcher) -> None
             return
 
         # 提取关键词
-        raw_text = event.get_plaintext().strip()
-        keyword = raw_text.removeprefix("/search").removeprefix("search").strip()
+        keyword = args.extract_plain_text().strip()
         if not keyword:
             session_manager.deactivate_chat(user_id)
             logger.info("用户 %s 的 /search 缺少关键词", user_id)

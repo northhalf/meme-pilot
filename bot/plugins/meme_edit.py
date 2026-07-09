@@ -12,7 +12,7 @@ from nonebot import on_command
 from nonebot.adapters.onebot.v11 import Bot, Message, MessageEvent, MessageSegment
 from nonebot.exception import FinishedException, RejectedException
 from nonebot.matcher import Matcher
-from nonebot.params import Arg
+from nonebot.params import Arg, CommandArg
 from nonebot.rule import to_me
 
 from bot.app_state import get_index_manager, get_metadata_store
@@ -30,17 +30,20 @@ from bot.session import session_manager, timeout_session
 
 logger = logging.getLogger(__name__)
 
-edit_cmd = on_command("edittext", rule=to_me(), priority=5, block=True)
+edit_cmd = on_command("edittext", rule=to_me(), priority=5, block=True, aliases={"e"})
 
 
 @edit_cmd.handle()
-async def handle_edit(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
+async def handle_edit(
+    bot: Bot, event: MessageEvent, matcher: Matcher, args: Message = CommandArg()
+) -> None:
     """入口：授权校验 → 参数解析 → 发图确认。
 
     Args:
         bot: OneBot V11 Bot 实例。
         event: 私聊消息事件。
         matcher: NoneBot2 Matcher 实例。
+        args: CommandArg() 注入的命令参数消息。
     """
     user_id = event.get_user_id()
     logger.info("用户 %s 调用 /edittext", user_id)
@@ -63,8 +66,7 @@ async def handle_edit(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
             return
 
         # 解析参数
-        raw = event.get_plaintext().strip()
-        text_part = raw.removeprefix("/edittext").removeprefix("edittext").strip()
+        text_part = args.extract_plain_text().strip()
         parts = text_part.split(maxsplit=1)
         if len(parts) < 2:
             session_manager.deactivate_chat(user_id)

@@ -101,7 +101,9 @@ class TestHandleSearchAuth:
         self, mock_auth: MagicMock, mock_exec: AsyncMock, mock_activate: MagicMock
     ) -> None:
         """授权用户应正常调用 execute_search。"""
-        await handle_search(_make_bot(), _make_event(), _make_matcher())
+        await handle_search(
+            _make_bot(), _make_event(), _make_matcher(), args=_make_message("加班")
+        )
 
         mock_exec.assert_awaited_once()
 
@@ -115,7 +117,9 @@ class TestHandleSearchAuth:
         _reset_cmd()
         bot = _make_bot()
 
-        await handle_search(bot, _make_event("999"), _make_matcher())
+        await handle_search(
+            bot, _make_event("999"), _make_matcher(), args=_make_message("")
+        )
 
         mock_exec.assert_not_awaited()
         _mock_cmd.finish.assert_not_awaited()
@@ -142,7 +146,9 @@ class TestHandleSearchSessionRejection:
     ) -> None:
         """活跃会话存在时应拒绝新命令。"""
         matcher = _make_matcher()
-        await handle_search(_make_bot(), _make_event(), matcher)
+        await handle_search(
+            _make_bot(), _make_event(), matcher, args=_make_message("")
+        )
 
         matcher.finish.assert_awaited_once_with("已有命令在处理中，请先 /cancel")
         mock_exec.assert_not_awaited()
@@ -159,7 +165,9 @@ class TestHandleSearchSessionRejection:
     ) -> None:
         """无活跃会话时应正常执行搜索。"""
         matcher = _make_matcher()
-        await handle_search(_make_bot(), _make_event(), matcher)
+        await handle_search(
+            _make_bot(), _make_event(), matcher, args=_make_message("加班")
+        )
 
         matcher.send.assert_not_awaited()
         mock_exec.assert_awaited_once()
@@ -181,7 +189,9 @@ class TestHandleSearchEmptyKeyword:
     ) -> None:
         """/search 无参数时应回复用法提示。"""
         matcher = _make_matcher()
-        await handle_search(_make_bot(), _make_event(text="/search"), matcher)
+        await handle_search(
+            _make_bot(), _make_event(text="/search"), matcher, args=_make_message("")
+        )
 
         matcher.finish.assert_awaited_once()
         assert "/search" in matcher.finish.call_args[0][0]
@@ -210,7 +220,7 @@ class TestHandleSearchDelegation:
         event = _make_event(text="/search 测试关键词")
         matcher = _make_matcher()
 
-        await handle_search(bot, event, matcher)
+        await handle_search(bot, event, matcher, args=_make_message("测试关键词"))
 
         mock_exec.assert_awaited_once()
         # options 由 test_search_passes_score_options 专门验证；此处只校验 positional 委托
@@ -234,7 +244,10 @@ class TestHandleSearchDelegation:
             mock_exec: 替换 execute_search 的 AsyncMock。
         """
         await handle_search(
-            _make_bot(), _make_event(text="/search 测试"), _make_matcher()
+            _make_bot(),
+            _make_event(text="/search 测试"),
+            _make_matcher(),
+            args=_make_message("测试"),
         )
 
         mock_exec.assert_awaited_once()
@@ -288,7 +301,7 @@ class TestHandleSearchErrorDeactivation:
         # activate_chat 用真实 session_manager，会话应被激活
         assert session_manager.get_or_create_chat(user_id).active is False
         with pytest.raises(RuntimeError, match="dispatch boom"):
-            await handle_search(bot, event, matcher)
+            await handle_search(bot, event, matcher, args=_make_message("测试"))
 
         # 入口 except Exception 兜底 deactivate，会话不再活跃
         assert session_manager.get_or_create_chat(user_id).active is False
@@ -531,3 +544,31 @@ class TestGotSelection:
         mock_handle.assert_called_once()
         matcher.reject.assert_awaited_once()
         assert "搜索状态异常" in matcher.reject.call_args[0][0]
+
+
+# ===========================================================================
+# 短命令 /s 参数提取测试
+# ===========================================================================
+
+
+class TestShortCommandSearch:
+    """短命令 /s 通过 CommandArg 提取关键词测试。"""
+
+    @pytest.mark.asyncio
+    @patch.object(meme_search, "execute_search", new_callable=AsyncMock)
+    @patch.object(meme_search.session_manager, "activate_chat", return_value=True)
+    @patch.object(meme_search, "is_authorized", return_value=True)
+    async def test_short_command_extracts_keyword(
+        self,
+        mock_auth: MagicMock,
+        mock_activate: MagicMock,
+        mock_exec: AsyncMock,
+    ) -> None:
+        """短命令 /s 的参数经 CommandArg 提取后应与 /search 一致。"""
+        bot = _make_bot()
+        event = _make_event(text="/s 加班")
+        matcher = _make_matcher()
+
+        await handle_search(bot, event, matcher, args=_make_message("加班"))
+
+        assert mock_exec.call_args[0] == (bot, event, matcher, "加班")

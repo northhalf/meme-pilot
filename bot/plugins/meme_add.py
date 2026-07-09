@@ -17,7 +17,7 @@ from nonebot.adapters.onebot.v11 import Bot, Message, MessageEvent
 from nonebot.adapters.onebot.v11.helpers import extract_image_urls
 from nonebot.exception import FinishedException, RejectedException
 from nonebot.matcher import Matcher
-from nonebot.params import Arg
+from nonebot.params import Arg, CommandArg
 from nonebot.rule import to_me
 
 from bot.app_state import get_index_manager
@@ -41,11 +41,13 @@ logger = logging.getLogger(__name__)
 DOWNLOAD_TIMEOUT = 30  # 图片下载超时（秒）
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
 
-add_cmd = on_command("add", rule=to_me(), priority=5, block=True)
+add_cmd = on_command("add", rule=to_me(), priority=5, block=True, aliases={"a"})
 
 
 @add_cmd.handle()
-async def handle_add(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
+async def handle_add(
+    bot: Bot, event: MessageEvent, matcher: Matcher, args: Message = CommandArg()
+) -> None:
     """/add 命令入口。
 
     流程：授权校验 → 会话检查 → 捕获说话人和标签。
@@ -54,6 +56,7 @@ async def handle_add(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
         bot: OneBot V11 Bot 实例。
         event: 私聊消息事件。
         matcher: NoneBot2 Matcher 实例。
+        args: 命令参数（说话人 + 标签），由 CommandArg 注入。
     """
     user_id = event.get_user_id()
     logger.info("用户 %s 调用 /add", user_id)
@@ -77,8 +80,7 @@ async def handle_add(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
             return
 
         # 解析 speaker 和 tags
-        raw_text = event.get_plaintext().strip()
-        args_text = raw_text.removeprefix("/add").removeprefix("add").strip()
+        args_text = args.extract_plain_text().strip()
         parts = args_text.split()
         speaker = parts[0] if parts else None
         tags = parts[1:] if len(parts) > 1 else []
@@ -281,9 +283,7 @@ async def _download_image(url: str) -> tuple[bytes, httpx.Response]:
             url, timeout=DOWNLOAD_TIMEOUT, follow_redirects=True
         )
         if response.status_code >= 500:
-            raise DownloadServerError(
-                f"图片服务器错误 {response.status_code}: {url}"
-            )
+            raise DownloadServerError(f"图片服务器错误 {response.status_code}: {url}")
         response.raise_for_status()
         return response.content, response
 

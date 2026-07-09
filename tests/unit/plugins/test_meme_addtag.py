@@ -48,6 +48,13 @@ def _make_matcher(*, state: dict | None = None) -> MagicMock:
     return matcher
 
 
+def _make_message(text: str = "") -> MagicMock:
+    """创建模拟的 Message 对象（CommandArg 注入）。"""
+    msg = MagicMock()
+    msg.extract_plain_text.return_value = text
+    return msg
+
+
 def _make_entry(
     image_path: str = "test.jpg",
     text: str = "测试文本",
@@ -81,7 +88,7 @@ class TestHandleAddtag:
             event = _make_event()
             matcher = _make_matcher()
 
-            asyncio.run(handle_addtag(bot, event, matcher))  # type: ignore[arg-type]
+            asyncio.run(handle_addtag(bot, event, matcher, args=_make_message("")))  # type: ignore[arg-type]
 
             assert matcher.finish.call_count == 1
             assert matcher.finish.await_args[0][0] is None
@@ -101,7 +108,7 @@ class TestHandleAddtag:
             event.message_type = "group"
             matcher = _make_matcher()
 
-            asyncio.run(handle_addtag(bot, event, matcher))  # type: ignore[arg-type]
+            asyncio.run(handle_addtag(bot, event, matcher, args=_make_message("")))  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once_with("此命令仅限私聊使用")
 
@@ -118,7 +125,7 @@ class TestHandleAddtag:
             event = _make_event(text="/addtag 3 标签")
             matcher = _make_matcher()
 
-            asyncio.run(handle_addtag(bot, event, matcher))  # type: ignore[arg-type]
+            asyncio.run(handle_addtag(bot, event, matcher, args=_make_message("3 标签")))  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once_with("已有命令在处理中，请先 /cancel")
 
@@ -135,7 +142,7 @@ class TestHandleAddtag:
             event = _make_event(text="/addtag")
             matcher = _make_matcher()
 
-            asyncio.run(handle_addtag(bot, event, matcher))  # type: ignore[arg-type]
+            asyncio.run(handle_addtag(bot, event, matcher, args=_make_message("")))  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
@@ -154,7 +161,7 @@ class TestHandleAddtag:
             event = _make_event(text="/addtag 3")
             matcher = _make_matcher()
 
-            asyncio.run(handle_addtag(bot, event, matcher))  # type: ignore[arg-type]
+            asyncio.run(handle_addtag(bot, event, matcher, args=_make_message("3")))  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
@@ -173,7 +180,7 @@ class TestHandleAddtag:
             event = _make_event(text="/addtag abc 标签")
             matcher = _make_matcher()
 
-            asyncio.run(handle_addtag(bot, event, matcher))  # type: ignore[arg-type]
+            asyncio.run(handle_addtag(bot, event, matcher, args=_make_message("abc 标签")))  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once_with("entry_id 必须为数字")
 
@@ -195,7 +202,7 @@ class TestHandleAddtag:
             event = _make_event(text="/addtag 999 标签")
             matcher = _make_matcher()
 
-            asyncio.run(handle_addtag(bot, event, matcher))  # type: ignore[arg-type]
+            asyncio.run(handle_addtag(bot, event, matcher, args=_make_message("999 标签")))  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
@@ -220,7 +227,7 @@ class TestHandleAddtag:
             event = _make_event(text="/addtag 3 新增1 新增2")
             matcher = _make_matcher()
 
-            asyncio.run(handle_addtag(bot, event, matcher))  # type: ignore[arg-type]
+            asyncio.run(handle_addtag(bot, event, matcher, args=_make_message("3 新增1 新增2")))  # type: ignore[arg-type]
 
             # 应只发送一条确认消息（不发送图片）
             matcher.send.assert_awaited_once()
@@ -338,3 +345,42 @@ class TestGotConfirm:
             asyncio.run(got_confirm(bot, event, matcher, "CONFIRM_ARG_SENTINEL"))  # type: ignore[arg-type]
 
             mock_bypass.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# 短命令 /at 测试
+# ---------------------------------------------------------------------------
+
+
+class TestShortCommandAddtag:
+    """短命令 /at 通过 CommandArg 提取参数测试。"""
+
+    def test_short_command_extracts_id_and_tags(self) -> None:
+        """短命令 /at 的参数经 CommandArg 提取后应与 /addtag 一致。"""
+        with (
+            patch("bot.plugins.meme_addtag.is_authorized", return_value=True),
+            patch(
+                "bot.plugins.meme_addtag.session_manager.activate_chat",
+                return_value=True,
+            ),
+            patch("bot.plugins.meme_addtag.get_metadata_store") as mock_store,
+            patch("bot.plugins.meme_addtag.get_index_manager"),
+        ):
+            entry = MagicMock()
+            entry.tags = []
+            entry.text = "旧文本"
+            store = MagicMock()
+            store.get_entry.return_value = entry
+            mock_store.return_value = store
+
+            matcher = _make_matcher()
+            asyncio.run(
+                handle_addtag(
+                    _make_bot(),
+                    _make_event(text="/at 42 心累 深夜"),
+                    matcher,
+                    args=_make_message("42 心累 深夜"),
+                )  # type: ignore[arg-type]
+            )
+            assert matcher.state["entry_id"] == 42
+            assert matcher.state["tags"] == ["心累", "深夜"]

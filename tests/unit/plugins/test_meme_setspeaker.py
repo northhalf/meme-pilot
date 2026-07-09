@@ -59,6 +59,13 @@ def _make_entry(image_path: str = "test.jpg", speaker: str | None = None) -> Mag
     return entry
 
 
+def _make_message(text: str = "") -> MagicMock:
+    """创建模拟的 Message 对象（CommandArg 注入）。"""
+    msg = MagicMock()
+    msg.extract_plain_text.return_value = text
+    return msg
+
+
 # ---------------------------------------------------------------------------
 # handle_setspeaker 测试
 # ---------------------------------------------------------------------------
@@ -77,7 +84,7 @@ class TestHandleSetspeaker:
             event = _make_event()
             matcher = _make_matcher()
 
-            asyncio.run(handle_setspeaker(bot, event, matcher))  # type: ignore[arg-type]
+            asyncio.run(handle_setspeaker(bot, event, matcher, args=_make_message("")))  # type: ignore[arg-type]
 
             assert matcher.finish.call_count == 1
             assert matcher.finish.await_args[0][0] is None
@@ -97,7 +104,7 @@ class TestHandleSetspeaker:
             event.message_type = "group"
             matcher = _make_matcher()
 
-            asyncio.run(handle_setspeaker(bot, event, matcher))  # type: ignore[arg-type]
+            asyncio.run(handle_setspeaker(bot, event, matcher, args=_make_message("")))  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once_with("此命令仅限私聊使用")
 
@@ -114,7 +121,7 @@ class TestHandleSetspeaker:
             event = _make_event(text="/setspeaker 3")
             matcher = _make_matcher()
 
-            asyncio.run(handle_setspeaker(bot, event, matcher))  # type: ignore[arg-type]
+            asyncio.run(handle_setspeaker(bot, event, matcher, args=_make_message("3")))  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once_with("已有命令在处理中，请先 /cancel")
 
@@ -131,7 +138,7 @@ class TestHandleSetspeaker:
             event = _make_event(text="/setspeaker")
             matcher = _make_matcher()
 
-            asyncio.run(handle_setspeaker(bot, event, matcher))  # type: ignore[arg-type]
+            asyncio.run(handle_setspeaker(bot, event, matcher, args=_make_message("")))  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
@@ -150,7 +157,7 @@ class TestHandleSetspeaker:
             event = _make_event(text="/setspeaker abc 张三")
             matcher = _make_matcher()
 
-            asyncio.run(handle_setspeaker(bot, event, matcher))  # type: ignore[arg-type]
+            asyncio.run(handle_setspeaker(bot, event, matcher, args=_make_message("abc 张三")))  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once_with("entry_id 必须为数字")
 
@@ -172,7 +179,7 @@ class TestHandleSetspeaker:
             event = _make_event(text="/setspeaker 999 张三")
             matcher = _make_matcher()
 
-            asyncio.run(handle_setspeaker(bot, event, matcher))  # type: ignore[arg-type]
+            asyncio.run(handle_setspeaker(bot, event, matcher, args=_make_message("999 张三")))  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
@@ -202,7 +209,7 @@ class TestHandleSetspeaker:
             event = _make_event(text="/setspeaker 3 张三")
             matcher = _make_matcher()
 
-            asyncio.run(handle_setspeaker(bot, event, matcher))  # type: ignore[arg-type]
+            asyncio.run(handle_setspeaker(bot, event, matcher, args=_make_message("3 张三")))  # type: ignore[arg-type]
 
             # 应发送图片 + 确认消息
             assert matcher.send.await_count == 2
@@ -235,7 +242,7 @@ class TestHandleSetspeaker:
             event = _make_event(text="/setspeaker 3")
             matcher = _make_matcher()
 
-            asyncio.run(handle_setspeaker(bot, event, matcher))  # type: ignore[arg-type]
+            asyncio.run(handle_setspeaker(bot, event, matcher, args=_make_message("3")))  # type: ignore[arg-type]
 
             assert matcher.state["entry_id"] == 3
             assert matcher.state["speaker"] is None
@@ -368,3 +375,46 @@ class TestGotConfirm:
             asyncio.run(got_confirm(bot, event, matcher, "CONFIRM_ARG_SENTINEL"))  # type: ignore[arg-type]
 
             mock_bypass.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# 短命令 /sp 测试
+# ---------------------------------------------------------------------------
+
+
+class TestShortCommandSetspeaker:
+    """短命令 /sp 通过 CommandArg 提取参数测试。"""
+
+    def test_short_command_extracts_id_and_speaker(self) -> None:
+        """短命令 /sp 的参数经 CommandArg 提取后应与 /setspeaker 一致。"""
+        with (
+            patch("bot.plugins.meme_setspeaker.is_authorized", return_value=True),
+            patch(
+                "bot.plugins.meme_setspeaker.session_manager.activate_chat",
+                return_value=True,
+            ),
+            patch("bot.plugins.meme_setspeaker.get_metadata_store") as mock_store,
+            patch("bot.plugins.meme_setspeaker.session_manager.create_selection"),
+            patch("bot.plugins.meme_setspeaker.session_manager.reset_current_task"),
+            patch("bot.plugins.meme_setspeaker.timeout_session", new_callable=MagicMock),
+            patch("bot.plugins.meme_setspeaker.asyncio.create_task"),
+        ):
+            entry = MagicMock()
+            entry.image_path = "test.jpg"
+            entry.speaker = None
+            entry.text = "旧文本"
+            store = MagicMock()
+            store.get_entry.return_value = entry
+            mock_store.return_value = store
+
+            matcher = _make_matcher()
+            asyncio.run(
+                handle_setspeaker(
+                    _make_bot(),
+                    _make_event(text="/sp 42 小明"),
+                    matcher,
+                    args=_make_message("42 小明"),
+                )  # type: ignore[arg-type]
+            )
+            assert matcher.state["entry_id"] == 42
+            assert matcher.state["speaker"] == "小明"

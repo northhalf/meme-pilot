@@ -14,7 +14,7 @@ from bot.plugins._help_text import HELP_TEXT
 
 logger = logging.getLogger(__name__)
 
-help_cmd = on_command("help", rule=to_me(), priority=5, block=True)
+help_cmd = on_command("help", rule=to_me(), priority=5, block=True, aliases={"h"})
 
 
 @help_cmd.handle()

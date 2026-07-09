@@ -12,7 +12,7 @@ from nonebot import on_command
 from nonebot.adapters.onebot.v11 import Bot, Message, MessageEvent
 from nonebot.exception import FinishedException, RejectedException
 from nonebot.matcher import Matcher
-from nonebot.params import Arg
+from nonebot.params import Arg, CommandArg
 from nonebot.rule import to_me
 
 from bot.app_state import get_index_manager, get_metadata_store
@@ -24,7 +24,7 @@ from bot.session import session_manager, timeout_session
 
 logger = logging.getLogger(__name__)
 
-delete_cmd = on_command("del", rule=to_me(), priority=5, block=True)
+delete_cmd = on_command("del", rule=to_me(), priority=5, block=True, aliases={"d"})
 
 
 def _truncate_text(text: str, limit: int = 30) -> str:
@@ -43,13 +43,16 @@ def _truncate_text(text: str, limit: int = 30) -> str:
 
 
 @delete_cmd.handle()
-async def handle_delete(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
+async def handle_delete(
+    bot: Bot, event: MessageEvent, matcher: Matcher, args: Message = CommandArg()
+) -> None:
     """入口：授权校验 → 参数解析 → 发送摘要确认。
 
     Args:
         bot: OneBot V11 Bot 实例。
         event: 私聊消息事件。
         matcher: NoneBot2 Matcher 实例。
+        args: 命令参数（CommandArg 注入），包含待删除的 id 列表。
     """
     user_id = event.get_user_id()
     logger.info("用户 %s 调用 /del", user_id)
@@ -72,8 +75,7 @@ async def handle_delete(bot: Bot, event: MessageEvent, matcher: Matcher) -> None
             return
 
         # 解析参数
-        raw = event.get_plaintext().strip()
-        text_part = raw.removeprefix("/del").removeprefix("del").strip()
+        text_part = args.extract_plain_text().strip()
         tokens = text_part.split()
         if not tokens:
             session_manager.deactivate_chat(user_id)
