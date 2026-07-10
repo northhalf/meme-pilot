@@ -319,6 +319,61 @@ async def execute_search(
     await dispatch_search_results(bot, event, cmd_matcher, results, options=options)
 
 
+async def execute_combined_search(
+    bot: Bot,
+    event: MessageEvent,
+    cmd_matcher: Matcher,
+    keyword: str | None,
+    speakers: list[str],
+    tags: list[str],
+    *,
+    options: PresentOptions = PresentOptions(),
+) -> None:
+    """组合检索核心逻辑。
+
+    流程：获取 IndexManager 并执行组合检索，
+    再通过 dispatch_search_results 统一处理结果分支。
+
+    Args:
+        bot: OneBot V11 Bot 实例。
+        event: 消息事件。
+        cmd_matcher: 调用方的 Matcher（用于 send/finish）。
+        keyword: 关键词；None 或空串表示纯过滤。
+        speakers: 说话人列表（OR）。
+        tags: 标签列表（AND）。
+        options: 展示选项（相似度与翻页）。
+    """
+    user_id = event.get_user_id()
+
+    try:
+        index_manager = get_index_manager()
+    except RuntimeError:
+        logger.error("IndexManager 尚未初始化")
+        session_manager.deactivate_chat(user_id)
+        await cmd_matcher.finish("服务未就绪，请稍后再试")
+        return
+
+    try:
+        results = await index_manager.search_combined(keyword, speakers, tags)
+    except asyncio.TimeoutError:
+        logger.info("用户 %s 的组合检索等待读锁超时", user_id)
+        session_manager.deactivate_chat(user_id)
+        await cmd_matcher.finish("索引更新较慢，请稍后再试")
+        return
+    except Exception:
+        logger.exception(
+            "组合检索异常: keyword=%r, speakers=%r, tags=%r",
+            keyword,
+            speakers,
+            tags,
+        )
+        session_manager.deactivate_chat(user_id)
+        await cmd_matcher.finish("搜索服务暂时不可用，稍后重试")
+        return
+
+    await dispatch_search_results(bot, event, cmd_matcher, results, options=options)
+
+
 async def handle_got_selection(
     bot: Bot,
     event: MessageEvent,

@@ -295,3 +295,56 @@ class TestStripAllWhitespace:
         from bot.engine.keyword_searcher import _strip_all_whitespace
 
         assert _strip_all_whitespace("   ") == ""
+
+
+class TestSearchIn:
+    """search_in：在给定 entries 子集上搜索。"""
+
+    def test_search_in_respects_subset(self, sample_entries: dict[int, MemeEntry]) -> None:
+        """search_in 只在传入子集上匹配，不触及全集其他条目。"""
+        s = KeywordSearcher(MockMetadataStore(sample_entries))
+        subset = {5: sample_entries[5]}  # "当你的老板说今天要加班"
+        results = s.search_in(subset, "加班")
+        assert len(results) == 1
+        assert results[0].entry_id == 5
+        assert results[0].similarity == 100.0
+
+    def test_search_in_empty_subset_returns_empty(
+        self, sample_entries: dict[int, MemeEntry]
+    ) -> None:
+        s = KeywordSearcher(MockMetadataStore(sample_entries))
+        assert s.search_in({}, "加班") == []
+
+    def test_search_in_empty_keyword_returns_empty(
+        self, sample_entries: dict[int, MemeEntry]
+    ) -> None:
+        s = KeywordSearcher(MockMetadataStore(sample_entries))
+        assert s.search_in(sample_entries, "") == []
+
+    def test_search_in_fuzzy_fallback(
+        self, sample_entries: dict[int, MemeEntry]
+    ) -> None:
+        """子集上无精确命中时走 LCS 模糊回退。"""
+        s = KeywordSearcher(MockMetadataStore(sample_entries))
+        subset = {1: sample_entries[1]}  # "一只猫在跳起来抓蝴蝶哈哈哈"
+        results = s.search_in(subset, "猫抓蝴蝶")
+        assert len(results) == 1
+        assert results[0].entry_id == 1
+        assert results[0].similarity == 100.0
+
+    def test_search_in_respects_limit(self) -> None:
+        """search_in 同样按 _limit 截断。"""
+        entries = {
+            i: MemeEntry(id=i, image_path=f"m_{i}.jpg", text=f"加班第{i}天")
+            for i in range(1, 16)
+        }
+        s = KeywordSearcher(MockMetadataStore(entries), limit=5)
+        assert len(s.search_in(entries, "加班")) == 5
+
+    def test_search_equals_search_in_on_full_entries(
+        self, sample_entries: dict[int, MemeEntry], searcher: KeywordSearcher
+    ) -> None:
+        """search(keyword) 在全集结果应等于 search_in(全集, keyword)。"""
+        keyword = "加班"
+        full = searcher._metadata_store.get_all_entries()
+        assert searcher.search(keyword) == searcher.search_in(full, keyword)

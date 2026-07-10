@@ -34,6 +34,7 @@ from .index_manager import (
     resolve_unique_filename,
 )
 from .keyword_searcher import KeywordSearcher
+from .combined_searcher import CombinedSearcher
 from .metadata_store import MemeEntry, MetadataStore
 from .protocols import EmbeddingProvider, MetadataEntryProvider, VectorQueryProvider
 from .rerank_service import RerankService
@@ -112,6 +113,7 @@ __all__ = [
     "resolve_unique_filename",
     # keyword_searcher
     "KeywordSearcher",
+    "CombinedSearcher",
     "SearchResult",
     # metadata_store
     "MemeEntry",

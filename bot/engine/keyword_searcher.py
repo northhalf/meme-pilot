@@ -162,21 +162,19 @@ class KeywordSearcher:
             results = perfect_results
         return results
 
-    def search(self, keyword: str) -> list[SearchResult]:
-        """根据关键词搜索表情包。
-
-        两层匹配，短路返回：
-        1. 精确子串层：用「原始输入去所有空白、保留助词」的关键词做子串匹配；
-           命中则只返回包含该子串的条目（similarity=100.0）。
-        2. LCS 模糊回退层：仅当第一层未命中时启用，用「去助词+去空白」的关键词
-           走现有 LCS 模糊匹配（阈值 60，全量匹配）。
+    def search_in(
+        self,
+        entries: dict[int, MemeEntry],
+        keyword: str,
+    ) -> list[SearchResult]:
+        """在给定 entries 子集上执行关键词搜索（两层匹配，逻辑同 search）。
 
         Args:
+            entries: 索引条目子集，key=int(id)。
             keyword: 用户输入的搜索关键词。
 
         Note:
-            调用方必须已持有读锁，保证读取期间 MetadataStore 快照不被并发写入修改。
-            IndexManager.search() 负责持锁。
+            调用方必须已持有读锁，保证读取期间子集快照不被并发写入修改。
 
         Returns:
             按相似度降序排列的搜索结果列表；limit=None 时返回全部匹配，否则最多返回 limit 条。
@@ -192,7 +190,6 @@ class KeywordSearcher:
             logger.debug("关键词去空白后为空，返回空结果")
             return []
 
-        entries = self._metadata_store.get_all_entries()
         if not entries:
             logger.debug("索引为空，返回空结果")
             return []
@@ -224,3 +221,26 @@ class KeywordSearcher:
             len(results) if self._limit is None else min(len(results), self._limit),
         )
         return results[: self._limit]
+
+    def search(self, keyword: str) -> list[SearchResult]:
+        """根据关键词搜索表情包。
+
+        在全部条目上执行两层匹配（逻辑同 search_in）：
+        1. 精确子串层：用「原始输入去所有空白、保留助词」的关键词做子串匹配；
+           命中则只返回包含该子串的条目（similarity=100.0）。
+        2. LCS 模糊回退层：仅当第一层未命中时启用，用「去助词+去空白」的关键词
+           走现有 LCS 模糊匹配（阈值 60，全量匹配）。
+
+        Args:
+            keyword: 用户输入的搜索关键词。
+
+        Note:
+            调用方必须已持有读锁，保证读取期间 MetadataStore 快照不被并发写入修改。
+            IndexManager.search() 负责持锁。该方法委托 search_in，先获取全量条目快照再调用。
+
+        Returns:
+            按相似度降序排列的搜索结果列表；limit=None 时返回全部匹配，否则最多返回 limit 条。
+            无匹配时返回空列表。
+        """
+        entries = self._metadata_store.get_all_entries()
+        return self.search_in(entries, keyword)

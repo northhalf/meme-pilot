@@ -25,6 +25,7 @@ api
     │   ├── rerank_service.md
     │   ├── retry_config.md
     │   ├── semantic_searcher.md
+    │   ├── combined_searcher.md
     │   ├── types.md
     │   ├── vector_store.md
     ├── bot.md
@@ -49,7 +50,8 @@ api
         ├── meme_plain_text.md
         ├── meme_rand.md
         ├── meme_sim.md
-        └── meme_search.md
+        ├── meme_search.md
+        └── meme_query.md
 ```
 
 ## API 文件索引
@@ -261,6 +263,7 @@ class IndexManager:
         ai_matcher: AIMatcher | None = None,
         random_searcher: RandomSearcher | None = None,
         semantic_searcher: SemanticSearcher | None = None,
+        combined_searcher: CombinedSearcher | None = None,
     ) -> None
 
     async def load(self) -> None
@@ -273,6 +276,12 @@ class IndexManager:
 
     async def semantic_search(self, description: str, limit: int | None = 10) -> list[SearchResult]
     # 锁外 embed，持读锁调用 SemanticSearcher.search_semantic(limit=limit)；limit=10 默认返回 10 条，None 全库召回；空库返回 []；零向量抛 ValueError；未注入 SemanticSearcher/EmbeddingProvider 抛 RuntimeError
+
+    async def search_combined(
+        self, keyword: str | None, speakers: list[str], tags: list[str]
+    ) -> list[SearchResult]
+    # 持读锁调用 CombinedSearcher.search；空库返回 []；超时抛 asyncio.TimeoutError；
+    # 未注入 CombinedSearcher 抛 RuntimeError
 
     async def ai_match(self, description: str) -> AIMatchResult | None
     # 锁外 embed，持读锁调用 AIMatcher.match_with_vector()；超时抛 asyncio.TimeoutError
@@ -413,6 +422,34 @@ class KeywordSearcher:
 
     def search(self, keyword: str) -> list[SearchResult]
     # 返回 limit 条以内的全部匹配；limit=None（默认）= 全量匹配，由展示层分页切片
+
+    def search_in(
+        self,
+        entries: dict[int, MemeEntry],
+        keyword: str,
+    ) -> list[SearchResult]
+    # 在给定 entries 子集上跑关键词匹配（精确子串 + 模糊回退），逻辑同 search 但限定范围
+    # 调用方必须已持有读锁；无匹配返回空列表
+```
+
+### `docs/api/bot/engine/combined_searcher.md`
+
+```python
+class CombinedSearcher:
+    def __init__(
+        self,
+        metadata_store: MetadataStoreProvider,
+        keyword_searcher: KeywordSearcher,
+    ) -> None
+
+    def search(
+        self,
+        keyword: str | None,
+        speakers: list[str],
+        tags: list[str] | None = None,
+    ) -> list[SearchResult]
+    # 有关键词：在过滤子集上跑 KeywordSearcher.search_in，带 similarity 降序
+    # 无关键词：包装 similarity=0.0，按 entry_id 升序
 ```
 
 ### `docs/api/bot/engine/openai_embedding.md`
@@ -618,7 +655,7 @@ class ImageOptimizer:
 NoneBot2 应用入口，详见 `docs/api/bot/bot.md`。
 
 - 启动：`main()` — 初始化 NoneBot2（`driver="~fastapi"`），注册 OneBot V11 适配器，加载插件，启动驱动器
-- Startup hook：`_on_startup()` — 通过 `provider_factory.create_*_provider()` 创建 OCR/Embedding 服务，同时创建 `RerankService` 与 `ImageOptimizer`；创建 `MetadataStore(INDEX_DB_PATH)` + `VectorStore(CHROMA_DIR)`；创建 `AIMatcher`、`KeywordSearcher`、`RandomSearcher(metadata_store, keyword_searcher)`、`SemanticSearcher(metadata_store, vector_store)` 后一并注入 `IndexManager`，`load()` 后注册到 `app_state`、后台执行索引同步；根据 `OCR_PROVIDER` 选择 OCR 引擎（`paddle`/`deepseek`/`rapidocr`），根据 `EMBEDDING_PROVIDER` 选择 Embedding 引擎（`openai`/`google`）；创建 `IndexManager` 时传入 `deleted_dir`（默认 `memes_deleted/`）用于 `/del` 备份、`replaced_dir`（默认 `memes_replaced/`）用于 `/add` 与 `/refresh` 去重时归档被替换的图片
+- Startup hook：`_on_startup()` — 通过 `provider_factory.create_*_provider()` 创建 OCR/Embedding 服务，同时创建 `RerankService` 与 `ImageOptimizer`；创建 `MetadataStore(INDEX_DB_PATH)` + `VectorStore(CHROMA_DIR)`；创建 `AIMatcher`、`KeywordSearcher`、`RandomSearcher(metadata_store, keyword_searcher)`、`SemanticSearcher(metadata_store, vector_store)`、`CombinedSearcher(metadata_store, keyword_searcher)` 后一并注入 `IndexManager`，`load()` 后注册到 `app_state`、后台执行索引同步；根据 `OCR_PROVIDER` 选择 OCR 引擎（`paddle`/`deepseek`/`rapidocr`），根据 `EMBEDDING_PROVIDER` 选择 Embedding 引擎（`openai`/`google`）；创建 `IndexManager` 时传入 `deleted_dir`（默认 `memes_deleted/`）用于 `/del` 备份、`replaced_dir`（默认 `memes_replaced/`）用于 `/add` 与 `/refresh` 去重时归档被替换的图片
 - Shutdown hook：`_on_shutdown()` — 关闭 OCR 服务 HTTP 会话，并 `close()` 两个 Store（sqlite 连接 + chroma PersistentClient）
 - `_background_sync()` — 后台同步任务，调用 `IndexManager.refresh()` 以独占写锁执行同步；同步失败时记录日志，Bot 继续运行
 - 环境变量：`BOT_HOST`（默认 `0.0.0.0`）、`BOT_PORT`（默认 `8080`，无效值回退 8080）、`READ_LOCK_TIMEOUT`（默认 `00:00:30`）、`ADD_COMMAND_TIMEOUT`（默认 `00:01:00`）、`EMBEDDING_CONCURRENCY`（默认 5）、`OCR_CONCURRENCY`（默认 5）、`RERANK_CONCURRENCY`（默认 5）、`COMPRESS_CONCURRENCY`（默认 5）
@@ -643,6 +680,7 @@ def init_app(
     keyword_searcher: KeywordSearcher | None = None,
     random_searcher: RandomSearcher | None = None,
     semantic_searcher: SemanticSearcher | None = None,
+    combined_searcher: CombinedSearcher | None = None,
 ) -> None
 
 def get_index_manager() -> IndexManager
@@ -655,6 +693,7 @@ def get_ai_matcher() -> AIMatcher
 def get_keyword_searcher() -> KeywordSearcher
 def get_random_searcher() -> RandomSearcher
 def get_semantic_searcher() -> SemanticSearcher
+def get_combined_searcher() -> CombinedSearcher
 ```
 
 ### `bot/auth.py`
@@ -925,6 +964,17 @@ NoneBot2 命令插件，注册 `/search` 命令（薄包装，核心逻辑委托
 - 依赖：`auth.is_authorized()`、`_search_utils.execute_search`、`_search_utils.handle_got_selection`、`bot.session.session_manager`
 - 流程：`handle_search` — 授权校验 → 会话检查 → 提取关键词 → `execute_search`（传入 SEARCH_OPTIONS：展示关键词相似度百分比 score + 回复 n 翻页）
 - 选择：`got_selection` — 薄包装，委托 `_search_utils.handle_got_selection()`；命中后先发送图片，再发送 `format_metadata_line()` 元数据文本消息
+
+### `bot/plugins/meme_query.py`
+
+NoneBot2 命令插件，注册 `/query` 命令。
+
+- 注册：`on_command("query", rule=to_me(), priority=5, block=True, aliases={"q"})`
+- 依赖：`auth.is_authorized()`、`app_state.get_index_manager()`、`bot.session.session_manager`、`_search_utils.execute_combined_search`、`_search_utils.handle_got_selection`、`_search_utils.PresentOptions`
+- 参数解析：`#tag` -> tags（AND）、`@speaker` -> speakers（OR）、其余 -> 关键词；`#`/`@` 单独 token 忽略；三者皆空回复用法提示
+- 管道：`IndexManager.search_combined(keyword, speakers, tags)`
+- 展示：有关键词用 `QUERY_KW_OPTIONS`(show_similarity=True, score, next_trigger="n")；无关键词用 `QUERY_FILTER_OPTIONS`(show_similarity=False, next_trigger="n")
+- 群聊：支持群聊 @bot 触发（属组 B）
 
 ### `bot/config.py`
 

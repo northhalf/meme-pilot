@@ -233,6 +233,8 @@ def index_manager(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     )
     random_searcher = RandomSearcher(metadata_store, keyword_searcher)
     semantic_searcher = SemanticSearcher(metadata_store, vector_store)
+    from bot.engine.combined_searcher import CombinedSearcher
+    combined_searcher = CombinedSearcher(metadata_store, keyword_searcher)
 
     manager = IndexManager(
         metadata_store=metadata_store,
@@ -245,6 +247,7 @@ def index_manager(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         ai_matcher=ai_matcher,
         random_searcher=random_searcher,
         semantic_searcher=semantic_searcher,
+        combined_searcher=combined_searcher,
     )
     asyncio.run(manager.load())
     return manager
@@ -1174,6 +1177,63 @@ class TestSemanticSearch:
         index_manager._semantic_searcher = None
         with pytest.raises(RuntimeError, match="SemanticSearcher 未注入"):
             await index_manager.semantic_search("任意描述")
+
+
+class TestCombinedSearch:
+    @pytest.mark.anyio
+    async def test_search_combined_with_keyword(
+        self, index_manager: IndexManager
+    ) -> None:
+        """组合检索：关键词在过滤子集上匹配。"""
+        index_manager._metadata_store.add(
+            "加班.jpg", "加班到凌晨", speaker="小明", tags=["吐槽"]
+        )
+        results = await index_manager.search_combined("加班", ["小明"], [])
+        assert len(results) == 1
+        assert results[0].similarity == 100.0
+        assert results[0].entry_id == 1
+
+    @pytest.mark.anyio
+    async def test_search_combined_pure_filter(
+        self, index_manager: IndexManager
+    ) -> None:
+        """纯过滤（无关键词）返回 similarity=0.0。"""
+        index_manager._metadata_store.add(
+            "加班.jpg", "加班到凌晨", speaker="小明", tags=["吐槽"]
+        )
+        results = await index_manager.search_combined(None, ["小明"], [])
+        assert len(results) == 1
+        assert results[0].similarity == 0.0
+
+    @pytest.mark.anyio
+    async def test_search_combined_tag_filter(
+        self, index_manager: IndexManager
+    ) -> None:
+        """tags AND 过滤。"""
+        index_manager._metadata_store.add(
+            "a.jpg", "加班到凌晨", speaker="小明", tags=["吐槽", "加班"]
+        )
+        index_manager._metadata_store.add(
+            "b.jpg", "周末加班", speaker="小明", tags=["加班"]
+        )
+        results = await index_manager.search_combined(None, [], ["吐槽"])
+        assert {r.entry_id for r in results} == {1}
+
+    @pytest.mark.anyio
+    async def test_search_combined_empty_index(
+        self, index_manager: IndexManager
+    ) -> None:
+        assert await index_manager.search_combined("加班", [], []) == []
+
+    @pytest.mark.anyio
+    async def test_search_combined_not_injected(
+        self, index_manager: IndexManager
+    ) -> None:
+        """未注入 CombinedSearcher 时抛 RuntimeError。"""
+        index_manager._metadata_store.add("a.jpg", "加班", speaker="小明")
+        index_manager._combined_searcher = None
+        with pytest.raises(RuntimeError, match="CombinedSearcher 未注入"):
+            await index_manager.search_combined("加班", ["小明"], [])
 
 
 # ---------------------------------------------------------------------------

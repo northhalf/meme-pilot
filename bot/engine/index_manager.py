@@ -21,6 +21,7 @@ from .keyword_searcher import KeywordSearcher
 from .metadata_store import MemeEntry
 from .protocols import EmbeddingProvider
 from .random_searcher import RandomSearcher
+from .combined_searcher import CombinedSearcher
 from .rwlock import IndexRwLock
 from .semantic_searcher import SemanticSearcher
 from .types import SearchResult
@@ -350,6 +351,7 @@ class IndexManager:
         ai_matcher: AIMatcher | None = None,
         random_searcher: RandomSearcher | None = None,
         semantic_searcher: SemanticSearcher | None = None,
+        combined_searcher: CombinedSearcher | None = None,
     ) -> None:
         """初始化 IndexManager。
 
@@ -367,6 +369,7 @@ class IndexManager:
             ai_matcher: AI 匹配器，由 IndexManager 持锁后调用。
             random_searcher: 随机搜索器，由 IndexManager 持锁后调用。
             semantic_searcher: 语义搜索器，由 IndexManager 持锁后调用。
+            combined_searcher: 组合搜索器，由 IndexManager 持锁后调用。
         """
         self._metadata_store = metadata_store
         self._vector_store = vector_store
@@ -390,6 +393,7 @@ class IndexManager:
         self._ai_matcher = ai_matcher
         self._random_searcher = random_searcher
         self._semantic_searcher = semantic_searcher
+        self._combined_searcher = combined_searcher
 
         self.read_timeout = float(read_read_lock_timeout())
         self.add_user_timeout = float(read_add_command_timeout())
@@ -497,6 +501,33 @@ class IndexManager:
             return await self._semantic_searcher.search_semantic(
                 query_vector, limit=limit
             )
+
+    async def search_combined(
+        self,
+        keyword: str | None,
+        speakers: list[str],
+        tags: list[str],
+    ) -> list[SearchResult]:
+        """组合检索入口。持读锁调用 CombinedSearcher.search。
+
+        Args:
+            keyword: 关键词；None 或空串表示纯过滤。
+            speakers: 说话人列表（OR，精确相等）；空列表不过滤。
+            tags: 标签列表（AND，区分大小写）；空列表不过滤。
+
+        Returns:
+            SearchResult 列表；空库时返回空列表。
+
+        Raises:
+            asyncio.TimeoutError: 等待读锁超时。
+            RuntimeError: CombinedSearcher 未注入。
+        """
+        async with self._rwlock.read(timeout=self.read_timeout):
+            if self._metadata_store.entry_count() == 0:
+                return []
+            if self._combined_searcher is None:
+                raise RuntimeError("CombinedSearcher 未注入")
+            return self._combined_searcher.search(keyword, speakers, tags)
 
     async def ai_match(self, description: str) -> AIMatchResult | None:
         """AI 描述匹配。

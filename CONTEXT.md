@@ -42,6 +42,7 @@
 | **chroma 向量库** | AI 匹配必需的向量索引，存于 `data/chroma/`，ChromaDB `PersistentClient`，collection 默认 `memes`，HNSW `cosine` 距离；每条向量仅存 `id`（与 sqlite `meme.id` 一一对应，内部转 `str`）+ 1024 维 `embedding`；`similarity = 1 - distance`；首次建索引和 `/refresh` 时由 `VectorStore` 维护，sync 阶段0 负责跨库一致性修复 |
 | **pylcs** | C++ 实现的最长公共子序列/子串算法库，用于关键词的非精确匹配 |
 | **RandomSearcher** | 随机搜索器，`bot/engine/random_searcher.py`；从 `KeywordSearcher` 搜索结果或全库 `MetadataStore` 条目中随机取样返回，由 `IndexManager.random_search` 持读锁调用；所有结果的 `similarity` 固定为 0.0 |
+| **CombinedSearcher** | 组合搜索器，`bot/engine/combined_searcher.py`；先按 `speakers`(OR) + `tags`(AND) 过滤 `MetadataStore.get_all_entries` 子集，再委托 `KeywordSearcher.search_in` 在子集上跑关键词匹配；无关键词时包装 `similarity=0.0` 按 `entry_id` 升序；`IndexManager.search_combined` 持读锁调用；依赖 `MetadataStoreProvider` + `KeywordSearcher` |
 | **SemanticSearcher** | 语义搜索器，`bot/engine/semantic_searcher.py`；基于 embedding 向量从 `VectorStore` 召回候选（`limit=None` 全库召回），通过 `MetadataStoreProvider`（`get_all_entries`）批量映射 metadata；`IndexManager.semantic_search` 锁外 embed 后持读锁调用；不调用 LLM 精排 |
 | **PresentOptions** | 候选展示选项，`bot/plugins/_search_utils.py` 中的 `@dataclass(frozen=True)`；控制列表行是否展示相似度（`show_similarity`）、相似度量纲（`similarity_scale`：`ratio`=0–1 / `score`=0–100）、是否支持翻页（`next_trigger`，`None`=不支持，如 `/rand`）、每页条数（`page_size`，默认 `PAGE_SIZE`）。`/sim` 用 `show_similarity=True, similarity_scale="ratio", next_trigger="n"`；`/search` 与兜底搜索用 `show_similarity=True, similarity_scale="score", next_trigger="n"`；`/rand` 用默认值（不展示相似度、不翻页） |
 | **PAGE_SIZE** | 每页展示的候选条数常量，`bot/plugins/_search_utils.py` 中硬编码为 `10`；`PresentOptions.page_size` 默认引用此常量 |
@@ -66,6 +67,7 @@
 | **反向 WebSocket** | v1.0 的 OneBot 连接方式：NapCatQQ 主动连接 NoneBot2，NoneBot2 在 bot 容器中监听连接 |
 | **/help** | 帮助命令；授权用户私聊或群聊中 @bot 发送 `/help` 时，Bot 返回当前命令和简单用法（含 `/cancel`）；授权用户私聊或群聊 @bot 发送未知斜杠命令时，Bot 回复”未知命令”并附帮助摘要；授权用户私聊或群聊 @bot 发送普通文本时，Bot 等同执行 `/search`。`/help` 在有活跃会话时仍可正常触发（旁路），回复帮助文本后继续等待原会话；短命令 `/h`，与 `/help` 等价。
 | **/search** | 关键词搜索命令，后接关键词；支持私聊和群聊中 @bot 触发；多结果列表行展示关键词相似度百分比（score 量纲，0–100），按每页 10 条分页，回复 `n` 看下一页；同一授权用户同一时间只保留一个待处理会话，新 `/search` 或 `/add` 会覆盖旧状态，并向用户提示已取消上一条未完成操作；等待选择期间支持 `/cancel` 取消和 `/help` 旁路查看帮助；短命令 `/s`，与 `/search` 等价 |
+| **/query** | 组合检索命令，格式 `/query <关键词> [@说话人] [#标签...]`；`#tag` 标记标签（可多个，AND）、`@speaker` 标记说话人（可多个，OR）、其余为关键词；speaker 精确相等区分大小写、tag 区分大小写；有关键词时展示关键词相似度（score）、无关键词纯过滤时不展示相似度（按 entry_id 升序）；权限属组 B（私聊+群聊@bot）；等待选择期间支持 `/cancel` 取消和 `/help` 旁路查看帮助；短命令 `/q`，与 `/query` 等价 |
 | **/rand** | 随机选择命令，格式 `/rand [关键词]`；有关键词时在关键词搜索结果中随机取 10 个，无关键词时全库随机；回复 `0` 换一批，每次独立抽样；支持私聊和群聊中 @bot 触发；等待选择期间支持 `/cancel` 取消和 `/help` 旁路查看帮助 |
 | **/sim** | 语义选择命令，格式 `/sim <描述文本>`；基于 embedding 语义搜索全库召回候选供用户选择，不调用 LLM 精排；列表行展示语义相似度百分比（ratio 量纲，0–1 归一为 0–100%），多结果按每页 10 条分页，回复 `n` 看下一页；支持私聊和群聊中 @bot 触发；等待选择期间支持 `/cancel` 取消和 `/help` 旁路查看帮助 |
 | **/ai** | AI 描述匹配命令，后接自然语言描述 |

@@ -883,3 +883,85 @@ class TestHandleGotSelectionPagination:
         finished_text = matcher.finish.call_args[0][0]
         assert "7, 小明" in finished_text
         assert "%" not in finished_text
+
+
+class TestExecuteCombinedSearch:
+    """execute_combined_search 测试。"""
+
+    @pytest.mark.asyncio
+    @patch("bot.plugins._search_utils.get_index_manager")
+    @patch("bot.plugins._search_utils.dispatch_search_results", new_callable=AsyncMock)
+    @patch("bot.plugins._search_utils.session_manager")
+    async def test_delegates_to_search_combined(
+        self,
+        mock_session: MagicMock,
+        mock_dispatch: AsyncMock,
+        mock_get_im: MagicMock,
+    ) -> None:
+        """应调用 index_manager.search_combined 并分发结果。"""
+        from bot.plugins._search_utils import execute_combined_search
+
+        mock_get_im.return_value.search_combined = AsyncMock(
+            return_value=[_make_search_result()]
+        )
+        event = MagicMock()
+        event.get_user_id.return_value = "123"
+
+        await execute_combined_search(
+            MagicMock(), event, _make_matcher(),
+            keyword="加班", speakers=["小明"], tags=["吐槽"],
+        )
+
+        mock_get_im.return_value.search_combined.assert_awaited_once_with(
+            "加班", ["小明"], ["吐槽"]
+        )
+        mock_dispatch.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @patch("bot.plugins._search_utils.get_index_manager")
+    @patch("bot.plugins._search_utils.session_manager")
+    async def test_timeout_replies_slow(
+        self,
+        mock_session: MagicMock,
+        mock_get_im: MagicMock,
+    ) -> None:
+        """读锁超时回复「索引更新较慢」。"""
+        import asyncio
+        from bot.plugins._search_utils import execute_combined_search
+
+        mock_get_im.return_value.search_combined = AsyncMock(
+            side_effect=asyncio.TimeoutError()
+        )
+        event = MagicMock()
+        event.get_user_id.return_value = "123"
+        matcher = _make_matcher()
+
+        await execute_combined_search(
+            MagicMock(), event, matcher,
+            keyword="加班", speakers=[], tags=[],
+        )
+
+        matcher.finish.assert_awaited_once()
+        assert "索引更新较慢" in matcher.finish.call_args[0][0]
+
+    @pytest.mark.asyncio
+    @patch("bot.plugins._search_utils.get_index_manager", side_effect=RuntimeError())
+    @patch("bot.plugins._search_utils.session_manager")
+    async def test_not_ready_replies(
+        self,
+        mock_session: MagicMock,
+        mock_get_im: MagicMock,
+    ) -> None:
+        """IndexManager 未就绪回复「服务未就绪」。"""
+        from bot.plugins._search_utils import execute_combined_search
+
+        event = MagicMock()
+        event.get_user_id.return_value = "123"
+        matcher = _make_matcher()
+
+        await execute_combined_search(
+            MagicMock(), event, matcher,
+            keyword="加班", speakers=[], tags=[],
+        )
+
+        matcher.finish.assert_awaited_once_with("服务未就绪，请稍后再试")

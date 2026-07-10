@@ -18,6 +18,7 @@ from .engine.index_manager import OcrProvider
 from .engine.protocols import EmbeddingProvider
 from .engine.random_searcher import RandomSearcher
 from .engine.semantic_searcher import SemanticSearcher
+from .engine.combined_searcher import CombinedSearcher
 
 _index_manager: IndexManager | None = None
 _metadata_store: MetadataStore | None = None
@@ -29,6 +30,7 @@ _ai_matcher: AIMatcher | None = None
 _keyword_searcher: KeywordSearcher | None = None
 _random_searcher: RandomSearcher | None = None
 _semantic_searcher: SemanticSearcher | None = None
+_combined_searcher: CombinedSearcher | None = None
 
 
 def init_app(
@@ -42,6 +44,7 @@ def init_app(
     keyword_searcher: KeywordSearcher | None = None,
     random_searcher: RandomSearcher | None = None,
     semantic_searcher: SemanticSearcher | None = None,
+    combined_searcher: CombinedSearcher | None = None,
 ) -> None:
     """初始化全局共享实例。
 
@@ -59,10 +62,11 @@ def init_app(
         keyword_searcher: 关键词搜索器实例，可选。
         random_searcher: 随机搜索器实例，可选。
         semantic_searcher: 语义搜索器实例，可选。
+        combined_searcher: 组合搜索器实例，可选。
     """
     global _index_manager, _metadata_store, _vector_store, _ocr_service
     global _embedding_service, _image_optimizer, _ai_matcher, _keyword_searcher
-    global _random_searcher, _semantic_searcher
+    global _random_searcher, _semantic_searcher, _combined_searcher
     _index_manager = index_manager
     _metadata_store = metadata_store
     _vector_store = vector_store
@@ -73,6 +77,7 @@ def init_app(
     _keyword_searcher = keyword_searcher
     _random_searcher = random_searcher
     _semantic_searcher = semantic_searcher
+    _combined_searcher = combined_searcher
 
 
 def get_index_manager() -> IndexManager:
@@ -208,3 +213,17 @@ def get_semantic_searcher() -> SemanticSearcher:
     if _semantic_searcher is None:
         raise RuntimeError("SemanticSearcher 尚未初始化，请先调用 init_app()")
     return _semantic_searcher
+
+
+def get_combined_searcher() -> CombinedSearcher:
+    """获取 CombinedSearcher 单例。
+
+    Returns:
+        已初始化的 CombinedSearcher 实例。
+
+    Raises:
+        RuntimeError: 尚未调用 init_app() 初始化。
+    """
+    if _combined_searcher is None:
+        raise RuntimeError("CombinedSearcher 尚未初始化，请先调用 init_app()")
+    return _combined_searcher
