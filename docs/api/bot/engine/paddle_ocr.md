@@ -28,9 +28,12 @@
 |--|------|------|
 | **参数** `image_path` | `str` | 图片文件路径 |
 | **返回** | `str` | 识别到的文本字符串（已去除所有空白字符，可能为空字符串） |
-| **异常** | `RuntimeError` | API 调用失败 |
+| **异常** | `PaddleOCRAPIError` | 不可重试的 API 错误（如鉴权失败、参数非法），或可重试异常重试耗尽后以原始类型抛出 |
+| | `RuntimeError` | 非 API 异常（如未预期的本地错误） |
 
 调用 `AsyncPaddleOCRClient.ocr()` 提交 OCR 任务并等待完成，从返回结果的 `pruned_result` 中提取文本，返回前用 `"".join(" ".join(texts).split())` 去除所有空白字符。
+
+方法装饰有 `@api_retry(...)`，对 `NetworkError`、`RequestTimeoutError`、`PollTimeoutError`、`RateLimitError`、`ServiceUnavailableError` 及 httpx 网络异常进行最多 3 次指数退避重试；不可重试的 API 错误（如 `AuthError`、`InvalidRequestError`）直接以原始类型抛出。
 
 仅支持 PaddleOCR 云 API 实测返回的两种结构：
 - 通用 OCR（PP-OCR v6 等）：`pruned_result` 为 dict，直接包含 `rec_texts` 列表与可选 `rec_scores` 列表；根据 `text_rec_score_thresh` 阈值，以 `rec_scores` 置信度过滤低分行

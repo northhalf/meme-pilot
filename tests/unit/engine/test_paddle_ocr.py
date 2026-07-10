@@ -5,8 +5,19 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from paddleocr import AuthError, NetworkError, PaddleOCRAPIError
 
 from bot.engine.paddle_ocr import PaddleOcrClientService
+
+
+@pytest.fixture
+def _no_async_retry_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
+    """将 tenacity 异步等待置空，避免重试测试耗时过长。"""
+
+    async def _instant(*args: object, **kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", _instant)
 
 
 class TestPaddleOcrClientServiceInit:
@@ -222,18 +233,17 @@ class TestOcr:
         assert result == ""
 
     @pytest.mark.asyncio
-    async def test_api_auth_error_raises_runtime_error(self) -> None:
-        """PaddleOCRAPIError 转为 RuntimeError。"""
-        from paddleocr import PaddleOCRAPIError
-
+    async def test_unretryable_api_error_raises_original(self) -> None:
+        """不可重试的 PaddleOCRAPIError 以原始类型透传，不包装为 RuntimeError。"""
         mock_client = MagicMock()
         mock_client.ocr = AsyncMock(side_effect=PaddleOCRAPIError("认证失败"))
 
         service = PaddleOcrClientService(access_token="bad-token")
         service._client = mock_client
 
-        with pytest.raises(RuntimeError, match="PaddleOCR API 调用失败"):
+        with pytest.raises(PaddleOCRAPIError, match="认证失败"):
             await service.ocr("/path/to/image.png")
+        mock_client.ocr.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_close_releases_client(self) -> None:
@@ -314,3 +324,72 @@ class TestPaddleOcrSemaphore:
             await task1
         except asyncio.CancelledError:
             pass
+
+
+class TestOcrRetry:
+    """验证 ocr 方法的网络重试行为。"""
+
+    def _make_retryable_error(self) -> NetworkError:
+        """构造一个可重试的 PaddleOCR 网络错误。"""
+        return NetworkError("connection lost")
+
+    def _make_success_result(self) -> MagicMock:
+        """构造正常返回单页文本的 OCR 结果。"""
+        mock_result = MagicMock()
+        mock_page = MagicMock()
+        mock_page.pruned_result = {"rec_texts": ["识别成功"], "rec_scores": [0.99]}
+        mock_result.pages = [mock_page]
+        return mock_result
+
+    @pytest.mark.asyncio
+    @pytest.mark.usefixtures("_no_async_retry_sleep")
+    async def test_retry_succeeds_after_two_network_errors(self) -> None:
+        """连续 2 次 NetworkError 后成功，应返回正确结果。"""
+        mock_client = MagicMock()
+        mock_client.ocr = AsyncMock(
+            side_effect=[
+                self._make_retryable_error(),
+                self._make_retryable_error(),
+                self._make_success_result(),
+            ]
+        )
+
+        service = PaddleOcrClientService(access_token="test-token")
+        service._client = mock_client
+
+        result = await service.ocr("/path/to/image.png")
+        assert result == "识别成功"
+        assert mock_client.ocr.call_count == 3
+
+    @pytest.mark.asyncio
+    @pytest.mark.usefixtures("_no_async_retry_sleep")
+    async def test_retry_exhausted_raises_last_exception(self) -> None:
+        """连续 3 次 NetworkError 后应抛出最后一个异常（原始类型）。"""
+        mock_client = MagicMock()
+        mock_client.ocr = AsyncMock(
+            side_effect=[
+                self._make_retryable_error(),
+                self._make_retryable_error(),
+                self._make_retryable_error(),
+            ]
+        )
+
+        service = PaddleOcrClientService(access_token="test-token")
+        service._client = mock_client
+
+        with pytest.raises(NetworkError):
+            await service.ocr("/path/to/image.png")
+        assert mock_client.ocr.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_auth_error_not_retried(self) -> None:
+        """不可重试的 AuthError 不应触发重试，直接抛出。"""
+        mock_client = MagicMock()
+        mock_client.ocr = AsyncMock(side_effect=AuthError("token invalid"))
+
+        service = PaddleOcrClientService(access_token="bad-token")
+        service._client = mock_client
+
+        with pytest.raises(AuthError, match="token invalid"):
+            await service.ocr("/path/to/image.png")
+        mock_client.ocr.assert_called_once()

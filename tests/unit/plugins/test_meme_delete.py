@@ -239,7 +239,7 @@ class TestGotConfirm:
             im.delete.assert_awaited_once_with([42, 43])
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
-            assert "已删除表情包" in msg
+            assert "删除结果如下" in msg
             assert "成功：42、43" in msg
             assert "未找到：44" in msg
 
@@ -294,7 +294,7 @@ class TestGotConfirm:
             asyncio.run(got_confirm(bot, event, matcher, "CONFIRM_ARG_SENTINEL"))  # type: ignore[arg-type]
 
             msg = matcher.finish.await_args[0][0]
-            assert "失败：45（文件移动失败）" in msg
+            assert "失败：id:45 原因:『文件移动失败』" in msg
 
     def test_cancel(self) -> None:
         """用户回复其他内容 → 回复已取消删除。"""

@@ -598,9 +598,9 @@ class PaddleOcrClientService:
 - `model` 默认 `Model.PP_OCRV6`
 - `concurrency` OCR 并发上限，默认读取 `OCR_CONCURRENCY` 环境变量，回退为 5
 - `text_rec_score_thresh` 置信度阈值（0~1），低于此值的文本行被过滤；设为 0 关闭过滤
-- `ocr()` 返回识别文本（已去除所有空白字符，空字符串表示无结果）；支持新版 API dict 格式（`rec_texts`）与旧版格式自动适配
+- `ocr()` 返回识别文本（已去除所有空白字符，空字符串表示无结果）；支持新版 API dict 格式（`rec_texts`）与旧版格式自动适配；装饰有 `@api_retry(...)`，对 `NetworkError`/`RequestTimeoutError`/`PollTimeoutError`/`RateLimitError`/`ServiceUnavailableError` 及 httpx 网络异常最多 3 次指数退避重试
 - `close()` 释放 HTTP 会话
-- 异常：`RuntimeError`（API 调用失败）
+- 异常：`PaddleOCRAPIError`（不可重试 API 错误，或可重试异常重试耗尽后以原始类型抛出）、`RuntimeError`（非 API 异常）
 
 ### `docs/api/bot/engine/rerank_service.md`
 

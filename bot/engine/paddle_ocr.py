@@ -13,9 +13,16 @@ import os
 from paddleocr import (
     AsyncPaddleOCRClient,
     Model,
+    NetworkError,
     OCROptions,
     PaddleOCRAPIError,
+    PollTimeoutError,
+    RateLimitError,
+    RequestTimeoutError,
+    ServiceUnavailableError,
 )
+
+from .retry_config import api_retry
 
 logger = logging.getLogger(__name__)
 
@@ -92,9 +99,7 @@ def _extract_text(pruned_result: object, rec_score_threshold: float = 0.0) -> st
     # 2) 文档解析（PP-Structure v3）：文本嵌套在 overall_ocr_res 下
     overall_ocr_res = pruned_result.get("overall_ocr_res")
     if isinstance(overall_ocr_res, dict):
-        parts, had_rec_texts = _extract_rec_texts(
-            overall_ocr_res, rec_score_threshold
-        )
+        parts, had_rec_texts = _extract_rec_texts(overall_ocr_res, rec_score_threshold)
         if had_rec_texts:
             return " ".join(parts)
 
@@ -159,11 +164,25 @@ class PaddleOcrClientService:
         c = concurrency or int(os.environ.get("OCR_CONCURRENCY", 5))
         self._semaphore = asyncio.Semaphore(c)
 
+    @api_retry(
+        extra_exceptions=(
+            NetworkError,
+            RequestTimeoutError,
+            PollTimeoutError,
+            RateLimitError,
+            ServiceUnavailableError,
+        )
+    )
     async def ocr(self, image_path: str) -> str:
         """对图片执行 OCR 识别。
 
         调用 AsyncPaddleOCRClient.ocr() 提交 OCR 任务并等待完成，
         从返回结果的 pruned_result 中提取文本。
+
+        可重试的瞬时异常（NetworkError/RequestTimeoutError/PollTimeoutError/
+        RateLimitError/ServiceUnavailableError）由 retry_config.api_retry 按指数
+        退避重试，默认最多 3 次；不可重试的 API 错误（如 AuthError、
+        InvalidRequestError）及重试耗尽后的异常以原始类型抛出。
 
         Args:
             image_path: 图片文件路径。
@@ -172,7 +191,9 @@ class PaddleOcrClientService:
             识别到的文本字符串（已去除所有空白字符，可能为空字符串）。
 
         Raises:
-            RuntimeError: API 调用失败。
+            PaddleOCRAPIError: 不可重试的 API 错误（如鉴权失败、参数非法），
+                或可重试异常重试耗尽后以原始类型抛出。
+            RuntimeError: 非 API 异常（如未预期的本地错误）。
         """
         async with self._semaphore:
             logger.debug("调用 PaddleOCR API: %s", image_path)
@@ -182,8 +203,10 @@ class PaddleOcrClientService:
                     model=self._model,
                     options=self._ocr_options,
                 )
-            except PaddleOCRAPIError as exc:
-                raise RuntimeError(f"PaddleOCR API 调用失败: {exc}") from exc
+            except PaddleOCRAPIError:
+                # 透传给 @api_retry：可重试子类按 extra_exceptions 重试，
+                # 不可重试子类（AuthError/InvalidRequestError 等）由装饰器 reraise
+                raise
             except Exception as exc:
                 raise RuntimeError(f"PaddleOCR 调用异常: {exc}") from exc
 
