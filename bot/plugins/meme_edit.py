@@ -1,7 +1,7 @@
 """/edittext 命令插件 — 修改指定表情包的 OCR 文本。
 
 授权用户私聊中发送 /edittext <entry_id> <新文本>，
-Bot 发送图片和确认消息，用户回复「确认」或「yes」后执行修改。
+Bot 发送确认消息，用户回复「确认」或「yes」后执行修改。
 """
 
 import asyncio
@@ -9,7 +9,7 @@ import logging
 import uuid
 
 from nonebot import on_command
-from nonebot.adapters.onebot.v11 import Bot, Message, MessageEvent, MessageSegment
+from nonebot.adapters.onebot.v11 import Bot, Message, MessageEvent
 from nonebot.exception import FinishedException, RejectedException
 from nonebot.matcher import Matcher
 from nonebot.params import Arg, CommandArg
@@ -17,7 +17,6 @@ from nonebot.rule import to_me
 
 from bot.app_state import get_index_manager, get_metadata_store
 from bot.auth import is_authorized, log_unauthorized
-from bot.config import MEMES_DIR
 from bot.engine.index_manager import (
     DuplicateTextError,
     EmbeddingError,
@@ -37,7 +36,7 @@ edit_cmd = on_command("edittext", rule=to_me(), priority=5, block=True, aliases=
 async def handle_edit(
     bot: Bot, event: MessageEvent, matcher: Matcher, args: Message = CommandArg()
 ) -> None:
-    """入口：授权校验 → 参数解析 → 发图确认。
+    """入口：授权校验 → 参数解析 → 发送确认信息。
 
     Args:
         bot: OneBot V11 Bot 实例。
@@ -92,13 +91,6 @@ async def handle_edit(
         if entry is None:
             await matcher.finish(f"未找到 id 为 {entry_id} 的表情包")
             return
-
-        # 发送图片
-        image_path = MEMES_DIR / entry.image_path
-        if image_path.exists():
-            await matcher.send(
-                MessageSegment.image("file://" + str(image_path.resolve()))
-            )
 
         # 确认消息
         await matcher.send(

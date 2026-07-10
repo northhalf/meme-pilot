@@ -2,7 +2,7 @@
 
 > 本文档记录 /edittext 命令插件的对外行为。模块内部 `_` 前缀函数和方法不在此列出。
 
-授权用户在私聊中发送 `/edittext <entry_id> <新文本>`，Bot 发送图片和确认消息，用户回复「确认」或「yes」后执行修改。
+授权用户在私聊中发送 `/edittext <entry_id> <新文本>`，Bot 发送确认消息，用户回复「确认」或「yes」后执行修改。
 
 ## 命令注册
 
@@ -35,7 +35,7 @@
    └─ entry_id 不存在 → 回复"未找到 id 为 X 的表情包"
         │
         ▼
-  发送图片 + 确认消息
+  发送确认消息
   "当前 OCR 文本：{text}
   修改后文本：{new_text}
   回复「确认」或「yes」确认修改，回复其他内容取消"
@@ -55,7 +55,7 @@
 
 ### `handle_edit(bot, event, matcher)`
 
-入口：授权校验 → 参数解析 → 发图确认 → 注册超时 → got 等待。
+入口：授权校验 → 参数解析 → 发送确认信息 → 注册超时 → got 等待。
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
@@ -104,4 +104,3 @@
 | `bot.session.timeout_session` | got 等待超时自动取消 |
 | `bot.plugins._search_utils.got_intercept_bypass` | `/help` 和 `/cancel` 旁路拦截 |
 | `bot.plugins._help_text.HELP_TEXT` | `/help` 旁路时发送帮助文本 |
-| `bot.config.MEMES_DIR` | 图片文件路径定位 |

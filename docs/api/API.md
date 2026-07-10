@@ -883,7 +883,7 @@ NoneBot2 命令插件，注册 `/edittext` 命令。
 - 注册：`on_command("edittext", rule=to_me(), priority=5, block=True, aliases={"e"})`，参数经 `CommandArg()` 提取（短命令 `/e` 等价）
 - 依赖：`app_state.get_index_manager()`、`auth.is_authorized()`、`bot.session.session_manager`、`bot.session.timeout_session`、`bot.plugins._search_utils.got_intercept_bypass`
 - 管道：`IndexManager.edit_text() -> EditTextResult`
-- 流程：`/edittext <id> <新文本>` → 发送确认消息（含图片） → 用户回复「确认」后执行修改 → 更新 sqlite 元数据、chroma 向量、关键词搜索索引
+- 流程：`/edittext <id> <新文本>` → 发送确认消息 → 用户回复「确认」后执行修改 → 更新 sqlite 元数据、chroma 向量、关键词搜索索引
 - 错误处理：索引刷新中抛 `RefreshInProgressError`，文本冲突抛 `DuplicateTextError`，id 不存在抛 `ValueError`
 - 群聊：授权用户群聊 @bot 调用时回复"此命令仅限私聊使用"
 
