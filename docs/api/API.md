@@ -282,6 +282,7 @@ class IndexManager:
     ) -> list[SearchResult]
     # 持读锁调用 CombinedSearcher.search；空库返回 []；超时抛 asyncio.TimeoutError；
     # 未注入 CombinedSearcher 抛 RuntimeError
+    # 排序：无关键词随机；有关键词同相似度组内随机（组间相似度降序）
 
     async def ai_match(self, description: str) -> AIMatchResult | None
     # 锁外 embed，持读锁调用 AIMatcher.match_with_vector()；超时抛 asyncio.TimeoutError
@@ -448,8 +449,8 @@ class CombinedSearcher:
         speakers: list[str],
         tags: list[str] | None = None,
     ) -> list[SearchResult]
-    # 有关键词：在过滤子集上跑 KeywordSearcher.search_in，带 similarity 降序
-    # 无关键词：包装 similarity=0.0，按 entry_id 升序
+    # 有关键词：在过滤子集上跑 KeywordSearcher.search_in（相似度降序），同相似度组内随机排序
+    # 无关键词：包装 similarity=0.0，随机排序
 ```
 
 ### `docs/api/bot/engine/openai_embedding.md`
@@ -974,6 +975,7 @@ NoneBot2 命令插件，注册 `/query` 命令。
 - 参数解析：`#tag` -> tags（AND）、`@speaker` -> speakers（OR）、其余 -> 关键词；`#`/`@` 单独 token 忽略；三者皆空回复用法提示
 - 管道：`IndexManager.search_combined(keyword, speakers, tags)`
 - 展示：有关键词用 `QUERY_KW_OPTIONS`(show_similarity=True, score, next_trigger="n")；无关键词用 `QUERY_FILTER_OPTIONS`(show_similarity=False, next_trigger="n")
+- 排序：无关键词随机；有关键词同相似度组内随机（组间相似度降序）；一次 /query 洗牌一次，翻页顺序稳定
 - 群聊：支持群聊 @bot 触发（属组 B）
 
 ### `bot/config.py`

@@ -163,6 +163,7 @@ dispatch_search_results（复用 /search 的空/单/多结果分支）
 #### 交互约束
 
 - 有关键词时列表行展示关键词相似度百分比（score 0–100，同 `/search`）；无关键词纯过滤时不展示相似度（同 `/rand`）。
+- 排序：无关键词时结果随机排序；有关键词时按相似度降序分组，同相似度组内随机排序（一次 `/query` 洗牌一次，翻页顺序稳定）。
 - speaker 精确相等、区分大小写；tags 精确匹配、区分大小写、多个为 AND；多 speaker 为 OR。
 - `#`/`@` 单独成 token（前缀后为空）忽略；三者皆空时回复用法提示。
 - 权限属组 B（私聊 + 群聊 @bot）；与 `/search`、`/ai`、`/add` 等共用会话互斥与读锁。
@@ -737,7 +738,7 @@ Bot 读取索引统计 + 本机硬件信息，组装回复：
 | `/setspeaker` 用户回复非"确认/yes/y" | 回复"已取消" |
 | 授权用户私聊/群聊@发送 /query | 按 keyword/speaker/tags 组合检索 |
 | /query 无参数 | 回复 "/query <关键词> [@说话人] [#标签...]" |
-| /query 仅 @speaker 或 #tag | 纯过滤，按 entry_id 升序返回，不展示相似度 |
+| /query 仅 @speaker 或 #tag | 纯过滤，随机排序返回，不展示相似度 |
 | /query 多 @speaker | OR 任一命中 |
 | /query 多 #tag | AND 同时满足 |
 | /query 关键词含 # 或 @ | 被前缀解析吞掉，不作为关键词搜索 |

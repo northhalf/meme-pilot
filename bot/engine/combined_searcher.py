@@ -6,6 +6,8 @@
 """
 
 import logging
+import random
+from itertools import groupby
 
 from .keyword_searcher import KeywordSearcher
 from .metadata_store import MemeEntry
@@ -96,6 +98,7 @@ class CombinedSearcher:
 
         if keyword:
             results = self._keyword_searcher.search_in(filtered, keyword)
+            results = _shuffle_within_similarity_groups(results)
             logger.info(
                 "组合检索（含关键词）: keyword=%r, speakers=%r, tags=%r, 命中=%d",
                 keyword,
@@ -116,7 +119,7 @@ class CombinedSearcher:
             )
             for entry in filtered.values()
         ]
-        results.sort(key=lambda r: r.entry_id)
+        random.shuffle(results)
         logger.info(
             "组合检索（纯过滤）: speakers=%r, tags=%r, 命中=%d",
             speakers,
@@ -124,3 +127,25 @@ class CombinedSearcher:
             len(results),
         )
         return results
+
+
+def _shuffle_within_similarity_groups(
+    results: list[SearchResult],
+) -> list[SearchResult]:
+    """对相似度相同的结果组内随机排序，组间保持相似度降序。
+
+    依赖入参已按 similarity 降序排列（search_in 契约保证，同分相邻），
+    因此 itertools.groupby 的「连续相同 key 合并」即可正确分组。
+
+    Args:
+        results: 已按 similarity 降序排列的搜索结果。
+
+    Returns:
+        组间顺序不变、组内随机打乱的新列表。
+    """
+    shuffled: list[SearchResult] = []
+    for _sim, group in groupby(results, key=lambda r: r.similarity):
+        group_list = list(group)
+        random.shuffle(group_list)
+        shuffled.extend(group_list)
+    return shuffled

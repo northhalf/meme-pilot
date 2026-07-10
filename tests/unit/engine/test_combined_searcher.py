@@ -5,6 +5,7 @@ import pytest
 from bot.engine.combined_searcher import CombinedSearcher
 from bot.engine.keyword_searcher import KeywordSearcher
 from bot.engine.metadata_store import MemeEntry
+from bot.engine.types import SearchResult
 
 
 class MockMetadataStore:
@@ -106,11 +107,39 @@ class TestWithKeyword:
         assert {r.entry_id for r in results} == {1, 3}
         assert all(r.similarity == 0.0 for r in results)
 
+    def test_keyword_shuffles_within_same_similarity(
+        self, combined: CombinedSearcher, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """有关键词：同相似度组内随机（精确子串全 100.0 单组）。"""
+        monkeypatch.setattr(
+            "bot.engine.combined_searcher.random.shuffle",
+            lambda seq: seq.reverse(),
+        )
+        results = combined.search("加班", ["小明"], [])
+        # speaker 小明 -> {1,3}；精确子串「加班」命中二者，全 100.0 单组，反转后 [3,1]
+        assert [r.entry_id for r in results] == [3, 1]
+        assert all(r.similarity == 100.0 for r in results)
+
 
 class TestNoKeywordBranch:
-    def test_sorted_by_entry_id_ascending(self, combined: CombinedSearcher) -> None:
+    def test_no_keyword_returns_all_entries(self, combined: CombinedSearcher) -> None:
+        """无关键词：返回全部过滤命中条目（顺序随机，仅校验集合与数量）。"""
         results = combined.search(None, ["小明", "小红"], [])
-        assert [r.entry_id for r in results] == [1, 2, 3]
+        assert {r.entry_id for r in results} == {1, 2, 3}
+        assert len(results) == 3
+
+    def test_no_keyword_shuffles_via_random(
+        self, combined: CombinedSearcher, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """无关键词：确实调用 random.shuffle 打乱（monkeypatch 反转验证）。"""
+        monkeypatch.setattr(
+            "bot.engine.combined_searcher.random.shuffle",
+            lambda seq: seq.reverse(),
+        )
+        results = combined.search(None, ["小明", "小红"], [])
+        # filtered.values() 迭代序为 [1,2,3]，反转后 [3,2,1]
+        assert [r.entry_id for r in results] == [3, 2, 1]
+        assert all(r.similarity == 0.0 for r in results)
 
     def test_similarity_zero(self, combined: CombinedSearcher) -> None:
         results = combined.search(None, [], ["加班"])
@@ -145,3 +174,44 @@ class TestPackageExport:
         from bot.app_state import get_combined_searcher
 
         assert callable(get_combined_searcher)
+
+
+class TestShuffleWithinSimilarityGroups:
+    """_shuffle_within_similarity_groups 白盒测试。"""
+
+    def test_preserves_group_order_and_membership(self) -> None:
+        from bot.engine.combined_searcher import _shuffle_within_similarity_groups
+
+        results = [
+            SearchResult(entry_id=1, image_path="a", text="t1", similarity=100.0),
+            SearchResult(entry_id=2, image_path="b", text="t2", similarity=100.0),
+            SearchResult(entry_id=3, image_path="c", text="t3", similarity=80.0),
+            SearchResult(entry_id=4, image_path="d", text="t4", similarity=80.0),
+            SearchResult(entry_id=5, image_path="e", text="t5", similarity=60.0),
+        ]
+        out = _shuffle_within_similarity_groups(results)
+        # 组间仍按 similarity 降序
+        assert [r.similarity for r in out] == [100.0, 100.0, 80.0, 80.0, 60.0]
+        # 每组成员集合不变
+        assert {r.entry_id for r in out[:2]} == {1, 2}
+        assert {r.entry_id for r in out[2:4]} == {3, 4}
+        assert out[4].entry_id == 5
+
+    def test_randomizes_within_group(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from bot.engine.combined_searcher import _shuffle_within_similarity_groups
+
+        monkeypatch.setattr(
+            "bot.engine.combined_searcher.random.shuffle",
+            lambda seq: seq.reverse(),
+        )
+        results = [
+            SearchResult(entry_id=1, image_path="a", text="t1", similarity=100.0),
+            SearchResult(entry_id=2, image_path="b", text="t2", similarity=100.0),
+            SearchResult(entry_id=3, image_path="c", text="t3", similarity=80.0),
+            SearchResult(entry_id=4, image_path="d", text="t4", similarity=80.0),
+        ]
+        out = _shuffle_within_similarity_groups(results)
+        # 每组反转：[2,1] + [4,3]
+        assert [r.entry_id for r in out] == [2, 1, 4, 3]
