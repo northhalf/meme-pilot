@@ -63,7 +63,7 @@ class DuplicateEntryError(sqlite3.IntegrityError):
         super().__init__(f"重复字段冲突: {detail}")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class MemeEntry:
     """单条表情包元数据。
 
@@ -143,9 +143,7 @@ class MetadataStore:
                 )
                 for row in rows
             }
-            self._text_to_id = {
-                entry.text: eid for eid, entry in self._entries.items()
-            }
+            self._text_to_id = {entry.text: eid for eid, entry in self._entries.items()}
         logger.info(
             "MetadataStore 加载完成: %s, 共 %d 条记录",
             self._db_path,
@@ -444,9 +442,7 @@ class MetadataStore:
                         image_path if image_path is not _UNSET else old_entry.image_path
                     ),
                     text=new_text,
-                    speaker=(
-                        speaker if speaker is not _UNSET else old_entry.speaker
-                    ),
+                    speaker=(speaker if speaker is not _UNSET else old_entry.speaker),
                     tags=sorted(set(tags)) if tags is not None else old_entry.tags,
                 )
         return True

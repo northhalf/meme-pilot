@@ -38,7 +38,7 @@ NEXT_PAGE_TRIGGER: str = "n"
 """用户回复该词触发"下一页"。"""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class PresentOptions:
     """候选展示选项。
 

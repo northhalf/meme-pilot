@@ -64,7 +64,7 @@ class WriteOp(Enum):
     DELETE = auto()
 
 
-@dataclass
+@dataclass(slots=True)
 class _WriteRequest:
     """写入任务单元，由 Write Worker 串行处理。
 
@@ -92,7 +92,7 @@ class _WriteRequest:
     old_text: str = ""
 
 
-@dataclass
+@dataclass(slots=True)
 class EditTextResult:
     """edit_text() 的返回结果。
 
@@ -107,7 +107,7 @@ class EditTextResult:
     new_text: str
 
 
-@dataclass
+@dataclass(slots=True)
 class SetSpeakerResult:
     """set_speaker() 的返回结果。
 
@@ -122,7 +122,7 @@ class SetSpeakerResult:
     new_speaker: str | None
 
 
-@dataclass
+@dataclass(slots=True)
 class AddTagResult:
     """add_tag() 的返回结果。
 
@@ -137,7 +137,7 @@ class AddTagResult:
     all_tags: list[str]
 
 
-@dataclass
+@dataclass(slots=True)
 class DeleteResult:
     """delete() 的返回结果。
 
@@ -152,7 +152,7 @@ class DeleteResult:
     failed_ids: list[tuple[int, str]]
 
 
-@dataclass
+@dataclass(slots=True)
 class IndexInfo:
     """get_info() 的返回结果。
 
@@ -242,7 +242,7 @@ class ImageOptimizerProtocol(Protocol):
     async def optimize(self, image_path: str) -> OptimizeResult: ...
 
 
-@dataclass
+@dataclass(slots=True)
 class SyncResult:
     """sync_with_filesystem() 的返回结果。
 
@@ -261,7 +261,7 @@ class SyncResult:
     failed: list[str] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(slots=True)
 class AddResult:
     """add() 的返回结果。
 
@@ -1520,7 +1520,9 @@ class IndexManager:
             if f.is_file() and f.suffix.lower() in self.SUPPORTED_EXTENSIONS
         }
 
-    async def _process_image_pipeline(self, filename: str) -> tuple[str, str, list[float]]:
+    async def _process_image_pipeline(
+        self, filename: str
+    ) -> tuple[str, str, list[float]]:
         """压缩 -> OCR -> Embedding 管道。
 
         optimize 后读取 result.output_path 作为最终路径；若与原 filename 不同（转 webp），

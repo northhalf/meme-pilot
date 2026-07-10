@@ -15,7 +15,7 @@ from .vector_store import VectorHit
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class AIMatchCandidate:
     """Embedding 阶段的候选表情包。
 
@@ -54,7 +54,7 @@ class RerankProvider(Protocol):
         ...
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class AIMatchResult:
     """AI 匹配最终结果。
 

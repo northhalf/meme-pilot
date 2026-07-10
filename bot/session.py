@@ -21,7 +21,7 @@ from bot.config import read_session_timeout
 logger = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclass(slots=True)
 class ChatSession:
     """每个用户一个，持久存在，首次访问时懒创建。
 
@@ -40,7 +40,7 @@ class ChatSession:
     current_task: asyncio.Task | None = None
 
 
-@dataclass
+@dataclass(slots=True)
 class SelectionSession:
     """选择会话，至多一个，是 ChatSession 的子集。
 

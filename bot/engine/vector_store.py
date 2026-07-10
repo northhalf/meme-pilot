@@ -22,7 +22,7 @@ import chromadb
 logger = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclass(slots=True)
 class VectorHit:
     """单条向量召回结果。
 
