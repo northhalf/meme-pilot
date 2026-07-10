@@ -199,3 +199,33 @@ class TestDelete:
         assert not src.exists()
         assert existing.exists()
         assert (index_manager._deleted_dir / "test_1.jpg").exists()
+
+    @pytest.mark.anyio
+    async def test_delete_move_failure_preserves_entry(
+        self,
+        index_manager: IndexManager,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """移图失败时索引原样保留，避免下次 refresh 重新入库（已删表情包复活）。
+
+        先移文件再删索引：移图抛异常时 sqlite/chroma 均未删除，文件仍在 memes/，
+        id 记入 failed_ids，用户重试仍可成功。
+        """
+        image_path = "test.jpg"
+        src = index_manager._memes_dir / image_path
+        src.write_text("image data")
+        index_manager._metadata_store.add(image_path, "文本")
+
+        def _fail_move(src_path: str, dst_path: str) -> None:
+            raise OSError("模拟移图失败")
+
+        monkeypatch.setattr("shutil.move", _fail_move)
+
+        result = await index_manager.delete([1])
+
+        assert result.deleted_ids == []
+        assert result.not_found_ids == []
+        assert result.failed_ids == [(1, "模拟移图失败")]
+        # 索引原样保留：文件仍在 memes/，条目仍在 store
+        assert src.exists()
+        assert index_manager._metadata_store.get_entry(1) is not None

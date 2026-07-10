@@ -179,7 +179,7 @@ async def got_confirm(
                     await matcher.finish("删除过程中发生异常，请稍后重试")
                 else:
                     session_manager.deactivate_chat(user_id)
-                    lines = ["已删除表情包 ✅"]
+                    lines = ["删除结果如下:"]
                     if result.deleted_ids:
                         lines.append(
                             "成功：" + "、".join(str(i) for i in result.deleted_ids)
@@ -190,7 +190,8 @@ async def got_confirm(
                         )
                     if result.failed_ids:
                         failed_parts = [
-                            f"{eid}（{reason}）" for eid, reason in result.failed_ids
+                            f"id:{eid} 原因:『{reason}』"
+                            for eid, reason in result.failed_ids
                         ]
                         lines.append("失败：" + "、".join(failed_parts))
                     await matcher.finish("\n".join(lines))

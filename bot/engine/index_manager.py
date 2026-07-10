@@ -1074,12 +1074,17 @@ class IndexManager:
         )
 
     async def _execute_delete(self, req: _WriteRequest) -> DeleteResult:
-        """写锁内执行 delete（先 sqlite 后 chroma，再移动文件到 memes_deleted/）。
+        """写锁内执行 delete（先归档文件到 memes_deleted/，再先 sqlite 后 chroma 删索引）。
+
+        先移文件可避免「索引已删但移图失败」导致文件残留 memes/、下次 refresh 被重新
+        入库（已删表情包复活）。移图失败时索引原样保留，仅将本次 id 记为失败；文件
+        本就不在 memes/ 时跳过移动直接删索引。sqlite 与 chroma 删除仍按「先 sqlite
+        后 chroma」，残留孤儿向量由 refresh 阶段0 自愈。
 
         Args:
             req: 写入任务单元，包含待删除 entry_id 列表。
 
-         Returns:
+        Returns:
             DeleteResult 描述删除结果，含成功、未找到、失败三类 id。
         """
         self._deleted_dir.mkdir(parents=True, exist_ok=True)
@@ -1095,16 +1100,21 @@ class IndexManager:
                 continue
 
             try:
-                await self._run_sync(self._metadata_store.remove, entry_id)
-                await self._vector_store.remove(entry_id)
-
+                # 先归档文件：移图失败时索引原样保留（仅标记本次失败），避免文件
+                # 残留 memes/ 在下次 refresh 被重新入库（已删表情包复活）。
                 src = self._memes_dir / entry.image_path
                 if src.exists():
                     dst = resolve_unique_filename(
                         self._deleted_dir, Path(entry.image_path).name
                     )
                     dst.parent.mkdir(parents=True, exist_ok=True)
-                    src.rename(dst)
+                    # 用 shutil.move 而非 Path.rename：memes/ 与 memes_deleted/ 在
+                    # Docker 中是不同 bind mount，rename 跨设备会抛 EXDEV (errno 18)。
+                    shutil.move(str(src), str(dst))
+
+                # 文件已归档（或本就不在 memes/），再删索引：先 sqlite 后 chroma
+                await self._run_sync(self._metadata_store.remove, entry_id)
+                await self._vector_store.remove(entry_id)
 
                 deleted_ids.append(entry_id)
             except Exception as exc:
@@ -1540,9 +1550,7 @@ class IndexManager:
             text = await self._ocr_provider.ocr(str(image_path))
         except Exception as exc:
             raise OcrError(f"OCR 调用失败: {filename}") from exc
-        text = "".join(
-            text.split()
-        )  # 统一去除所有空白（plan line 46 约定 + T8 不变量）
+        text = "".join(text.split())  # 统一去除所有空白
         if not text:
             # 空文本不 embed，由下游 no_text 分支移图
             # （避免 provider 对空串抛 ValueError 导致 no_text 分支不可达）

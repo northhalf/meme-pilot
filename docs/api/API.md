@@ -302,7 +302,7 @@ class IndexManager:
     # raises RefreshInProgressError, ValueError, IndexAddCancelledError
 
     async def delete(self, entry_ids: list[int]) -> DeleteResult
-    # 删除一个或多个表情包条目；先 sqlite 后 chroma，再将图片移到 memes_deleted/
+    # 删除一个或多个表情包条目；先将图片移到 memes_deleted/，再先 sqlite 后 chroma 删索引（移图失败时索引保留，避免下次 refresh 复活）
 
     async def info(self) -> IndexInfo
     # 返回当前索引统计信息（条目数、speaker 排行、状态）；不含硬件信息
