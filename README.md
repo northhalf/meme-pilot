@@ -153,7 +153,7 @@ Bot: 表情包数量：128
        1. 小明 45
        2. 无 32
        3. 小红 28
-     当前机器人状态：就绪
+     当前机器人状态：空闲
      内存占用：512 MB / 2048 MB (25%)
      CPU占用：12%
 ```
@@ -397,19 +397,23 @@ meme-pilot/
     ├── session.py           # 共享会话管理（/add、/search 防重复提交）
     ├── logging_config.py    # 日志滚动配置
     ├── plugins/
-    │   ├── meme_search.py   # /search 命令
-    │   ├── meme_rand.py     # /rand 命令
-    │   ├── meme_sim.py      # /sim 命令
-    │   ├── meme_ai.py       # /ai 命令
-    │   ├── meme_add.py      # /add 命令
-    │   ├── meme_cancel.py   # /cancel 命令
-    │   ├── meme_help.py     # /help 命令
-    │   ├── meme_plain_text.py # 兜底：普通文本/未知命令
-    │   ├── meme_refresh.py  # /refresh 命令
-    │   ├── meme_edit.py     # /edittext 命令
-    │   ├── meme_setspeaker.py # /setspeaker 命令
-    │   ├── _help_text.py    # 帮助文本常量（共享模块）
-    │   └── _search_utils.py # 搜索核心逻辑（共享模块）
+    │   ├── meme_search.py       # /search 命令
+    │   ├── meme_query.py        # /query 命令
+    │   ├── meme_rand.py         # /rand 命令
+    │   ├── meme_sim.py          # /sim 命令
+    │   ├── meme_ai.py           # /ai 命令
+    │   ├── meme_add.py          # /add 命令
+    │   ├── meme_addtag.py       # /addtag 命令
+    │   ├── meme_delete.py       # /del 命令
+    │   ├── meme_edit.py         # /edittext 命令
+    │   ├── meme_setspeaker.py   # /setspeaker 命令
+    │   ├── meme_refresh.py      # /refresh 命令
+    │   ├── meme_info.py         # /info 命令
+    │   ├── meme_help.py         # /help 命令
+    │   ├── meme_cancel.py       # /cancel 命令
+    │   ├── meme_plain_text.py   # 兜底：普通文本/未知命令
+    │   ├── _help_text.py        # 帮助文本常量（共享模块）
+    │   └── _search_utils.py     # 搜索核心逻辑（共享模块）
     └── engine/
         ├── __init__.py          # 包级公共接口导出与 provider 自动注册
         ├── protocols.py         # 共享协议定义（EmbeddingProvider 等）
@@ -425,9 +429,13 @@ meme-pilot/
         ├── metadata_store.py    # sqlite3 元数据存储（MemeEntry + MetadataStore）
         ├── vector_store.py      # chromadb 向量存储（VectorHit + VectorStore）
         ├── index_manager.py     # 索引薄编排（委托两个 Store）
+        ├── rwlock.py            # 读写锁（写者优先）
+        ├── types.py             # 共享数据类型（SearchResult 等）
+        ├── utils.py             # 共享工具（vector_norm 等）
         ├── keyword_searcher.py  # 模糊搜索
         ├── random_searcher.py   # 随机取样搜索
         ├── semantic_searcher.py # 语义搜索
+        ├── combined_searcher.py # 组合检索（keyword+speaker+tag 过滤）
         └── ai_matcher.py        # AI 语义匹配（VectorStore 召回 + 可选精排）
 ```
 
