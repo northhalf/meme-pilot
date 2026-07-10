@@ -26,12 +26,14 @@ class OptimizeResult:
         optimized_size: 压缩后文件大小（字节）。
         saved: 节省的字节数。
         skipped: 是否跳过压缩（如 .bmp 或压缩后反而变大）。
+        output_path: 最终文件路径（同格式压缩=原路径；转 WebP=新 .webp 路径）。
     """
 
     original_size: int
     optimized_size: int
     saved: int
     skipped: bool = False
+    output_path: str = ""
 
 
 class ImageOptimizer:
@@ -41,7 +43,7 @@ class ImageOptimizer:
     成功后覆盖原文件。.bmp 文件跳过压缩。
 
     Attributes:
-        _jpeg_quality: JPEG 重编码质量（默认 85）。
+        _lossy_quality: 有损编码质量（用于 JPEG 与有损 WebP，默认 85）。
         _webp_quality: WebP 无损压缩质量（默认 80）。
     """
 
@@ -55,40 +57,51 @@ class ImageOptimizer:
         }
     )
     PASS_THROUGH: frozenset[str] = frozenset({".bmp"})
+    CONVERTIBLE_TO_WEBP: frozenset[str] = frozenset(
+        {".jpg", ".jpeg", ".png", ".gif", ".bmp"}
+    )
 
     def __init__(
         self,
-        jpeg_quality: int = 85,
+        lossy_quality: int = 85,
         webp_quality: int = 80,
         concurrency: int | None = None,
+        should_convert_to_webp: bool = False,
     ) -> None:
         """初始化 ImageOptimizer。
 
         Args:
-            jpeg_quality: JPEG 重编码质量（1-100），默认 85。
-            webp_quality: WebP 无损压缩质量（0-100），默认 80。
+            lossy_quality: 有损编码质量（1-100，用于 JPEG 与有损 WebP），默认 85。
+            webp_quality: WebP 质量（0-100），默认 80。
             concurrency: 并发数，默认从 COMPRESS_CONCURRENCY 环境变量读取，
                          回退为 5。
+            should_convert_to_webp: 是否将图片转为 WebP（默认 False，维持现状同格式压缩）。
         """
-        self._jpeg_quality = jpeg_quality
+        self._lossy_quality = lossy_quality
         self._webp_quality = webp_quality
+        self._should_convert_to_webp = should_convert_to_webp
 
         c = concurrency or int(os.environ.get("COMPRESS_CONCURRENCY", 5))
         self._semaphore = asyncio.Semaphore(c)
 
     async def optimize(self, image_path: str | Path) -> OptimizeResult:
-        """尝试无损压缩图片，成功后覆盖原文件。
+        """尝试压缩/转换图片，成功后覆盖原文件或生成新 WebP。
+
+        路由优先级：
+        1. ``.webp`` 源：开关开 -> 有损重编码；关 -> 无损重编码。均变小才覆盖。
+        2. 开关开 + 可转换格式（jpg/jpeg/png/gif/bmp）-> 强制转 WebP（不比较体积）。
+        3. 开关关或 .bmp -> 同格式压缩 / PASS_THROUGH。
 
         Args:
             image_path: 图片文件路径。
 
         Returns:
-            OptimizeResult 包含压缩前后大小信息。
+            OptimizeResult 包含压缩前后大小与最终路径。
 
         Raises:
             FileNotFoundError: 文件不存在。
             ValueError: 不支持的文件格式。
-            RuntimeError: 压缩过程失败。
+            RuntimeError: 压缩/转换过程失败。
         """
         path = Path(image_path)
         if not path.exists():
@@ -96,44 +109,140 @@ class ImageOptimizer:
 
         suffix = path.suffix.lower()
 
-        # BMP 跳过
+        # 优先级 1：.webp 源
+        if suffix == ".webp":
+            return await self._optimize_webp_source(path)
+
+        # 优先级 2：开关开 + 可转换格式 -> 强制转 WebP
+        if self._should_convert_to_webp and suffix in self.CONVERTIBLE_TO_WEBP:
+            return await self._convert_to_webp_branch(path)
+
+        # 优先级 3：BMP 跳过
         if suffix in self.PASS_THROUGH:
             size = path.stat().st_size
             logger.debug("跳过压缩: %s (节省 0 字节)", path.name)
             return OptimizeResult(
-                original_size=size, optimized_size=size, saved=0, skipped=True
+                original_size=size,
+                optimized_size=size,
+                saved=0,
+                skipped=True,
+                output_path=str(path),
             )
 
         # 不支持的格式
         if suffix not in self.COMPRESSIBLE:
             raise ValueError(f"不支持的图片格式: {suffix}")
 
-        # 分发到各格式压缩方法
+        # 优先级 3：同格式压缩
+        return await self._compress_same_format(path, suffix)
+
+    async def _optimize_webp_source(self, path: Path) -> OptimizeResult:
+        """优先级 1：压缩 .webp 源，变小才覆盖，不改名。
+
+        开关开时用有损重编码（``_compress_webp_lossy``），关时用无损重编码
+        （``_compress_webp``）。压缩后变大则跳过保留原文件。
+
+        Args:
+            path: WebP 文件路径。
+
+        Returns:
+            OptimizeResult（output_path 为原路径）。
+
+        Raises:
+            RuntimeError: 压缩失败。
+        """
+        compress_fn = (
+            self._compress_webp_lossy if self._should_convert_to_webp else self._compress_webp
+        )
         async with self._semaphore:
             original_size = path.stat().st_size
             try:
-                if suffix in (".jpg", ".jpeg"):
-                    optimized_size = await asyncio.to_thread(
-                        self._compress_jpeg, path, original_size
-                    )
-                elif suffix == ".png":
-                    optimized_size = await asyncio.to_thread(
-                        self._compress_png, path, original_size
-                    )
-                elif suffix == ".webp":
-                    optimized_size = await asyncio.to_thread(
-                        self._compress_webp, path, original_size
-                    )
-                else:
-                    optimized_size = await asyncio.to_thread(
-                        self._compress_gif, path, original_size
-                    )
+                optimized_size = await asyncio.to_thread(
+                    compress_fn, path, original_size
+                )
             except (ValueError, RuntimeError):
                 raise
             except Exception as exc:
                 raise RuntimeError(f"图片压缩失败: {path.name}") from exc
+            saved = original_size - optimized_size
+            if saved <= 0:
+                return OptimizeResult(
+                    original_size=original_size,
+                    optimized_size=optimized_size,
+                    saved=0,
+                    skipped=True,
+                    output_path=str(path),
+                )
+            return OptimizeResult(
+                original_size=original_size,
+                optimized_size=optimized_size,
+                saved=saved,
+                output_path=str(path),
+            )
 
-            # 压缩后反而变大
+    async def _convert_to_webp_branch(self, path: Path) -> OptimizeResult:
+        """优先级 2：强制将图片转为有损 WebP，不比较体积。
+
+        转换后原文件由 ``_convert_image_to_webp`` 删除，output_path 为新 .webp 路径。
+
+        Args:
+            path: 源图片路径。
+
+        Returns:
+            OptimizeResult（output_path 为新 WebP 路径）。
+
+        Raises:
+            RuntimeError: 转换失败。
+        """
+        async with self._semaphore:
+            original_size = path.stat().st_size
+            try:
+                new_path = await asyncio.to_thread(
+                    self._convert_image_to_webp, path
+                )
+            except (ValueError, RuntimeError):
+                raise
+            except Exception as exc:
+                raise RuntimeError(f"图片转换失败: {path.name}") from exc
+            optimized_size = new_path.stat().st_size
+            return OptimizeResult(
+                original_size=original_size,
+                optimized_size=optimized_size,
+                saved=original_size - optimized_size,
+                output_path=str(new_path),
+            )
+
+    async def _compress_same_format(self, path: Path, suffix: str) -> OptimizeResult:
+        """优先级 3：同格式无损压缩（jpg/jpeg/png/gif），变小才覆盖。
+
+        压缩后变大则跳过保留原文件并记录 debug 日志。
+
+        Args:
+            path: 图片文件路径。
+            suffix: 小写扩展名（.jpg/.jpeg/.png/.gif）。
+
+        Returns:
+            OptimizeResult（output_path 为原路径）。
+
+        Raises:
+            RuntimeError: 压缩失败。
+        """
+        if suffix in (".jpg", ".jpeg"):
+            compress_fn = self._compress_jpeg
+        elif suffix == ".png":
+            compress_fn = self._compress_png
+        else:
+            compress_fn = self._compress_gif
+        async with self._semaphore:
+            original_size = path.stat().st_size
+            try:
+                optimized_size = await asyncio.to_thread(
+                    compress_fn, path, original_size
+                )
+            except (ValueError, RuntimeError):
+                raise
+            except Exception as exc:
+                raise RuntimeError(f"图片压缩失败: {path.name}") from exc
             saved = original_size - optimized_size
             if saved <= 0:
                 logger.debug("跳过压缩: %s (压缩后反而变大)", path.name)
@@ -142,11 +251,11 @@ class ImageOptimizer:
                     optimized_size=optimized_size,
                     saved=0,
                     skipped=True,
+                    output_path=str(path),
                 )
-
             pct = saved / original_size * 100
             logger.debug(
-                "压缩完成: %s (%d → %d, 节省 %.1f%%)",
+                "压缩完成: %s (%d -> %d, 节省 %.1f%%)",
                 path.name,
                 original_size,
                 optimized_size,
@@ -156,6 +265,7 @@ class ImageOptimizer:
                 original_size=original_size,
                 optimized_size=optimized_size,
                 saved=saved,
+                output_path=str(path),
             )
 
     def _ensure_rgb(self, img: Image.Image) -> Image.Image:
@@ -217,7 +327,7 @@ class ImageOptimizer:
             original_size,
             format="JPEG",
             preprocess=self._ensure_rgb,
-            quality=self._jpeg_quality,
+            quality=self._lossy_quality,
             optimize=True,
             progressive=True,
         )
@@ -252,6 +362,96 @@ class ImageOptimizer:
             quality=self._webp_quality,
             method=6,
         )
+
+    def _compress_webp_lossy(self, path: Path, original_size: int) -> int:
+        """有损重编码 WebP（开关开启时用于 .webp 源）。
+
+        Args:
+            path: WebP 文件路径。
+            original_size: 原始文件大小（字节）。
+
+        Returns:
+            最终文件大小（字节）。若重编码后更大则保留原文件并返回原始大小。
+        """
+        img = Image.open(path)
+        try:
+            save_img = img if img.mode in ("RGB", "RGBA") else img.convert("RGB")
+            return self._atomic_save(
+                save_img,
+                path,
+                original_size,
+                format="WEBP",
+                quality=self._lossy_quality,
+                method=6,
+            )
+        finally:
+            img.close()
+
+    def _convert_image_to_webp(self, path: Path) -> Path:
+        """将图片转换为有损 WebP，返回新路径，成功后删除原文件。
+
+        强制转换不比较体积。透明通道保留（P/RGBA 保持 RGBA）。
+        GIF 动图保留 duration/loop/transparency 转 animated WebP。
+        失败时清理临时文件与已生成 .webp，原文件保留。
+
+        Args:
+            path: 源图片路径。
+
+        Returns:
+            生成的 WebP 文件路径。
+
+        Raises:
+            RuntimeError: 转换失败。
+        """
+        from .utils import resolve_unique_filename
+
+        target_dir = path.parent
+        target = resolve_unique_filename(target_dir, f"{path.stem}.webp")
+        tmp_path = target.with_suffix(".webp.tmp")
+        try:
+            img = Image.open(path)
+            try:
+                save_kwargs: dict[str, Any] = {
+                    "format": "WEBP",
+                    "quality": self._lossy_quality,
+                    "method": 6,
+                }
+                n_frames: int = getattr(img, "n_frames", 1)
+                if n_frames > 1:
+                    # 动图：提取所有帧，保留 duration/loop。
+                    # transparency 保留依赖 Pillow 对 P/RGBA 帧的 WEBP 转换，若丢失需调整。
+                    frames: list[Image.Image] = []
+                    for i in range(n_frames):
+                        img.seek(i)
+                        frames.append(img.copy())
+                    if "duration" in img.info:
+                        save_kwargs["duration"] = img.info["duration"]
+                    if "loop" in img.info:
+                        save_kwargs["loop"] = img.info["loop"]
+                    frames[0].save(
+                        tmp_path, append_images=frames[1:], save_all=True, **save_kwargs
+                    )
+                    for f in frames:
+                        f.close()
+                else:
+                    # 静态图：保留透明（P/RGBA 保持），否则转 RGB
+                    save_img = (
+                        img if img.mode in ("RGB", "RGBA") else img.convert("RGB")
+                    )
+                    save_img.save(tmp_path, **save_kwargs)
+            finally:
+                img.close()
+            os.replace(tmp_path, target)
+            # 转换成功后删除原文件（若与目标不同）
+            if path.resolve() != target.resolve():
+                path.unlink(missing_ok=True)
+            return target
+        except Exception as exc:
+            tmp_path.unlink(missing_ok=True)
+            # 若 .webp 已生成但后续失败，清理孤儿
+            if target.exists() and path.exists():
+                target.unlink(missing_ok=True)
+            raise RuntimeError(f"WebP 转换失败: {path.name}") from exc
 
     def _compress_gif(self, path: Path, original_size: int) -> int:
         """压缩 GIF 文件。

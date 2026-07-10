@@ -10,12 +10,12 @@
 | **表情包** | 存储在本地的图片文件（.jpg/.jpeg/.png/.gif/.webp/.bmp），带有搞笑/吐槽含义 |
 | **索引** | 从表情包图片中 OCR 提取的文字和图片路径信息，存储在 sqlite `data/index.db` 中（`meme` 表 + `meme_tag` 关联表），向量存储在 ChromaDB `data/chroma/` 中 |
 | **测试目录** | 仓库根目录 `tests/`；按 `unit/`、`integration/`、`fixtures/` 分层，当前只规划目录结构，不代表已经引入测试框架或固定测试命令 |
-| **按文件名同步的增量刷新** | 启动和 `/refresh` 时使用的 v1.0 同步策略：阶段0 跨库一致性修复（对齐 sqlite ↔ chroma 的 id 集合，chroma 损坏/为空且 sqlite 有数据时全量重 embed `rebuild_all`）；阶段1 删除 `memes/` 已不存在图片的记录；阶段2 新增图片先按格式执行图片无损压缩，再追加索引记录；文件名仍存在的图片不重新 OCR，不检测同名覆盖；删除记录后保持其他已有 id 稳定，允许临时编号空洞；新增图片按文件名升序处理，并优先复用最小空洞 id；新增图片 OCR 后按「去除所有空白字符的去重键」去重，与已有条目或其他新图同键时保留已有/靠前者、将重复新图归档到 `memes_replaced/`；OCR 无文字的新图移至 `meme_no_text/` 不进索引 |
+| **按文件名同步的增量刷新** | 启动和 `/refresh` 时使用的 v1.0 同步策略：阶段0 跨库一致性修复（对齐 sqlite ↔ chroma 的 id 集合，chroma 损坏/为空且 sqlite 有数据时全量重 embed `rebuild_all`）；阶段1 删除 `memes/` 已不存在图片的记录；阶段2 新增图片先执行图片压缩/转换（`CONVERT_TO_WEBP` 开启时转 WebP，关闭时同格式无损压缩），再追加索引记录；文件名仍存在的图片不重新 OCR，不检测同名覆盖；删除记录后保持其他已有 id 稳定，允许临时编号空洞；新增图片按文件名升序处理，并优先复用最小空洞 id；新增图片 OCR 后按「去除所有空白字符的去重键」去重，与已有条目或其他新图同键时保留已有/靠前者、将重复新图归档到 `memes_replaced/`；OCR 无文字的新图移至 `meme_no_text/` 不进索引 |
 | **关键词搜索** | 功能一：用户输入关键词，先用「原始输入去所有空白、保留助词」的关键词对索引中的 OCR 文本做精确子串匹配，命中则只返回包含该子串的全部表情包（多结果每页 10 条分页）；未命中时回退到 jieba.posseg 分词过滤助词后的关键词，用 pylcs LCS 模糊匹配（阈值统一 >= 60），按分数降序返回全量匹配（多结果每页 10 条分页）；模糊回退阶段如果存在分数为 100 的结果，只返回分数为 100 的结果；不匹配文件名 |
 | **AI 匹配** | 功能二：用户用自然语言描述，先用 `VectorStore.query` 从 ChromaDB 召回 Top 10（不设最低相似度阈值），再用 `MetadataStore.get_entry` 取 metadata 构候选，经 DeepSeek 精排后返回；若精排失败、解析失败或返回 `0`，fallback 到 embedding Top 1。`AIMatcher` 通过 `MetadataEntryProvider` + `VectorQueryProvider` 两个 Protocol 依赖两个 Store（见「依赖协议」） |
 | **随机选择** | `/rand [关键词]` 命令的行为：有关键词时在关键词搜索结果中随机取 10 个，无关键词时全库随机；回复 `0` 换一批，每次独立抽样 |
 | **语义选择** | `/sim <描述文本>` 命令的行为：基于 embedding 语义搜索全库召回候选供用户选择（多结果每页 10 条分页），不调用 LLM 精排 |
-| **图片无损压缩** | 新增图片进入索引前的文件优化步骤；`/add`、启动同步和 `/refresh` 对新增的 `.jpg/.jpeg/.png/.webp/.gif` 尝试无损压缩，成功后覆盖原文件；`.bmp` 不压缩，其他扩展名不作为表情包处理 |
+| **图片压缩/转换** | 新增图片进入索引前的文件优化步骤；`CONVERT_TO_WEBP=true`（默认）时 `/add`、启动同步和 `/refresh` 对新增的 `.jpg/.jpeg/.png/.gif/.bmp` 转为有损 WebP（q85），转换失败降级保留原格式；`CONVERT_TO_WEBP=false` 时对 `.jpg/.jpeg/.png/.webp/.gif` 执行同格式无损压缩，成功后覆盖原文件，`.bmp` 跳过；其他扩展名不作为表情包处理 |
 | **私聊** | v1.0 的基础会话形态：授权 QQ 用户与 Bot 一对一对话；支持所有命令（组 A：`/add`、`/addtag`、`/del`、`/ai`、`/edittext`、`/setspeaker`、`/refresh`；组 B：`/search`、`/rand`、`/sim`、`/help`、`/info`、普通文本） |
 | **授权用户** | v1.0 中允许使用 Bot 的 QQ 用户；可以配置一个或多个，`/help`、`/search`、`/rand`、`/sim`、`/ai`、`/add`、`/addtag`、`/del`、`/edittext`、`/setspeaker`、`/refresh`、`/info`、`/cancel` 都只对授权用户开放 |
 | **授权用户列表** | 环境变量 `AUTHORIZED_USER_IDS` 声明的 QQ 号白名单，多个 QQ 号用英文逗号分隔，例如 `123456,987654` |
@@ -25,6 +25,7 @@
 | **无文字目录** | `memes/` 同级的 `meme_no_text/` 目录；OCR 去除所有空白后为空的图片在此场景下不进入索引，被移动到该目录并由日志 warning 提示，本项目不处理该类表情包 |
 | **删除备份目录** | `memes/` 同级的 `memes_deleted/` 目录；被 `/del` 命令删除的表情包图片会移动到该目录备份，可手动恢复 |
 | **替换归档目录** | `memes/` 同级的 `memes_replaced/` 目录；`/add` 去重替换旧图或 `/refresh` 去重归档重复新图时，被替换的图片文件会被移动到此目录，保留原文件名（冲突时追加 `_n` 序号），可手动恢复 |
+| **迁移备份目录** | `memes/` 同级的 `memes_migrated_backup/` 目录；运行 `scripts/convert_memes_to_webp.py` 迁移脚本将存量图片批量转 WebP 时，原文件会移动到此目录备份，默认在 `memes` 同级创建，可通过 `--backup-dir` 自定义 |
 | **entry_id** | 索引 id，类型为 `int`，全栈统一（sqlite `meme.id` 与 chroma 向量 id 一一对应）；删除记录后保持其他已有 id 稳定，允许临时编号空洞，新增时复用最小空洞 id |
 | **image_path** | `memes/` 目录下相对路径（扁平结构下即文件名），存储在 sqlite `meme.image_path` 列；原 v1.0 早期称 `filename`，重构后改为相对路径语义 |
 | **speaker** | 说话人字段，sqlite `meme.speaker` 列，`NULL` 允许；v1.0 可通过 /setspeaker 命令设置（短命令 `/sp`，与 `/setspeaker` 等价），供后续「按角色搜索」扩展 |
@@ -57,7 +58,8 @@
 | **OCR_TEXT_SCORE** | OCR 文本置信度阈值，环境变量，默认 `0.9`；PaddleOCR 与 RapidOCR 共用此阈值过滤低置信度识别结果 |
 | **tenacity 重试** | `bot/engine/retry_config.py` 提供的统一网络请求重试装饰器 `api_retry()`；默认对 `httpx` 网络/连接/超时异常、Python 内置 `ConnectionError` / `TimeoutError` 以及调用方指定的额外异常（如 OpenAI / Google API 异常）进行最多 3 次指数退避重试，本地业务异常（如 `ValueError`、`FileNotFoundError`）不重试 |
 | **授权校验模块** | `bot/auth.py`，从 `AUTHORIZED_USER_IDS` 环境变量读取白名单，提供 `is_authorized()` / `log_unauthorized()` 供各插件统一调用 |
-| **全局路径与配置** | `bot/config.py`，通过 `Path(__file__).resolve().parent.parent` 定位项目根目录，导出 `PROJECT_ROOT`、`MEMES_DIR`、`MEMES_DELETED_DIR`、`DATA_DIR`、`INDEX_DB_PATH`、`CHROMA_DIR` 路径常量和 `read_session_timeout()`、`read_ocr_provider()`、`read_embedding_provider()`、`read_ocr_text_score()` 等配置读取函数 |
+| **全局路径与配置** | `bot/config.py`，通过 `Path(__file__).resolve().parent.parent` 定位项目根目录，导出 `PROJECT_ROOT`、`MEMES_DIR`、`MEMES_DELETED_DIR`、`DATA_DIR`、`INDEX_DB_PATH`、`CHROMA_DIR` 路径常量和 `read_session_timeout()`、`read_ocr_provider()`、`read_embedding_provider()`、`read_ocr_text_score()`、`read_convert_to_webp()` 等配置读取函数 |
+| **CONVERT_TO_WEBP** | 环境变量，控制新增图片是否转为 WebP 存储，默认 `true`；`"false"`/`"0"`/`"no"` 为关闭（按传输格式同格式压缩），其余无效值回退 `true`；由 `bot/config.py` 的 `read_convert_to_webp()` 读取，`bot.py` startup 注入 `ImageOptimizer(should_convert_to_webp=...)` |
 
 ### 交互协议
 
@@ -71,10 +73,10 @@
 | **/rand** | 随机选择命令，格式 `/rand [关键词]`；有关键词时在关键词搜索结果中随机取 10 个，无关键词时全库随机；回复 `0` 换一批，每次独立抽样；支持私聊和群聊中 @bot 触发；等待选择期间支持 `/cancel` 取消和 `/help` 旁路查看帮助 |
 | **/sim** | 语义选择命令，格式 `/sim <描述文本>`；基于 embedding 语义搜索全库召回候选供用户选择，不调用 LLM 精排；列表行展示语义相似度百分比（ratio 量纲，0–1 归一为 0–100%），多结果按每页 10 条分页，回复 `n` 看下一页；支持私聊和群聊中 @bot 触发；等待选择期间支持 `/cancel` 取消和 `/help` 旁路查看帮助 |
 | **/ai** | AI 描述匹配命令，后接自然语言描述 |
-| **/add** | 添加表情包命令，格式 `/add [speaker <tags...>]`；`speaker` 为可选说话人，`tags` 为可选标记词列表，均不写入 OCR 文本；文件名始终由 Bot 按 `meme_<YYYYMMDDHHMMSS>_<hash8>` 规则自动生成；同一授权用户同一时间只保留一个待处理会话，新 `/add` 或 `/search` 会覆盖旧状态，并向用户提示已取消上一条未完成操作；等待图片期间支持 `/cancel` 取消和 `/help` 旁路查看帮助；短命令 `/a`，与 `/add` 等价 |
+| **/add** | 添加表情包命令，格式 `/add [speaker <tags...>]`；`speaker` 为可选说话人，`tags` 为可选标记词列表，均不写入 OCR 文本；文件名始终由 Bot 按 `meme_<YYYYMMDDHHMMSS>_<hash8>` 规则自动生成；新增图片按 `CONVERT_TO_WEBP` 开关执行压缩/转换（开启时转 WebP，失败降级保留原格式）；同一授权用户同一时间只保留一个待处理会话，新 `/add` 或 `/search` 会覆盖旧状态，并向用户提示已取消上一条未完成操作；等待图片期间支持 `/cancel` 取消和 `/help` 旁路查看帮助；短命令 `/a`，与 `/add` 等价 |
 | **/addtag** | 标签追加命令，格式 `/addtag <entry_id> <tag> [<tag>...]`；授权用户在私聊中发送，Bot 发送当前 OCR 文本、当前标签和新增标签的确认消息，用户回复「确认」或「yes」后执行追加；仅更新 sqlite 元数据，无需重新 embed；权限属组 A（仅私聊）；等待确认期间支持 `/cancel` 取消和 `/help` 旁路查看帮助；超时自动取消；短命令 `/at`，与 `/addtag` 等价 |
 | **/del** | 删除表情包命令，格式 `/del <entry_id>...`；授权用户在私聊中发送，Bot 发送待删除条目 OCR 文本摘要，用户回复「确认」或「yes」后执行删除；删除时先移除 sqlite 记录与 chroma 向量，再将图片移动到 `memes_deleted/` 目录备份；结果按成功、未找到、失败三类汇总回复；权限属组 A（仅私聊）；等待确认期间支持 `/cancel` 取消和 `/help` 旁路查看帮助；超时自动取消；短命令 `/d`，与 `/del` 等价 |
 | **/edittext** | OCR 文本编辑命令，格式 `/edittext <entry_id> <新文本>`；授权用户在私聊中发送，Bot 发送图片和确认消息，用户回复「确认」或「yes」后执行修改；修改同步更新 sqlite 元数据与 chroma 向量库；权限属组 A（仅私聊）；等待确认期间支持 `/cancel` 取消和 `/help` 旁路查看帮助；超时自动取消；短命令 `/e`，与 `/edittext` 等价 |
-| **/refresh** | 增量更新索引命令；v1.0 使用全局索引更新锁，同一时间只允许一个索引写入任务运行；新增图片会先按格式执行无损压缩；锁占用期间 `/help`、`/search`、`/rand`、`/sim`、`/ai`、`/add`、`/refresh` 暂时拒绝服务；短命令 `/r`，与 `/refresh` 等价 |
+| **/refresh** | 增量更新索引命令；v1.0 使用全局索引更新锁，同一时间只允许一个索引写入任务运行；新增图片会先执行图片压缩/转换（`CONVERT_TO_WEBP` 开启时转 WebP）；锁占用期间 `/help`、`/search`、`/rand`、`/sim`、`/ai`、`/add`、`/refresh` 暂时拒绝服务；短命令 `/r`，与 `/refresh` 等价 |
 | **/info** | 状态信息命令；授权用户在私聊或群聊中 @bot 发送 `/info`，Bot 返回当前索引条目数、speaker 使用频率排行（前 10）、当前状态（空闲/刷新中/处理命令）以及本机内存/CPU 占用；权限属组 B（私聊和群聊 @bot 均可） |
 | **/cancel** | 取消命令；授权用户在私聊或群聊中发送 `/cancel` 时取消当前正在执行的命令（如 `/add` 等待图片或 `/search` 等待选择）；支持同频道取消（got 等待中）和异频道取消（私聊/群聊分离）；无活跃会话时回复"当前没有没有活跃的会话"；`/cancel` 本身在任意状态下均可触发；短命令 `/c`，与 `/cancel` 等价 |

@@ -179,6 +179,7 @@ class SemanticSearcher:
 
 ```python
 def resolve_unique_filename(target_dir: Path, filename: str) -> Path
+# 已迁至 bot/engine/utils.py，index_manager 通过 from .utils import 导入
 
 class IndexCorruptedError(Exception)
 class CompressionError(RuntimeError)
@@ -363,7 +364,7 @@ class MetadataStore:
         text: str,
         speaker: str | None = None,
         tags: list[str] | None = None,
-    ) -> int  # 迁移专用：保留旧 id；Raises DuplicateEntryError
+    ) -> int  # 保留传入 id；Raises DuplicateEntryError
 
     def update(
         self,
@@ -636,16 +637,20 @@ class OptimizeResult:
     optimized_size: int
     saved: int
     skipped: bool = False
+    output_path: str = ""       # 同格式压缩=原路径；转 WebP=新 .webp 路径
 
 class ImageOptimizer:
     def __init__(
         self,
-        jpeg_quality: int = 85,
+        lossy_quality: int = 85,
         webp_quality: int = 80,
         concurrency: int | None = None,
+        should_convert_to_webp: bool = False,
     ) -> None
 
     async def optimize(self, image_path: str | Path) -> OptimizeResult
+    # should_convert_to_webp=True 时转有损 WebP（q85），返回 output_path 为新 .webp 路径；
+    # should_convert_to_webp=False 时同格式无损压缩，output_path 为原路径；
     # Raises: FileNotFoundError, ValueError, RuntimeError
 ```
 
@@ -656,10 +661,10 @@ class ImageOptimizer:
 NoneBot2 应用入口，详见 `docs/api/bot/bot.md`。
 
 - 启动：`main()` — 初始化 NoneBot2（`driver="~fastapi"`），注册 OneBot V11 适配器，加载插件，启动驱动器
-- Startup hook：`_on_startup()` — 通过 `provider_factory.create_*_provider()` 创建 OCR/Embedding 服务，同时创建 `RerankService` 与 `ImageOptimizer`；创建 `MetadataStore(INDEX_DB_PATH)` + `VectorStore(CHROMA_DIR)`；创建 `AIMatcher`、`KeywordSearcher`、`RandomSearcher(metadata_store, keyword_searcher)`、`SemanticSearcher(metadata_store, vector_store)`、`CombinedSearcher(metadata_store, keyword_searcher)` 后一并注入 `IndexManager`，`load()` 后注册到 `app_state`、后台执行索引同步；根据 `OCR_PROVIDER` 选择 OCR 引擎（`paddle`/`deepseek`/`rapidocr`），根据 `EMBEDDING_PROVIDER` 选择 Embedding 引擎（`openai`/`google`）；创建 `IndexManager` 时传入 `deleted_dir`（默认 `memes_deleted/`）用于 `/del` 备份、`replaced_dir`（默认 `memes_replaced/`）用于 `/add` 与 `/refresh` 去重时归档被替换的图片
+- Startup hook：`_on_startup()` — 通过 `provider_factory.create_*_provider()` 创建 OCR/Embedding 服务，同时创建 `RerankService` 与 `ImageOptimizer`（通过 `read_convert_to_webp()` 读取 `CONVERT_TO_WEBP` 开关注入 `should_convert_to_webp` 参数）；创建 `MetadataStore(INDEX_DB_PATH)` + `VectorStore(CHROMA_DIR)`；创建 `AIMatcher`、`KeywordSearcher`、`RandomSearcher(metadata_store, keyword_searcher)`、`SemanticSearcher(metadata_store, vector_store)`、`CombinedSearcher(metadata_store, keyword_searcher)` 后一并注入 `IndexManager`，`load()` 后注册到 `app_state`、后台执行索引同步；根据 `OCR_PROVIDER` 选择 OCR 引擎（`paddle`/`deepseek`/`rapidocr`），根据 `EMBEDDING_PROVIDER` 选择 Embedding 引擎（`openai`/`google`）；创建 `IndexManager` 时传入 `deleted_dir`（默认 `memes_deleted/`）用于 `/del` 备份、`replaced_dir`（默认 `memes_replaced/`）用于 `/add` 与 `/refresh` 去重时归档被替换的图片
 - Shutdown hook：`_on_shutdown()` — 关闭 OCR 服务 HTTP 会话，并 `close()` 两个 Store（sqlite 连接 + chroma PersistentClient）
 - `_background_sync()` — 后台同步任务，调用 `IndexManager.refresh()` 以独占写锁执行同步；同步失败时记录日志，Bot 继续运行
-- 环境变量：`BOT_HOST`（默认 `0.0.0.0`）、`BOT_PORT`（默认 `8080`，无效值回退 8080）、`READ_LOCK_TIMEOUT`（默认 `00:00:30`）、`ADD_COMMAND_TIMEOUT`（默认 `00:01:00`）、`EMBEDDING_CONCURRENCY`（默认 5）、`OCR_CONCURRENCY`（默认 5）、`RERANK_CONCURRENCY`（默认 5）、`COMPRESS_CONCURRENCY`（默认 5）
+- 环境变量：`BOT_HOST`（默认 `0.0.0.0`）、`BOT_PORT`（默认 `8080`，无效值回退 8080）、`READ_LOCK_TIMEOUT`（默认 `00:00:30`）、`ADD_COMMAND_TIMEOUT`（默认 `00:01:00`）、`EMBEDDING_CONCURRENCY`（默认 5）、`OCR_CONCURRENCY`（默认 5）、`RERANK_CONCURRENCY`（默认 5）、`COMPRESS_CONCURRENCY`（默认 5）、`CONVERT_TO_WEBP`（默认 true）
 
 ### `docs/api/bot/logging_config.md`
 
@@ -993,3 +998,40 @@ NoneBot2 命令插件，注册 `/query` 命令。
 - `read_ocr_provider() -> str` — 从 `OCR_PROVIDER` 环境变量读取 OCR 引擎类型，默认 `"rapidocr"`，有效值：`"deepseek"`、`"paddle"`、`"rapidocr"`
 - `read_embedding_provider() -> str` — 从 `EMBEDDING_PROVIDER` 环境变量读取 Embedding 引擎类型，默认 `"openai"`，有效值：`"openai"`、`"google"`
 - `read_ocr_text_score() -> float` — 从 `OCR_TEXT_SCORE` 环境变量读取 OCR 文本置信度阈值，默认 `0.9`，无效值回退为 `0.9`
+- `read_convert_to_webp() -> bool` — 从 `CONVERT_TO_WEBP` 环境变量读取是否将新增图片转为 WebP，默认 `True`（`"false"`/`"0"`/`"no"` 为 `False`，其余无效值回退 `True`）
+
+## Scripts
+
+### `scripts/convert_memes_to_webp.py`
+
+将 `memes/` 下的非 WebP 图片批量转为 WebP 并更新 `index.db`。
+
+用法：
+
+```bash
+uv run python scripts/convert_memes_to_webp.py
+uv run python scripts/convert_memes_to_webp.py --quality 90 --dry-run
+uv run python scripts/convert_memes_to_webp.py --memes-dir ./memes --db-path ./data/index.db
+```
+
+参数：
+
+| 参数 | 默认 | 说明 |
+|------|------|------|
+| `--memes-dir` | `memes/` | 表情包目录 |
+| `--db-path` | `data/index.db` | sqlite 路径 |
+| `--quality` | `85` | WebP 质量（1-100） |
+| `--dry-run` | - | 模拟运行，不修改文件和数据库 |
+| `--include-archives` | - | 同时处理 `memes_deleted`/`memes_replaced`/`meme_no_text` |
+| `--backup-dir` | `memes_migrated_backup/` | 原文件备份目录 |
+| `-v` / `--verbose` | - | DEBUG 日志 |
+
+行为说明：
+
+- 使用 Pillow 打开原图，保存为有损 WebP；透明通道保留（P/RGBA -> RGBA），GIF 动图保留 duration/loop 转 animated WebP
+- 强制转换不比较体积；目标 `.webp` 已存在且非当前源文件时追加 `_n` 序号（`resolve_unique_filename`）
+- 更新 sqlite `image_path`；DB 无记录则仅转文件+备份
+- 原文件移到 `--backup-dir`（默认 `memes_migrated_backup/`）
+- 不重新 OCR/embed，不动 chroma/meme_tag
+- 归档目录图（`--include-archives`）仅转文件+备份，不更新 sqlite
+- 建议在 Bot 未运行时执行，避免 sqlite 写锁冲突

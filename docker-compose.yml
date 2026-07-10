@@ -55,6 +55,7 @@ services:
       - OCR_CONCURRENCY=${OCR_CONCURRENCY:-5}
       - RERANK_CONCURRENCY=${RERANK_CONCURRENCY:-5}
       - COMPRESS_CONCURRENCY=${COMPRESS_CONCURRENCY:-5}
+      - CONVERT_TO_WEBP=${CONVERT_TO_WEBP:-true}
       - TZ=Asia/Shanghai
     volumes:
       - ./memes:/app/memes

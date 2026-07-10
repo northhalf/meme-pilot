@@ -99,6 +99,18 @@ PaddleOCR 与 RapidOCR 共用此阈值。
 
 ---
 
+### `read_convert_to_webp() -> bool`
+
+从环境变量 `CONVERT_TO_WEBP` 读取是否将新增图片转为 WebP。
+
+| | 类型 | 说明 |
+|--|------|------|
+| **返回** | `bool` | `True`（默认）时转 WebP；`False` 时按传输格式同格式压缩 |
+| **无效值** | - | `"false"`/`"0"`/`"no"` 返回 `False`，其余无效值回退 `True` |
+| **空白处理** | - | 值中的首尾空白自动去除，不区分大小写 |
+
+---
+
 ### `read_read_lock_timeout() -> int`
 
 从环境变量 `READ_LOCK_TIMEOUT` 读取读锁等待超时秒数。

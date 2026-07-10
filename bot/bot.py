@@ -23,6 +23,7 @@ from bot.config import (
     MEMES_REPLACED_DIR,
     PROJECT_ROOT,
     read_bot_port,
+    read_convert_to_webp,
     read_embedding_provider,
     read_int_env,
     read_ocr_provider,
@@ -96,7 +97,10 @@ async def _on_startup() -> None:
         read_embedding_provider(),
     )
     rerank_service = RerankService(concurrency=read_int_env("RERANK_CONCURRENCY"))
-    image_optimizer = ImageOptimizer(concurrency=read_int_env("COMPRESS_CONCURRENCY"))
+    image_optimizer = ImageOptimizer(
+        concurrency=read_int_env("COMPRESS_CONCURRENCY"),
+        should_convert_to_webp=read_convert_to_webp(),
+    )
 
     # 3. 创建 MetadataStore 与 VectorStore
     metadata_store = MetadataStore(str(INDEX_DB_PATH))

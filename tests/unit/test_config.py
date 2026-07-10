@@ -13,6 +13,7 @@ from bot.config import (
     PROJECT_ROOT,
     _parse_timeout_seconds,
     read_add_command_timeout,
+    read_convert_to_webp,
     read_embedding_provider,
     read_ocr_provider,
     read_ocr_text_score,
@@ -158,3 +159,37 @@ class TestReadOcrTextScore:
     def test_invalid_fallback_to_0_9(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("OCR_TEXT_SCORE", "abc")
         assert read_ocr_text_score() == 0.9
+
+
+class TestReadConvertToWebp:
+    def test_default_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("CONVERT_TO_WEBP", raising=False)
+        assert read_convert_to_webp() is True
+
+    def test_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("CONVERT_TO_WEBP", "false")
+        assert read_convert_to_webp() is False
+
+    def test_no_is_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("CONVERT_TO_WEBP", "no")
+        assert read_convert_to_webp() is False
+
+    def test_zero_is_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("CONVERT_TO_WEBP", "0")
+        assert read_convert_to_webp() is False
+
+    def test_yes_is_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("CONVERT_TO_WEBP", "yes")
+        assert read_convert_to_webp() is True
+
+    def test_one_is_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("CONVERT_TO_WEBP", "1")
+        assert read_convert_to_webp() is True
+
+    def test_invalid_fallback_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("CONVERT_TO_WEBP", "maybe")
+        assert read_convert_to_webp() is True
+
+    def test_case_insensitive(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("CONVERT_TO_WEBP", "  False  ")
+        assert read_convert_to_webp() is False

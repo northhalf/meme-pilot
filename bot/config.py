@@ -161,6 +161,21 @@ def read_ocr_text_score() -> float:
         return _DEFAULT_OCR_TEXT_SCORE
 
 
+def read_convert_to_webp() -> bool:
+    """从环境变量读取是否将新增图片转为 WebP。
+
+    开关开启时（默认）新增图片转有损 WebP；关闭时按传输格式存储（现状）。
+    "false"/"0"/"no" 返回 False，其余无效值回退 True（默认开启）。
+
+    Returns:
+        bool:是否转 WebP。
+    """
+    raw = os.environ.get("CONVERT_TO_WEBP", "true").strip().lower()
+    if raw in ("false", "0", "no"):
+        return False
+    return True
+
+
 __all__ = [
     "PROJECT_ROOT",
     "MEMES_DIR",
@@ -175,4 +190,5 @@ __all__ = [
     "read_ocr_provider",
     "read_embedding_provider",
     "read_ocr_text_score",
+    "read_convert_to_webp",
 ]

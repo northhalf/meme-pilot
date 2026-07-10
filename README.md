@@ -108,7 +108,7 @@ OCR 识别到的文字会展示给用户，超 50 字时自动截断并标注总
 
 `/add` 后的参数按空白切分，第一个词作为 `speaker`（说话人），剩余词作为 `tags`（标记词）；不填参数时 `speaker` 为空，`tags` 为空列表。文件名始终由 Bot 按 `meme_<YYYYMMDDHHMMSS>_<hash8>` 规则自动生成，不再使用用户输入作为文件名基名。
 
-新增图片会按格式执行无损压缩：`.jpg/.jpeg/.png/.webp/.gif` 会尝试压缩并覆盖原文件，`.bmp` 不压缩。不支持的扩展名不会作为表情包处理。
+新增图片会按 `CONVERT_TO_WEBP` 开关执行图片压缩/转换：开关开启（默认）时转为有损 WebP（q85），转换失败降级保留原格式；开关关闭时对 `.jpg/.jpeg/.png/.webp/.gif` 执行同格式压缩，`.bmp` 跳过。不支持的扩展名不会作为表情包处理。
 
 `/add` 在写入索引前会做两项检查：若新图 OCR 文本去除所有空白后与已有表情包完全相同，则用新图替换旧图（旧图移动到 `memes/` 同级的 `memes_replaced/` 目录归档、复用旧索引 ID）；若 OCR 结果去除所有空白后为空（无文字图片），则将该图移动到 `memes/` 同级的 `meme_no_text/` 目录，不进入索引并提示「未识别到文字」。
 
@@ -235,6 +235,7 @@ cp .env.example .env
 #   OCR_CONCURRENCY=5  # 可选，OCR API 并发上限
 #   RERANK_CONCURRENCY=5  # 可选，LLM 精排并发上限
 #   COMPRESS_CONCURRENCY=5  # 可选，图片压缩并发上限
+#   CONVERT_TO_WEBP=true  # 可选，图片转 WebP 开关（默认开启）
 #   READ_LOCK_TIMEOUT=00:00:30  # 可选，search/ai_match 等待写锁释放的超时
 #   ADD_COMMAND_TIMEOUT=00:01:00  # 可选，/add 从提交到结果返回的超时
 #   SESSION_EXPIRE_TIMEOUT=00:01:00  # 可选，会话超时时间
@@ -358,8 +359,6 @@ CREATE TABLE meme_tag (
 
 `data/index.db` 是 sqlite 元数据库，可用 `sqlite3` CLI 查询（如 `sqlite3 data/index.db "SELECT id, image_path, text FROM meme;"`）；`data/chroma/` 是 ChromaDB 向量库（collection `memes`，HNSW cosine），由系统自动维护，不建议手动编辑。OCR 文本在写入前统一去除所有空白字符。
 
-> 从旧版升级时（旧索引为 `data/index.json` + `data/embeddings.json`），先运行 `uv run python scripts/migrate_json_to_db.py` 再启动 Bot。否则旧 `index.json` 不会被读取，首次启动会全量重新 OCR/embed（消耗 API）。迁移成功后旧 `index.json`、`embeddings.json` 可手动删除。
-
 ## 📂 项目结构
 
 ```
@@ -374,6 +373,7 @@ meme-pilot/
 ├── meme_no_text/            # OCR 无文字图片（不进索引，Docker 卷挂载）
 ├── memes_deleted/           # 被 /del 删除的表情包备份目录，可手动恢复
 ├── memes_replaced/          # 被替换表情包的归档目录
+├── memes_migrated_backup/   # 迁移脚本备份目录（转 WebP 后的原文件备份）
 ├── data/                    # 索引数据
 │   ├── index.db             # sqlite 元数据（id、image_path、text、speaker + meme_tag）
 │   └── chroma/              # ChromaDB 向量库（collection memes，cosine）
@@ -381,7 +381,7 @@ meme-pilot/
 │   ├── bot.log              # 当前日志（<= 1MB）
 │   └── bot.log.1            # 上一份日志备份
 ├── scripts/
-│   └── migrate_json_to_db.py # 旧版 JSON 索引 → sqlite+chroma 迁移脚本
+│   └── convert_memes_to_webp.py # 存量图片批量转 WebP 迁移脚本
 ├── tests/                   # 测试目录规划
 │   ├── unit/                # 单元测试
 │   │   ├── engine/
@@ -419,7 +419,7 @@ meme-pilot/
         ├── protocols.py         # 共享协议定义（EmbeddingProvider 等）
         ├── provider_factory.py  # OCR/Embedding provider 注册表与工厂函数
         ├── retry_config.py      # 统一 tenacity 网络重试配置
-        ├── image_optimizer.py   # 图片无损压缩
+        ├── image_optimizer.py   # 图片压缩/转换（含 WebP 转换）
         ├── openai_ocr.py        # OpenAI 兼容 OCR 封装（原 deepseek_ocr.py）
         ├── paddle_ocr.py        # PaddleOCR 云 API 封装
         ├── rapidocr_ocr.py      # RapidOCR 本地 ONNX OCR 封装
@@ -431,7 +431,7 @@ meme-pilot/
         ├── index_manager.py     # 索引薄编排（委托两个 Store）
         ├── rwlock.py            # 读写锁（写者优先）
         ├── types.py             # 共享数据类型（SearchResult 等）
-        ├── utils.py             # 共享工具（vector_norm 等）
+        ├── utils.py             # 共享工具（vector_norm、resolve_unique_filename 等）
         ├── keyword_searcher.py  # 模糊搜索
         ├── random_searcher.py   # 随机取样搜索
         ├── semantic_searcher.py # 语义搜索
@@ -481,7 +481,7 @@ uv run pytest tests/integration/ -v -s
 - [RapidOCR](https://github.com/RapidAI/RapidOCR) — 本地 ONNX OCR 引擎
 - [ChromaDB](https://www.trychroma.com/) — 向量索引（HNSW cosine `PersistentClient`，`data/chroma/`）
 - [pylcs](https://github.com/InoriLyude/pylcs) — 最长公共子序列算法库（关键词模糊匹配）
-- [Pillow](https://python-pillow.org/) — 图片无损压缩（支持 `.jpg/.jpeg/.png/.webp/.gif`，`.bmp` 跳过）
+- [Pillow](https://python-pillow.org/) - 图片压缩/转换（支持 `.jpg/.jpeg/.png/.webp/.gif`，`.bmp` 跳过；`CONVERT_TO_WEBP=true` 时转有损 WebP）
 - [tenacity](https://github.com/jd/tenacity) — 统一网络请求重试机制
 - [psutil](https://github.com/giampaolo/psutil) — 系统资源监控（用于 `/info`）
 

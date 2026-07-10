@@ -30,6 +30,16 @@ class TestOptimizeResult:
         with pytest.raises(AttributeError):
             r.original_size = 500  # type: ignore[misc]
 
+    def test_output_path_default_empty(self) -> None:
+        r = OptimizeResult(original_size=1000, optimized_size=800, saved=200)
+        assert r.output_path == ""
+
+    def test_output_path_set(self) -> None:
+        r = OptimizeResult(
+            original_size=1000, optimized_size=800, saved=200, output_path="/x/a.webp"
+        )
+        assert r.output_path == "/x/a.webp"
+
 
 class TestImageOptimizerUnsupported:
     """不支持的格式测试。"""
@@ -58,6 +68,29 @@ class TestImageOptimizerEdgeCases:
         optimizer = ImageOptimizer()
         with pytest.raises(FileNotFoundError, match="图片文件不存在"):
             asyncio.run(optimizer.optimize("/nonexistent/test.jpg"))
+
+    def test_optimize_returns_output_path_original(self, tmp_path: Path) -> None:
+        img = Image.new("RGB", (100, 100), color=(10, 20, 30))
+        jpg = tmp_path / "t.jpg"
+        img.save(jpg, "JPEG")
+        optimizer = ImageOptimizer()
+        result = asyncio.run(optimizer.optimize(jpg))
+        assert result.output_path == str(jpg)
+
+    def test_bmp_output_path_original(self, tmp_path: Path) -> None:
+        bmp = tmp_path / "t.bmp"
+        bmp.write_bytes(b"\x42\x4d" + b"\x00" * 100)
+        optimizer = ImageOptimizer()
+        result = asyncio.run(optimizer.optimize(bmp))
+        assert result.output_path == str(bmp)
+
+    def test_should_convert_to_webp_param_default_false(self) -> None:
+        optimizer = ImageOptimizer()
+        assert optimizer._should_convert_to_webp is False
+
+    def test_should_convert_to_webp_param_true(self) -> None:
+        optimizer = ImageOptimizer(should_convert_to_webp=True)
+        assert optimizer._should_convert_to_webp is True
 
 
 class TestCompressJpeg:
@@ -216,3 +249,109 @@ class TestImageOptimizerSemaphore:
             await task1
         except (asyncio.CancelledError, RuntimeError):
             pass
+
+
+class TestConvertToWebp:
+    """should_convert_to_webp=True 时各格式转 WebP 测试。"""
+
+    def test_jpg_converted(self, tmp_path: Path) -> None:
+        img = Image.new("RGB", (200, 200), color=(128, 64, 32))
+        jpg = tmp_path / "t.jpg"
+        img.save(jpg, "JPEG", quality=100)
+        optimizer = ImageOptimizer(should_convert_to_webp=True)
+        result = asyncio.run(optimizer.optimize(jpg))
+        assert str(result.output_path).endswith(".webp")
+        assert Path(result.output_path).exists()
+        assert not jpg.exists()
+        with Image.open(result.output_path) as w:
+            assert w.format == "WEBP"
+
+    def test_png_alpha_preserved(self, tmp_path: Path) -> None:
+        img = Image.new("RGBA", (100, 100), color=(255, 0, 0, 128))
+        png = tmp_path / "t.png"
+        img.save(png, "PNG")
+        optimizer = ImageOptimizer(should_convert_to_webp=True)
+        result = asyncio.run(optimizer.optimize(png))
+        with Image.open(result.output_path) as w:
+            assert w.mode == "RGBA"
+        assert not png.exists()
+
+    def test_gif_animated_converted(self, tmp_path: Path) -> None:
+        frames = [
+            Image.new("RGB", (50, 50), color=(i * 80, 0, 0)).quantize(colors=256)
+            for i in range(3)
+        ]
+        gif = tmp_path / "t.gif"
+        frames[0].save(
+            gif, save_all=True, append_images=frames[1:], duration=100, loop=0
+        )
+        optimizer = ImageOptimizer(should_convert_to_webp=True)
+        result = asyncio.run(optimizer.optimize(gif))
+        with Image.open(result.output_path) as w:
+            assert w.format == "WEBP"
+            assert getattr(w, "n_frames", 1) == 3
+        assert not gif.exists()
+
+    def test_bmp_converted_when_switch_on(self, tmp_path: Path) -> None:
+        img = Image.new("RGB", (50, 50), color=(0, 0, 0))
+        bmp = tmp_path / "t.bmp"
+        img.save(bmp, "BMP")
+        optimizer = ImageOptimizer(should_convert_to_webp=True)
+        result = asyncio.run(optimizer.optimize(bmp))
+        assert str(result.output_path).endswith(".webp")
+        assert not bmp.exists()
+
+    def test_webp_source_lossy_reencode_when_switch_on(self, tmp_path: Path) -> None:
+        img = Image.new("RGB", (100, 100), color=(10, 20, 30))
+        webp = tmp_path / "t.webp"
+        img.save(webp, "WEBP", lossless=True, quality=100)
+        optimizer = ImageOptimizer(should_convert_to_webp=True)
+        result = asyncio.run(optimizer.optimize(webp))
+        assert result.output_path == str(webp)
+        # 有损重编码：变大则 skipped 保留原文件，变小则覆盖
+        with Image.open(webp) as w:
+            assert w.format == "WEBP"
+
+    def test_webp_source_lossless_when_switch_off(self, tmp_path: Path) -> None:
+        img = Image.new("RGB", (100, 100), color=(10, 20, 30))
+        webp = tmp_path / "t.webp"
+        img.save(webp, "WEBP")
+        optimizer = ImageOptimizer(should_convert_to_webp=False)
+        result = asyncio.run(optimizer.optimize(webp))
+        assert result.output_path == str(webp)
+
+    def test_switch_off_keeps_jpg(self, tmp_path: Path) -> None:
+        img = Image.new("RGB", (100, 100), color=(10, 20, 30))
+        jpg = tmp_path / "t.jpg"
+        img.save(jpg, "JPEG")
+        optimizer = ImageOptimizer(should_convert_to_webp=False)
+        result = asyncio.run(optimizer.optimize(jpg))
+        assert result.output_path == str(jpg)
+        assert jpg.exists()
+        with Image.open(jpg) as j:
+            assert j.format == "JPEG"
+
+    def test_convert_failure_preserves_original(self, tmp_path: Path) -> None:
+        img = Image.new("RGB", (50, 50), color=(0, 0, 0))
+        jpg = tmp_path / "t.jpg"
+        img.save(jpg, "JPEG")
+
+        def fail(_p: Path) -> Path:
+            raise RuntimeError("convert fail")
+
+        optimizer = ImageOptimizer(should_convert_to_webp=True)
+        optimizer._convert_image_to_webp = fail  # type: ignore[method-assign]
+        with pytest.raises(RuntimeError, match="convert fail"):
+            asyncio.run(optimizer.optimize(jpg))
+        assert jpg.exists()
+
+    def test_target_exists_appends_n(self, tmp_path: Path) -> None:
+        img = Image.new("RGB", (50, 50), color=(0, 0, 0))
+        jpg = tmp_path / "t.jpg"
+        img.save(jpg, "JPEG")
+        (tmp_path / "t.webp").write_bytes(b"existing")
+        optimizer = ImageOptimizer(should_convert_to_webp=True)
+        result = asyncio.run(optimizer.optimize(jpg))
+        assert str(result.output_path).endswith("t_1.webp")
+        assert Path(result.output_path).exists()
+        assert not jpg.exists()

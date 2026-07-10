@@ -2,7 +2,7 @@
 
 > 本文档只记录模块对外接口。模块内部 `_` 前缀函数和方法不在此列出。
 
-索引管理薄编排层。持有 `MetadataStore` + `VectorStore` + providers，负责压缩→OCR→Embed 管道编排、sync 四阶段（含阶段0跨库一致性修复）、跨库写入一致性、全局锁、并发上限、去重/无文字移图。**不直接写 SQL/Chroma，全部委托两个 Store。**
+索引管理薄编排层。持有 `MetadataStore` + `VectorStore` + providers，负责压缩/转换→OCR→Embed 管道编排、sync 四阶段（含阶段0跨库一致性修复）、跨库写入一致性、全局锁、并发上限、去重/无文字移图。**不直接写 SQL/Chroma，全部委托两个 Store。**
 
 写入顺序统一「先 sqlite 后 chroma」，`VectorStore.upsert` 失败时回滚 sqlite 写入。OCR 文本在管道内统一去除所有空白字符。去重键 = 去空白后的 `text`，通过 `MetadataStore.get_id_by_text` 判定。
 
@@ -11,6 +11,8 @@
 ### `resolve_unique_filename(target_dir: Path, filename: str) -> Path`
 
 在目标目录中生成不冲突的文件名。若文件已存在则追加数字后缀（如 `cat_2.jpg`）。
+
+> **注意**：该函数已从 `index_manager.py` 迁至 `bot/engine/utils.py`。`index_manager` 通过 `from .utils import resolve_unique_filename` 导入，`from bot.engine.index_manager import resolve_unique_filename` 仍可用（模块绑定）。
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
@@ -124,7 +126,7 @@ class ImageOptimizerProtocol(Protocol):
 
 | 方法 | 参数 | 返回 | 说明 |
 |------|------|------|------|
-| `optimize` | `image_path: str` — 图片文件路径 | `OptimizeResult` | 异步无损压缩，成功后覆盖原文件 |
+| `optimize` | `image_path: str` — 图片文件路径 | `OptimizeResult` | 异步图片压缩/转换，返回 `output_path`（同格式=原路径；转 WebP=新 `.webp` 路径） |
 
 `IndexManager` 仅调用 `optimize`，依赖此协议而非具体 `ImageOptimizer` 实现。
 
@@ -305,7 +307,9 @@ class IndexManager:
 
     async def add(self, filename: str, speaker: str | None = None, tags: list[str] | None = None) -> AddResult
     # FIFO 入队；refresh 期间抛 RefreshInProgressError；关闭时抛 IndexAddCancelledError；
-    # 内部由 Add Worker 串行处理（压缩 → OCR → embed → Write Worker 写库）；去重替换时旧图归档到 memes_replaced/
+    # 内部由 Add Worker 串行处理（压缩/转换 → OCR → embed → Write Worker 写库）；
+    # _process_image_pipeline 返回 (final_filename, text, embedding)，转 WebP 后 final_filename 为 .webp 文件名；
+    # optimize 失败时降级保留原格式继续 OCR/embed；去重替换时旧图归档到 memes_replaced/
 
     async def edit_text(self, entry_id: int, new_text: str) -> EditTextResult
     # 修改指定条目的 OCR 文本；锁外 embed，Write Worker 串行写入；

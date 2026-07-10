@@ -206,7 +206,13 @@ class MockOptimizer:
 
     async def optimize(self, image_path: str) -> OptimizeResult:
         _ = image_path
-        return OptimizeResult(original_size=0, optimized_size=0, saved=0, skipped=True)
+        return OptimizeResult(
+            original_size=0,
+            optimized_size=0,
+            saved=0,
+            skipped=True,
+            output_path=image_path,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -360,7 +366,7 @@ async def test_refresh_rejects_pending_add(index_manager: IndexManager) -> None:
     original = index_manager._process_image_pipeline
     started = asyncio.Event()
 
-    async def slow_pipeline(filename: str) -> tuple[str, list[float]]:
+    async def slow_pipeline(filename: str) -> tuple[str, str, list[float]]:
         started.set()
         await asyncio.sleep(10)
         return await original(filename)
@@ -429,7 +435,7 @@ async def test_close_cancels_pending_add(index_manager: IndexManager) -> None:
 
     original = index_manager._process_image_pipeline
 
-    async def slow_pipeline(filename: str) -> tuple[str, list[float]]:
+    async def slow_pipeline(filename: str) -> tuple[str, str, list[float]]:
         entered.set()
         await asyncio.sleep(10)
         return await original(filename)
@@ -464,7 +470,10 @@ async def test_process_image_pipeline_empty_text(
     index_manager._embedding_provider = SpyEmbeddingProvider()
     (Path(index_manager._memes_dir) / "blank.jpg").write_bytes(b"fake")
 
-    text, embedding = await index_manager._process_image_pipeline("blank.jpg")
+    final_filename, text, embedding = await index_manager._process_image_pipeline(
+        "blank.jpg"
+    )
+    assert final_filename == "blank.jpg"
     assert text == ""
     assert embedding == []
 
@@ -915,7 +924,7 @@ class TestConcurrencyAndDrain:
         call_count = 0
         original = index_manager._process_image_pipeline
 
-        async def counting_pipeline(filename: str) -> tuple[str, list[float]]:
+        async def counting_pipeline(filename: str) -> tuple[str, str, list[float]]:
             nonlocal call_count
             call_count += 1
             return await original(filename)
@@ -1355,3 +1364,284 @@ async def test_write_worker_skips_cancelled_future(
     assert normal_future.result().reason == "added"
 
     await index_manager.close()
+
+
+# ---------------------------------------------------------------------------
+# Task 5: _process_image_pipeline 返回 final_filename + 降级
+# ---------------------------------------------------------------------------
+
+
+class FakeOptimizer:
+    """optimize 测试替身，返回指定 output_path 或抛异常。"""
+
+    def __init__(
+        self, output_path: str | None = None, raises: Exception | None = None
+    ) -> None:
+        self._output_path = output_path
+        self._raises = raises
+
+    async def optimize(self, image_path: str) -> OptimizeResult:
+        if self._raises is not None:
+            raise self._raises
+        return OptimizeResult(
+            original_size=100,
+            optimized_size=80,
+            saved=20,
+            output_path=self._output_path or image_path,
+        )
+
+
+class FakeOcrProvider:
+    """OCR 测试替身，固定返回指定文本。"""
+
+    def __init__(self, text: str = "text") -> None:
+        self._text = text
+
+    async def ocr(self, image_path: str) -> str:
+        return self._text
+
+    async def close(self) -> None:
+        pass
+
+
+class FakeEmbeddingProvider:
+    """Embedding 测试替身，返回固定向量。"""
+
+    def __init__(self, vec: list[float] | None = None) -> None:
+        self._vec = vec or [0.1] * 1024
+
+    async def embed(self, text: str) -> list[float]:
+        return self._vec
+
+
+class TestPipelineFinalFilename:
+    """_process_image_pipeline 返回 final_filename 与降级测试。"""
+
+    @pytest.mark.anyio
+    async def test_pipeline_uses_output_path(self, tmp_path: Path) -> None:
+        md = FakeMetadataStore()
+        vs = FakeVectorStore()
+        memes = tmp_path / "memes"
+        memes.mkdir()
+        (memes / "a.jpg").write_bytes(b"x")
+        opt = FakeOptimizer(output_path=str(memes / "a.webp"))
+        im = IndexManager(
+            md,
+            vs,
+            str(memes),
+            ocr_provider=FakeOcrProvider("hello"),
+            embedding_provider=FakeEmbeddingProvider(),
+            optimizer=opt,
+        )
+        final_fn, text, _ = await im._process_image_pipeline("a.jpg")
+        assert final_fn == "a.webp"
+        assert text == "hello"
+
+    @pytest.mark.anyio
+    async def test_pipeline_keeps_filename_when_no_convert(
+        self, tmp_path: Path
+    ) -> None:
+        md = FakeMetadataStore()
+        vs = FakeVectorStore()
+        memes = tmp_path / "memes"
+        memes.mkdir()
+        (memes / "a.jpg").write_bytes(b"x")
+        opt = FakeOptimizer(output_path=str(memes / "a.jpg"))
+        im = IndexManager(
+            md,
+            vs,
+            str(memes),
+            ocr_provider=FakeOcrProvider("hello"),
+            embedding_provider=FakeEmbeddingProvider(),
+            optimizer=opt,
+        )
+        final_fn, text, _ = await im._process_image_pipeline("a.jpg")
+        assert final_fn == "a.jpg"
+
+    @pytest.mark.anyio
+    async def test_pipeline_degrades_on_optimize_error(
+        self, tmp_path: Path
+    ) -> None:
+        md = FakeMetadataStore()
+        vs = FakeVectorStore()
+        memes = tmp_path / "memes"
+        memes.mkdir()
+        (memes / "a.jpg").write_bytes(b"x")
+        opt = FakeOptimizer(raises=RuntimeError("convert fail"))
+        im = IndexManager(
+            md,
+            vs,
+            str(memes),
+            ocr_provider=FakeOcrProvider("hello"),
+            embedding_provider=FakeEmbeddingProvider(),
+            optimizer=opt,
+        )
+        final_fn, text, _ = await im._process_image_pipeline("a.jpg")
+        assert final_fn == "a.jpg"
+        assert text == "hello"
+
+    @pytest.mark.anyio
+    async def test_pipeline_empty_text_returns_empty_embedding(
+        self, tmp_path: Path
+    ) -> None:
+        md = FakeMetadataStore()
+        vs = FakeVectorStore()
+        memes = tmp_path / "memes"
+        memes.mkdir()
+        (memes / "a.jpg").write_bytes(b"x")
+        opt = FakeOptimizer(output_path=str(memes / "a.webp"))
+        im = IndexManager(
+            md,
+            vs,
+            str(memes),
+            ocr_provider=FakeOcrProvider(""),
+            embedding_provider=FakeEmbeddingProvider(),
+            optimizer=opt,
+        )
+        final_fn, text, emb = await im._process_image_pipeline("a.jpg")
+        assert final_fn == "a.webp"
+        assert text == ""
+        assert emb == []
+
+
+# ---------------------------------------------------------------------------
+# Task 6: add() 与 sync 阶段2 filename 流转 + 并发同名去重
+# ---------------------------------------------------------------------------
+
+
+class TestAddConvertsToWebp:
+    """add() 转换后 sqlite image_path 为 .webp 测试。"""
+
+    @pytest.mark.anyio
+    async def test_add_writes_webp_image_path(self, tmp_path: Path) -> None:
+        md = FakeMetadataStore()
+        vs = FakeVectorStore()
+        memes = tmp_path / "memes"
+        memes.mkdir()
+        (memes / "meme_001.jpg").write_bytes(b"x")
+        opt = FakeOptimizer(output_path=str(memes / "meme_001.webp"))
+        im = IndexManager(
+            md,
+            vs,
+            str(memes),
+            ocr_provider=FakeOcrProvider("加班"),
+            embedding_provider=FakeEmbeddingProvider(),
+            optimizer=opt,
+        )
+        result = await im.add("meme_001.jpg", speaker="小明", tags=["吐槽"])
+        assert result.reason == "added"
+        entry = md.get_entry(result.entry_id)
+        assert entry is not None
+        assert entry.image_path == "meme_001.webp"
+
+    @pytest.mark.anyio
+    async def test_add_degrades_to_original_format(self, tmp_path: Path) -> None:
+        md = FakeMetadataStore()
+        vs = FakeVectorStore()
+        memes = tmp_path / "memes"
+        memes.mkdir()
+        (memes / "meme_002.png").write_bytes(b"x")
+        opt = FakeOptimizer(raises=RuntimeError("fail"))
+        im = IndexManager(
+            md,
+            vs,
+            str(memes),
+            ocr_provider=FakeOcrProvider("心累"),
+            embedding_provider=FakeEmbeddingProvider(),
+            optimizer=opt,
+        )
+        result = await im.add("meme_002.png")
+        assert result.reason == "added"
+        entry = md.get_entry(result.entry_id)
+        assert entry is not None
+        assert entry.image_path == "meme_002.png"
+
+
+class PerFileOcrProvider:
+    """按文件 stem 返回不同 OCR 文本，避免 phase2 text 去重干扰。"""
+
+    async def ocr(self, image_path: str) -> str:
+        return f"text_{Path(image_path).stem}"
+
+    async def close(self) -> None:
+        pass
+
+
+class CountingOcrProvider:
+    """按调用次数返回不同 OCR 文本（同 stem 不同图场景）。"""
+
+    def __init__(self) -> None:
+        self._n = 0
+
+    async def ocr(self, image_path: str) -> str:
+        self._n += 1
+        return f"text{self._n}"
+
+    async def close(self) -> None:
+        pass
+
+
+class TestSyncConvertsToWebp:
+    """sync 阶段2 转换 + 并发同名去重测试。"""
+
+    @pytest.mark.anyio
+    async def test_sync_converts_new_files(self, tmp_path: Path) -> None:
+        md = FakeMetadataStore()
+        vs = FakeVectorStore()
+        memes = tmp_path / "memes"
+        memes.mkdir()
+        (memes / "a.jpg").write_bytes(b"x")
+        (memes / "b.png").write_bytes(b"x")
+
+        class PerFileOptimizer:
+            async def optimize(self, image_path: str) -> OptimizeResult:
+                p = Path(image_path)
+                new_p = p.with_suffix(".webp")
+                return OptimizeResult(100, 80, 20, output_path=str(new_p))
+
+        im = IndexManager(
+            md,
+            vs,
+            str(memes),
+            ocr_provider=PerFileOcrProvider(),
+            embedding_provider=FakeEmbeddingProvider(),
+            optimizer=PerFileOptimizer(),
+        )
+        sync_result = await im.refresh()
+        assert sync_result.added == 2
+        paths = {e.image_path for e in md.get_all_entries().values()}
+        assert paths == {"a.webp", "b.webp"}
+
+    @pytest.mark.anyio
+    async def test_sync_dedups_same_stem_final_filename(
+        self, tmp_path: Path
+    ) -> None:
+        """两张同 stem 不同扩展名新增图转 webp 后同名，需去重 rename，两张均入库。"""
+        md = FakeMetadataStore()
+        vs = FakeVectorStore()
+        memes = tmp_path / "memes"
+        memes.mkdir()
+        (memes / "dup.jpg").write_bytes(b"x")
+        (memes / "dup.png").write_bytes(b"x")
+
+        class SameStemOptimizer:
+            """两张都返回 dup.webp（模拟未去重），由 pipeline 去重 rename。"""
+
+            async def optimize(self, image_path: str) -> OptimizeResult:
+                return OptimizeResult(
+                    100, 80, 20, output_path=str(memes / "dup.webp")
+                )
+
+        im = IndexManager(
+            md,
+            vs,
+            str(memes),
+            ocr_provider=CountingOcrProvider(),
+            embedding_provider=FakeEmbeddingProvider(),
+            optimizer=SameStemOptimizer(),
+        )
+        sync_result = await im.refresh()
+        assert sync_result.added == 2
+        paths = {e.image_path for e in md.get_all_entries().values()}
+        assert "dup.webp" in paths
+        assert len(paths) == 2
