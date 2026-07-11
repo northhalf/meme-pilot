@@ -3,6 +3,7 @@
 import logging
 import random
 
+from bot.log_context import timed
 from .keyword_searcher import KeywordSearcher
 from .protocols import MetadataStoreProvider
 from .types import SearchResult
@@ -44,38 +45,44 @@ class RandomSearcher:
             关键词无匹配时返回空列表，不会回退到全库随机。
             所有结果的 similarity 字段固定为 0.0。
         """
-        if keyword:
-            candidates = self.keyword_searcher.search(keyword)
-            candidates = [
-                SearchResult(
-                    entry_id=r.entry_id,
-                    image_path=r.image_path,
-                    text=r.text,
-                    similarity=0.0,
-                    speaker=r.speaker,
-                    tags=r.tags,
-                )
-                for r in candidates
-            ]
-        else:
-            entries = self.metadata_store.get_all_entries()
-            candidates = [
-                SearchResult(
-                    entry_id=entry.id,
-                    image_path=entry.image_path,
-                    text=entry.text,
-                    similarity=0.0,
-                    speaker=entry.speaker,
-                    tags=entry.tags,
-                )
-                for entry in entries.values()
-                if entry.text
-            ]
+        with timed(logger, "随机搜索"):
+            logger.debug("随机搜索入口: keyword=%r, limit=%d", keyword, limit)
+            if keyword:
+                candidates = self.keyword_searcher.search(keyword)
+                candidates = [
+                    SearchResult(
+                        entry_id=r.entry_id,
+                        image_path=r.image_path,
+                        text=r.text,
+                        similarity=0.0,
+                        speaker=r.speaker,
+                        tags=r.tags,
+                    )
+                    for r in candidates
+                ]
+            else:
+                entries = self.metadata_store.get_all_entries()
+                candidates = [
+                    SearchResult(
+                        entry_id=entry.id,
+                        image_path=entry.image_path,
+                        text=entry.text,
+                        similarity=0.0,
+                        speaker=entry.speaker,
+                        tags=entry.tags,
+                    )
+                    for entry in entries.values()
+                    if entry.text
+                ]
 
-        if not candidates:
-            return []
+            if not candidates:
+                logger.info("随机搜索返回 0 个结果")
+                return []
 
-        if len(candidates) <= limit:
-            return candidates
+            if len(candidates) <= limit:
+                logger.info("随机搜索返回 %d 个结果", len(candidates))
+                return candidates
 
-        return random.sample(candidates, limit)
+            results = random.sample(candidates, limit)
+            logger.info("随机搜索返回 %d 个结果", len(results))
+            return results

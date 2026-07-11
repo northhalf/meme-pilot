@@ -20,6 +20,7 @@ from nonebot.params import Arg
 from nonebot.rule import to_me
 
 from bot.auth import is_authorized, log_unauthorized
+from bot.log_context import generate_request_id, set_request_id
 from bot.plugins._help_text import HELP_TEXT
 from bot.plugins._search_utils import (
     NEXT_PAGE_TRIGGER,
@@ -54,36 +55,38 @@ async def handle_plain_text(bot: Bot, event: MessageEvent, matcher: Matcher) -> 
     """
     user_id = event.get_user_id()
     text = event.get_plaintext().strip()
-    logger.info("兜底处理用户 %s 消息: %r", user_id, text)
+    request_id = generate_request_id()
+    with set_request_id(request_id):
+        logger.info("兜底处理用户 %s 消息: %r", user_id, text)
 
-    try:
-        if not is_authorized(user_id):
-            log_unauthorized(user_id, "plain_text")
-            await matcher.finish(None)
-            return
+        try:
+            if not is_authorized(user_id):
+                log_unauthorized(user_id, "plain_text")
+                await matcher.finish(None)
+                return
 
-        if text.startswith("/"):
-            logger.info("用户 %s 发送未知命令: %r", user_id, text)
-            await matcher.finish(f"未知命令\n\n{HELP_TEXT}")
-            return
+            if text.startswith("/"):
+                logger.info("用户 %s 发送未知命令: %r", user_id, text)
+                await matcher.finish(f"未知命令\n\n{HELP_TEXT}")
+                return
 
-        # 普通文本当作 /search
-        logger.info("用户 %s 的普通文本当作 /search: %r", user_id, text)
-        # 会话检查：拒绝而非覆盖
-        if not session_manager.activate_chat(user_id, "search", matcher):
-            await matcher.finish("已有命令在处理中，请先 /cancel")
-            return
+            # 普通文本当作 /search
+            logger.info("用户 %s 的普通文本当作 /search: %r", user_id, text)
+            # 会话检查：拒绝而非覆盖
+            if not session_manager.activate_chat(user_id, "search", matcher):
+                await matcher.finish("已有命令在处理中，请先 /cancel")
+                return
 
-        await execute_search(bot, event, matcher, text, options=SEARCH_OPTIONS)
-    except asyncio.CancelledError:
-        raise FinishedException
-    except FinishedException:
-        session_manager.deactivate_chat(user_id)
-        raise
-    except Exception:
-        logger.exception("用户 %s 的兜底搜索处理异常", user_id)
-        session_manager.deactivate_chat(user_id)
-        raise
+            await execute_search(bot, event, matcher, text, options=SEARCH_OPTIONS)
+        except asyncio.CancelledError:
+            raise FinishedException
+        except FinishedException:
+            session_manager.deactivate_chat(user_id)
+            raise
+        except Exception:
+            logger.exception("用户 %s 的兜底搜索处理异常", user_id)
+            session_manager.deactivate_chat(user_id)
+            raise
 
 
 @catch_all.got("selection")
@@ -93,6 +96,8 @@ async def got_selection(
     matcher: Matcher,
     selection_msg: Message = Arg("selection"),
 ) -> None:
-    await handle_got_selection(
-        bot, event, matcher, selection_msg, "兜底搜索", options=SEARCH_OPTIONS
-    )
+    request_id = generate_request_id()
+    with set_request_id(request_id):
+        await handle_got_selection(
+            bot, event, matcher, selection_msg, "兜底搜索", options=SEARCH_OPTIONS
+        )

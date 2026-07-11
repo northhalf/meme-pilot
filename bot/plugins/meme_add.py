@@ -35,6 +35,7 @@ from bot.engine.retry_config import api_retry
 from bot.plugins._help_text import HELP_TEXT
 from bot.session import session_manager, timeout_session
 from bot.plugins._search_utils import got_intercept_bypass, format_metadata_line
+from bot.log_context import generate_request_id, set_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -59,44 +60,46 @@ async def handle_add(
         args: 命令参数（说话人 + 标签），由 CommandArg 注入。
     """
     user_id = event.get_user_id()
-    logger.info("用户 %s 调用 /add", user_id)
+    request_id = generate_request_id()
+    with set_request_id(request_id):
+        logger.info("用户 %s 调用 /add", user_id)
 
-    try:
-        # 授权校验
-        if not is_authorized(user_id):
-            log_unauthorized(user_id, "add")
-            await matcher.finish(None)
-            return
+        try:
+            # 授权校验
+            if not is_authorized(user_id):
+                log_unauthorized(user_id, "add")
+                await matcher.finish(None)
+                return
 
-        # 群聊拦截：/add 仅限私聊使用
-        if event.message_type != "private":
-            logger.info("用户 %s 在群聊中调用 /add，已拒绝", user_id)
-            await matcher.finish("此命令仅限私聊使用")
-            return
+            # 群聊拦截：/add 仅限私聊使用
+            if event.message_type != "private":
+                logger.info("用户 %s 在群聊中调用 /add，已拒绝", user_id)
+                await matcher.finish("此命令仅限私聊使用")
+                return
 
-        # 会话检查：拒绝而非覆盖
-        if not session_manager.activate_chat(user_id, "add", matcher):
-            await matcher.finish("已有命令在处理中，请先 /cancel")
-            return
+            # 会话检查：拒绝而非覆盖
+            if not session_manager.activate_chat(user_id, "add", matcher):
+                await matcher.finish("已有命令在处理中，请先 /cancel")
+                return
 
-        # 解析 speaker 和 tags
-        args_text = args.extract_plain_text().strip()
-        parts = args_text.split()
-        speaker = parts[0] if parts else None
-        tags = parts[1:] if len(parts) > 1 else []
-        matcher.state["speaker"] = speaker
-        matcher.state["tags"] = tags
+            # 解析 speaker 和 tags
+            args_text = args.extract_plain_text().strip()
+            parts = args_text.split()
+            speaker = parts[0] if parts else None
+            tags = parts[1:] if len(parts) > 1 else []
+            matcher.state["speaker"] = speaker
+            matcher.state["tags"] = tags
 
-        selection_id = str(uuid.uuid4())
-        task = asyncio.create_task(
-            timeout_session(
-                bot, event, user_id, selection_id, "发送图片超时，请重新 /add"
+            selection_id = str(uuid.uuid4())
+            task = asyncio.create_task(
+                timeout_session(
+                    bot, event, user_id, selection_id, "发送图片超时，请重新 /add"
+                )
             )
-        )
-        session_manager.create_selection(user_id, selection_id, task)
-        session_manager.reset_current_task(user_id)
-    except asyncio.CancelledError:
-        raise FinishedException
+            session_manager.create_selection(user_id, selection_id, task)
+            session_manager.reset_current_task(user_id)
+        except asyncio.CancelledError:
+            raise FinishedException
 
 
 @add_cmd.got("image", prompt=f"请发送图片，{read_session_timeout()} 秒内有效")
@@ -118,141 +121,145 @@ async def got_image(
         image_msg: got("image") 接收到的消息。
     """
     user_id = event.get_user_id()
+    request_id = generate_request_id()
+    with set_request_id(request_id):
 
-    with session_manager.handler_context(user_id, matcher):
-        try:
-            # ── 阶段 0：/help 和 /cancel 旁路拦截 ──
-            text = event.get_plaintext().strip()
-            if await got_intercept_bypass(user_id, matcher, text, HELP_TEXT):
-                return
-
-            # ── 阶段 1：图片验证 ──
+        with session_manager.handler_context(user_id, matcher):
             try:
-                urls = extract_image_urls(image_msg)
-            except Exception:
-                logger.exception("extract_image_urls 异常")
+                # ── 阶段 0：/help 和 /cancel 旁路拦截 ──
+                text = event.get_plaintext().strip()
+                if await got_intercept_bypass(user_id, matcher, text, HELP_TEXT):
+                    return
+
+                # ── 阶段 1：图片验证 ──
+                try:
+                    urls = extract_image_urls(image_msg)
+                except Exception:
+                    logger.exception("extract_image_urls 异常")
+                    session_manager.deactivate_chat(user_id)
+                    raise
+                if not urls:
+                    await matcher.reject("请发送一张图片")
+                    return
+                # 成功发送图片
+                session_manager.remove_selection(user_id)
+
+                # 获取 IndexManager
+                try:
+                    index_manager = get_index_manager()
+                except RuntimeError:
+                    logger.error("IndexManager 尚未初始化")
+                    session_manager.deactivate_chat(user_id)
+                    await matcher.finish("服务未就绪，请稍后再试")
+                    return
+
+                # ── 阶段 2：处理流程 ──
+                image_url = urls[0]
+                speaker = matcher.state.get("speaker")
+                tags = matcher.state.get("tags", [])
+
+                # 下载图片
+                try:
+                    image_data, response = await _download_image(image_url)
+                except Exception as exc:
+                    logger.error("图片下载失败: %s", exc)
+                    session_manager.deactivate_chat(user_id)
+                    await matcher.finish("图片下载失败")
+                    return
+
+                # 确定扩展名
+                ext = _get_extension(image_url, response)
+                if ext is None or ext.lower() not in SUPPORTED_EXTENSIONS:
+                    session_manager.deactivate_chat(user_id)
+                    await matcher.finish(f"不支持的图片格式: {ext or '未知'}")
+                    return
+
+                # 文件名处理
+                filename = f"{_auto_filename(image_data)}{ext}"
+                filepath = resolve_unique_filename(MEMES_DIR, filename)
+                filename = filepath.name
+
+                # 保存图片
+                MEMES_DIR.mkdir(parents=True, exist_ok=True)
+                try:
+                    filepath.write_bytes(image_data)
+                except OSError as exc:
+                    logger.error("保存图片失败: %s", exc)
+                    session_manager.deactivate_chat(user_id)
+                    await matcher.finish("图片保存失败")
+                    return
+
+                # 调用 IndexManager 处理
+                try:
+                    result = await index_manager.add(
+                        filename, speaker=speaker, tags=tags
+                    )
+                except RefreshInProgressError as exc:
+                    logger.info("用户 %s 的 /add 被拒绝：%s", user_id, exc)
+                    msg = "索引正在刷新，请稍后再试"
+                except IndexAddCancelledError as exc:
+                    logger.info("用户 %s 的 /add 被取消：%s", user_id, exc)
+                    msg = "添加任务已取消"
+                except asyncio.TimeoutError:
+                    logger.info("用户 %s 的 /add 等待超时", user_id)
+                    msg = "添加处理超时，请稍后再试"
+                except CompressionError as exc:
+                    logger.error("图片压缩失败: %s", exc)
+                    msg = "图片压缩失败"
+                except OcrError as exc:
+                    logger.error("OCR 失败: %s", exc)
+                    msg = "OCR 服务不可用"
+                except EmbeddingError as exc:
+                    logger.error("Embedding 失败: %s", exc)
+                    msg = "Embedding 服务不可用"
+                except Exception as exc:
+                    logger.exception("添加表情包异常")
+                    msg = "添加失败，请查看日志"
+                else:
+                    # 成功：回复结果
+                    session_manager.deactivate_chat(user_id)
+                    if result.reason == "no_text":
+                        await matcher.finish("未识别到文字，已移至 meme_no_text/")
+                    elif result.reason == "replaced":
+                        ocr_display = _format_ocr_text(result.text)
+                        await matcher.finish(
+                            f"替换旧图✅，id：{result.entry_id}，识别到的文字为：\n「{ocr_display}」\n"
+                            f"{format_metadata_line(entry_id = result.entry_id, # pyright: ignore[reportArgumentType]
+                                                    speaker=result.speaker,
+                                                      tags=result.tags)}"
+                        )
+                    else:
+                        ocr_display = _format_ocr_text(result.text)
+                        await matcher.finish(
+                            f"新增表情包✅，id：{result.entry_id}，识别到的文字为：\n「{ocr_display}」\n"
+                            f"{format_metadata_line(entry_id = result.entry_id, # pyright: ignore[reportArgumentType]
+                                                    speaker=result.speaker,
+                                                      tags=result.tags)}"
+                        )
+                    return
+
+                # 统一错误处理：删除已保存的图片 + 清理会话
+                filepath.unlink(missing_ok=True)
+                session_manager.deactivate_chat(user_id)
+                await matcher.finish(msg)
+
+            except FinishedException:
                 session_manager.deactivate_chat(user_id)
                 raise
-            if not urls:
-                await matcher.reject("请发送一张图片")
-                return
-            # 成功发送图片
-            session_manager.remove_selection(user_id)
-
-            # 获取 IndexManager
-            try:
-                index_manager = get_index_manager()
-            except RuntimeError:
-                logger.error("IndexManager 尚未初始化")
+            except RejectedException:
+                # reject 意味着等待用户再次输入，不清除会话状态
+                raise
+            except asyncio.CancelledError:
+                # execute_cancel 通过 task.cancel() 终止处理时，
+                # 捕获 CancelledError 转为 FinishedException，
+                # 让 run() 正常收尾并抛出 StopPropagation，
+                # 防止事件滑落到兜底处理器（如 catch_all）
                 session_manager.deactivate_chat(user_id)
-                await matcher.finish("服务未就绪，请稍后再试")
-                return
-
-            # ── 阶段 2：处理流程 ──
-            image_url = urls[0]
-            speaker = matcher.state.get("speaker")
-            tags = matcher.state.get("tags", [])
-
-            # 下载图片
-            try:
-                image_data, response = await _download_image(image_url)
-            except Exception as exc:
-                logger.error("图片下载失败: %s", exc)
+                raise FinishedException
+            except Exception:
+                logger.exception("用户 %s 的 /add 处理异常", user_id)
                 session_manager.deactivate_chat(user_id)
-                await matcher.finish("图片下载失败")
-                return
-
-            # 确定扩展名
-            ext = _get_extension(image_url, response)
-            if ext is None or ext.lower() not in SUPPORTED_EXTENSIONS:
-                session_manager.deactivate_chat(user_id)
-                await matcher.finish(f"不支持的图片格式: {ext or '未知'}")
-                return
-
-            # 文件名处理
-            filename = f"{_auto_filename(image_data)}{ext}"
-            filepath = resolve_unique_filename(MEMES_DIR, filename)
-            filename = filepath.name
-
-            # 保存图片
-            MEMES_DIR.mkdir(parents=True, exist_ok=True)
-            try:
-                filepath.write_bytes(image_data)
-            except OSError as exc:
-                logger.error("保存图片失败: %s", exc)
-                session_manager.deactivate_chat(user_id)
-                await matcher.finish("图片保存失败")
-                return
-
-            # 调用 IndexManager 处理
-            try:
-                result = await index_manager.add(filename, speaker=speaker, tags=tags)
-            except RefreshInProgressError as exc:
-                logger.info("用户 %s 的 /add 被拒绝：%s", user_id, exc)
-                msg = "索引正在刷新，请稍后再试"
-            except IndexAddCancelledError as exc:
-                logger.info("用户 %s 的 /add 被取消：%s", user_id, exc)
-                msg = "添加任务已取消"
-            except asyncio.TimeoutError:
-                logger.info("用户 %s 的 /add 等待超时", user_id)
-                msg = "添加处理超时，请稍后再试"
-            except CompressionError as exc:
-                logger.error("图片压缩失败: %s", exc)
-                msg = "图片压缩失败"
-            except OcrError as exc:
-                logger.error("OCR 失败: %s", exc)
-                msg = "OCR 服务不可用"
-            except EmbeddingError as exc:
-                logger.error("Embedding 失败: %s", exc)
-                msg = "Embedding 服务不可用"
-            except Exception as exc:
-                logger.exception("添加表情包异常")
-                msg = "添加失败，请查看日志"
-            else:
-                # 成功：回复结果
-                session_manager.deactivate_chat(user_id)
-                if result.reason == "no_text":
-                    await matcher.finish("未识别到文字，已移至 meme_no_text/")
-                elif result.reason == "replaced":
-                    ocr_display = _format_ocr_text(result.text)
-                    await matcher.finish(
-                        f"替换旧图✅，id：{result.entry_id}，识别到的文字为：\n「{ocr_display}」\n"
-                        f"{format_metadata_line(entry_id = result.entry_id, # pyright: ignore[reportArgumentType]
-                                                speaker=result.speaker,
-                                                  tags=result.tags)}"
-                    )
-                else:
-                    ocr_display = _format_ocr_text(result.text)
-                    await matcher.finish(
-                        f"新增表情包✅，id：{result.entry_id}，识别到的文字为：\n「{ocr_display}」\n"
-                        f"{format_metadata_line(entry_id = result.entry_id, # pyright: ignore[reportArgumentType]
-                                                speaker=result.speaker,
-                                                  tags=result.tags)}"
-                    )
-                return
-
-            # 统一错误处理：删除已保存的图片 + 清理会话
-            filepath.unlink(missing_ok=True)
-            session_manager.deactivate_chat(user_id)
-            await matcher.finish(msg)
-
-        except FinishedException:
-            session_manager.deactivate_chat(user_id)
-            raise
-        except RejectedException:
-            # reject 意味着等待用户再次输入，不清除会话状态
-            raise
-        except asyncio.CancelledError:
-            # execute_cancel 通过 task.cancel() 终止处理时，
-            # 捕获 CancelledError 转为 FinishedException，
-            # 让 run() 正常收尾并抛出 StopPropagation，
-            # 防止事件滑落到兜底处理器（如 catch_all）
-            session_manager.deactivate_chat(user_id)
-            raise FinishedException
-        except Exception:
-            logger.exception("用户 %s 的 /add 处理异常", user_id)
-            session_manager.deactivate_chat(user_id)
-            raise
+                raise
 
 
 # ---------------------------------------------------------------------------

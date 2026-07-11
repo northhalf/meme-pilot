@@ -11,6 +11,7 @@ import pytest
 
 from typing import cast
 
+from bot.log_context import run_sync_with_request_id
 from bot.engine.ai_matcher import AIMatcher
 from bot.engine.index_manager import (
     AddResult,
@@ -585,7 +586,7 @@ class TestAdd:
         # 第二次替换：再次把同名 old.jpg 移入 memes_replaced/
         # 通过手动调用 _move_to_replaced 模拟同名冲突
         (Path(index_manager._memes_dir) / "old.jpg").write_bytes(b"3")
-        archived = await index_manager._run_sync(
+        archived = await run_sync_with_request_id(
             index_manager._move_to_replaced, "old.jpg"
         )
         assert archived == str(replaced_dir / "old_1.jpg")

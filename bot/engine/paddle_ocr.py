@@ -22,6 +22,7 @@ from paddleocr import (
     ServiceUnavailableError,
 )
 
+from bot.log_context import timed
 from .retry_config import api_retry
 
 logger = logging.getLogger(__name__)
@@ -195,35 +196,38 @@ class PaddleOcrClientService:
                 或可重试异常重试耗尽后以原始类型抛出。
             RuntimeError: 非 API 异常（如未预期的本地错误）。
         """
-        async with self._semaphore:
-            logger.debug("调用 PaddleOCR API: %s", image_path)
-            try:
-                result = await self._client.ocr(
-                    file_path=image_path,
-                    model=self._model,
-                    options=self._ocr_options,
-                )
-            except PaddleOCRAPIError:
-                # 透传给 @api_retry：可重试子类按 extra_exceptions 重试，
-                # 不可重试子类（AuthError/InvalidRequestError 等）由装饰器 reraise
-                raise
-            except Exception as exc:
-                raise RuntimeError(f"PaddleOCR 调用异常: {exc}") from exc
+        async with timed(logger, "PaddleOCR"):
+            async with self._semaphore:
+                logger.debug("调用 PaddleOCR API: %s", image_path)
+                try:
+                    result = await self._client.ocr(
+                        file_path=image_path,
+                        model=self._model,
+                        options=self._ocr_options,
+                    )
+                except PaddleOCRAPIError:
+                    # 透传给 @api_retry：可重试子类按 extra_exceptions 重试，
+                    # 不可重试子类（AuthError/InvalidRequestError 等）由装饰器 reraise
+                    raise
+                except Exception as exc:
+                    raise RuntimeError(f"PaddleOCR 调用异常: {exc}") from exc
 
-            # 提取文本
-            if not result.pages:
-                logger.debug("PaddleOCR 无识别结果: %s", image_path)
-                return ""
+                # 提取文本
+                if not result.pages:
+                    logger.debug("PaddleOCR 无识别结果: %s", image_path)
+                    return ""
 
-            texts: list[str] = []
-            for page in result.pages:
-                text = _extract_text(page.pruned_result, self._text_rec_score_thresh)
-                if text:
-                    texts.append(text)
+                texts: list[str] = []
+                for page in result.pages:
+                    text = _extract_text(
+                        page.pruned_result, self._text_rec_score_thresh
+                    )
+                    if text:
+                        texts.append(text)
 
-            full_text = "".join(" ".join(texts).split())
-            logger.debug("PaddleOCR 完成: %s → %s", image_path, full_text)
-            return full_text
+                full_text = "".join(" ".join(texts).split())
+                logger.debug("PaddleOCR 完成: %s → %s", image_path, full_text)
+                return full_text
 
     async def close(self) -> None:
         """释放 AsyncPaddleOCRClient 内部 HTTP 会话。"""

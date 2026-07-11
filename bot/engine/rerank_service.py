@@ -14,6 +14,8 @@ import re
 import openai
 from openai import AsyncOpenAI
 
+from bot.log_context import timed
+
 from .ai_matcher import AIMatchCandidate
 from .retry_config import api_retry
 
@@ -165,46 +167,52 @@ class RerankService:
         if not candidates:
             raise ValueError("候选列表不能为空")
 
-        candidates_text = _build_candidates_text(candidates)
-        user_prompt = _USER_PROMPT_TEMPLATE.format(
-            description=description,
-            candidates=candidates_text,
-        )
+        async with timed(logger, "Rerank"):
+            logger.info("Rerank: 候选=%d", len(candidates))
 
-        async with self._semaphore:
-            logger.debug(
-                "调用 DeepSeek 精排: model=%s, candidates=%d, desc_len=%d",
-                self._model,
-                len(candidates),
-                len(description),
+            candidates_text = _build_candidates_text(candidates)
+            user_prompt = _USER_PROMPT_TEMPLATE.format(
+                description=description,
+                candidates=candidates_text,
             )
-            try:
-                response = await self._client.chat.completions.create(
-                    model=self._model,
-                    messages=[
-                        {"role": "system", "content": _SYSTEM_PROMPT},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    temperature=0,
+
+            async with self._semaphore:
+                logger.debug(
+                    "调用 DeepSeek 精排: model=%s, candidates=%d, desc_len=%d",
+                    self._model,
+                    len(candidates),
+                    len(description),
                 )
-            except (
-                openai.APIConnectionError,
-                openai.APITimeoutError,
-                openai.RateLimitError,
-                openai.InternalServerError,
-            ):
-                raise
-            except Exception as exc:
-                raise RuntimeError(f"DeepSeek 精排 API 调用失败: {exc}") from exc
+                try:
+                    response = await self._client.chat.completions.create(
+                        model=self._model,
+                        messages=[
+                            {"role": "system", "content": _SYSTEM_PROMPT},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        temperature=0,
+                    )
+                except (
+                    openai.APIConnectionError,
+                    openai.APITimeoutError,
+                    openai.RateLimitError,
+                    openai.InternalServerError,
+                ):
+                    raise
+                except Exception as exc:
+                    raise RuntimeError(f"DeepSeek 精排 API 调用失败: {exc}") from exc
 
-            raw = response.choices[0].message.content or ""
-            rank = _parse_rank(raw, max_rank=len(candidates))
+                raw = response.choices[0].message.content or ""
+                rank = _parse_rank(raw, max_rank=len(candidates))
 
-            if rank is None:
-                logger.warning(
-                    "DeepSeek 精排返回无法解析: raw=%r，返回 0 放弃精排", raw
-                )
-                return 0
+                if rank is None:
+                    logger.warning(
+                        "DeepSeek 精排返回无法解析: raw=%r，返回 0 放弃精排", raw
+                    )
+                    result = 0
+                else:
+                    logger.debug("DeepSeek 精排完成: rank=%d", rank)
+                    result = rank
 
-            logger.debug("DeepSeek 精排完成: rank=%d", rank)
-            return rank
+            logger.info("Rerank 完成，返回最佳匹配索引 %d", result)
+            return result

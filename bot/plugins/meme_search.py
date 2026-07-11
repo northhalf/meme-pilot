@@ -26,6 +26,7 @@ from bot.plugins._search_utils import (
     handle_got_selection,
 )
 from bot.session import session_manager
+from bot.log_context import generate_request_id, set_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -51,40 +52,42 @@ async def handle_search(
         args: 命令参数（CommandArg 注入），含关键词的 Message 对象。
     """
     user_id = event.get_user_id()
-    logger.info("用户 %s 调用 /search", user_id)
+    request_id = generate_request_id()
+    with set_request_id(request_id):
+        logger.info("用户 %s 调用 /search", user_id)
 
-    try:
-        # 授权校验
-        if not is_authorized(user_id):
-            log_unauthorized(user_id, "search")
-            await matcher.finish(None)
-            return
+        try:
+            # 授权校验
+            if not is_authorized(user_id):
+                log_unauthorized(user_id, "search")
+                await matcher.finish(None)
+                return
 
-        # 拒绝而非覆盖
-        if not session_manager.activate_chat(user_id, "search", matcher):
-            await matcher.finish("已有命令在处理中，请先 /cancel")
-            return
+            # 拒绝而非覆盖
+            if not session_manager.activate_chat(user_id, "search", matcher):
+                await matcher.finish("已有命令在处理中，请先 /cancel")
+                return
 
-        # 提取关键词
-        keyword = args.extract_plain_text().strip()
-        if not keyword:
+            # 提取关键词
+            keyword = args.extract_plain_text().strip()
+            if not keyword:
+                session_manager.deactivate_chat(user_id)
+                logger.info("用户 %s 的 /search 缺少关键词", user_id)
+                await matcher.finish("/search <关键词>")
+                return
+
+            logger.info("用户 %s 搜索关键词: %r", user_id, keyword)
+            await execute_search(bot, event, matcher, keyword, options=SEARCH_OPTIONS)
+        except asyncio.CancelledError:
             session_manager.deactivate_chat(user_id)
-            logger.info("用户 %s 的 /search 缺少关键词", user_id)
-            await matcher.finish("/search <关键词>")
-            return
-
-        logger.info("用户 %s 搜索关键词: %r", user_id, keyword)
-        await execute_search(bot, event, matcher, keyword, options=SEARCH_OPTIONS)
-    except asyncio.CancelledError:
-        session_manager.deactivate_chat(user_id)
-        raise FinishedException
-    except FinishedException:
-        session_manager.deactivate_chat(user_id)
-        raise
-    except Exception:
-        logger.exception("用户 %s 的 /search 处理异常", user_id)
-        session_manager.deactivate_chat(user_id)
-        raise
+            raise FinishedException
+        except FinishedException:
+            session_manager.deactivate_chat(user_id)
+            raise
+        except Exception:
+            logger.exception("用户 %s 的 /search 处理异常", user_id)
+            session_manager.deactivate_chat(user_id)
+            raise
 
 
 @search_cmd.got("selection")
@@ -94,6 +97,8 @@ async def got_selection(
     matcher: Matcher,
     selection_msg: Message = Arg("selection"),
 ) -> None:
-    await handle_got_selection(
-        bot, event, matcher, selection_msg, "/search", options=SEARCH_OPTIONS
-    )
+    request_id = generate_request_id()
+    with set_request_id(request_id):
+        await handle_got_selection(
+            bot, event, matcher, selection_msg, "/search", options=SEARCH_OPTIONS
+        )

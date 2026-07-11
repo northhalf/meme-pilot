@@ -19,6 +19,7 @@ from bot.config import MEMES_DIR
 from bot.engine.ai_matcher import AIMatchResult
 from bot.plugins._search_utils import format_metadata_line
 from bot.session import session_manager
+from bot.log_context import generate_request_id, set_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -37,81 +38,85 @@ async def handle_ai(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
         matcher: NoneBot2 Matcher 实例。
     """
     user_id = event.get_user_id()
-    logger.info("用户 %s 调用 /ai", user_id)
+    request_id = generate_request_id()
+    with set_request_id(request_id):
+        logger.info("用户 %s 调用 /ai", user_id)
 
-    try:
-        # 授权校验
-        if not is_authorized(user_id):
-            log_unauthorized(user_id, "ai")
-            await matcher.finish(None)
-            return
-
-        # 群聊拦截：/ai 仅限私聊使用
-        if event.message_type != "private":
-            logger.info("用户 %s 在群聊中调用 /ai，已拒绝", user_id)
-            await matcher.finish("此命令仅限私聊使用")
-            return
-
-        # 会话激活
-        if not session_manager.activate_chat(user_id, "ai", matcher):
-            await matcher.finish("已有命令在处理中，请先 /cancel")
-            return
-
-        # 获取 IndexManager
         try:
-            index_manager = get_index_manager()
-        except RuntimeError:
-            logger.error("IndexManager 尚未初始化")
-            session_manager.deactivate_chat(user_id)
-            await matcher.finish("服务未就绪，请稍后再试")
-            return
+            # 授权校验
+            if not is_authorized(user_id):
+                log_unauthorized(user_id, "ai")
+                await matcher.finish(None)
+                return
 
-        # 提取描述
-        raw_text = event.get_plaintext().strip()
-        description = raw_text.removeprefix("/ai").removeprefix("ai").strip()
-        if not description:
-            session_manager.deactivate_chat(user_id)
-            await matcher.finish("/ai <自然语言描述>")
-            return
+            # 群聊拦截：/ai 仅限私聊使用
+            if event.message_type != "private":
+                logger.info("用户 %s 在群聊中调用 /ai，已拒绝", user_id)
+                await matcher.finish("此命令仅限私聊使用")
+                return
 
-        # 并发：发送进度提示 + 执行 AI 匹配
-        try:
-            _, match_result = await asyncio.gather(
-                matcher.send("正在根据你的描述搜索表情包，请稍候..."),
-                index_manager.ai_match(description),
+            # 会话激活
+            if not session_manager.activate_chat(user_id, "ai", matcher):
+                await matcher.finish("已有命令在处理中，请先 /cancel")
+                return
+
+            # 获取 IndexManager
+            try:
+                index_manager = get_index_manager()
+            except RuntimeError:
+                logger.error("IndexManager 尚未初始化")
+                session_manager.deactivate_chat(user_id)
+                await matcher.finish("服务未就绪，请稍后再试")
+                return
+
+            # 提取描述
+            raw_text = event.get_plaintext().strip()
+            description = raw_text.removeprefix("/ai").removeprefix("ai").strip()
+            if not description:
+                session_manager.deactivate_chat(user_id)
+                await matcher.finish("/ai <自然语言描述>")
+                return
+
+            # 并发：发送进度提示 + 执行 AI 匹配
+            try:
+                _, match_result = await asyncio.gather(
+                    matcher.send("正在根据你的描述搜索表情包，请稍候..."),
+                    index_manager.ai_match(description),
+                )
+            except asyncio.TimeoutError:
+                logger.info("用户 %s 的 /ai 等待读锁超时", user_id)
+                session_manager.deactivate_chat(user_id)
+                await matcher.finish("索引更新较慢，请稍后再试")
+                return
+            except ValueError:
+                logger.warning("AI 匹配 embedding 异常: description=%r", description)
+                session_manager.deactivate_chat(user_id)
+                await matcher.finish("AI 服务暂时不可用，稍后重试")
+                return
+            except Exception:
+                logger.exception("AI 匹配异常: description=%r", description)
+                session_manager.deactivate_chat(user_id)
+                await matcher.finish("AI 服务暂时不可用，稍后重试")
+                return
+
+            if match_result is None:
+                session_manager.deactivate_chat(user_id)
+                await matcher.finish("没有找到匹配的表情包 🙁")
+                return
+
+            # 发送匹配图片（本地文件使用 file:/// URI）
+            image_path = MEMES_DIR / match_result.image_path
+            session_manager.deactivate_chat(user_id)
+            await matcher.send(
+                MessageSegment.image("file://" + str(image_path.resolve()))
             )
-        except asyncio.TimeoutError:
-            logger.info("用户 %s 的 /ai 等待读锁超时", user_id)
-            session_manager.deactivate_chat(user_id)
-            await matcher.finish("索引更新较慢，请稍后再试")
-            return
-        except ValueError:
-            logger.warning("AI 匹配 embedding 异常: description=%r", description)
-            session_manager.deactivate_chat(user_id)
-            await matcher.finish("AI 服务暂时不可用，稍后重试")
-            return
-        except Exception:
-            logger.exception("AI 匹配异常: description=%r", description)
-            session_manager.deactivate_chat(user_id)
-            await matcher.finish("AI 服务暂时不可用，稍后重试")
-            return
-
-        if match_result is None:
-            session_manager.deactivate_chat(user_id)
-            await matcher.finish("没有找到匹配的表情包 🙁")
-            return
-
-        # 发送匹配图片（本地文件使用 file:/// URI）
-        image_path = MEMES_DIR / match_result.image_path
-        session_manager.deactivate_chat(user_id)
-        await matcher.send(MessageSegment.image("file://" + str(image_path.resolve())))
-        await matcher.finish(
-            format_metadata_line(
-                match_result.entry_id,
-                match_result.speaker,
-                match_result.tags,
+            await matcher.finish(
+                format_metadata_line(
+                    match_result.entry_id,
+                    match_result.speaker,
+                    match_result.tags,
+                )
             )
-        )
-    except asyncio.CancelledError:
-        session_manager.deactivate_chat(user_id)
-        raise FinishedException
+        except asyncio.CancelledError:
+            session_manager.deactivate_chat(user_id)
+            raise FinishedException

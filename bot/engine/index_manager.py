@@ -11,9 +11,10 @@ import shutil
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Protocol
 
 from bot.config import read_add_command_timeout, read_read_lock_timeout
+from bot.log_context import run_sync_with_request_id, timed
 from .ai_matcher import AIMatcher, AIMatchResult
 from .image_optimizer import OptimizeResult
 from .keyword_searcher import KeywordSearcher
@@ -393,10 +394,12 @@ class IndexManager:
 
         启动时必须调用此方法后再使用其他查询或写入方法。
         """
+        logger.info("开始加载索引...")
         await asyncio.gather(
-            asyncio.to_thread(self._metadata_store.load),
-            asyncio.to_thread(self._vector_store.load),
+            run_sync_with_request_id(self._metadata_store.load),
+            run_sync_with_request_id(self._vector_store.load),
         )
+        logger.info("索引加载完成")
         logger.info("IndexManager 加载完成: %d 条记录", self.entry_count)
 
     @property
@@ -547,6 +550,8 @@ class IndexManager:
             RefreshInProgressError: 当前有刷新任务在运行。
             IndexAddCancelledError: Bot 正在关闭。
         """
+        image_path = self._memes_dir / filename
+        logger.info("添加图片: %s", image_path)
         if self._shutting_down:
             raise IndexAddCancelledError("Bot 正在关闭")
         if self._refresh_active:
@@ -578,7 +583,9 @@ class IndexManager:
                 )
             )
             try:
-                return await future
+                result = await future
+                logger.info("图片添加完成: %s", image_path)
+                return result
             except asyncio.CancelledError:
                 # 超时/取消时取消已入队的 future，worker 据此跳过写入避免孤儿条目
                 if not future.done():
@@ -604,6 +611,7 @@ class IndexManager:
             DuplicateTextError: new_text 已被其他条目使用。
             EmbeddingError: Embedding 生成失败。
         """
+        logger.info("编辑文字: entry_ids=%s", entry_id)
         # 检查①：shutting_down（最高优先级，避免浪费 embed API）
         if self._shutting_down:
             raise IndexAddCancelledError("Bot 正在关闭")
@@ -616,14 +624,16 @@ class IndexManager:
         self._ensure_write_worker()
 
         # 校验 entry 存在 + 获取旧 text（用于回滚）
-        entry = await self._run_sync(self._metadata_store.get_entry, entry_id)
+        entry = await run_sync_with_request_id(self._metadata_store.get_entry, entry_id)
         if entry is None:
             raise ValueError(f"entry_id={entry_id} 不存在")
         old_text = entry.text
         if old_text == new_text:
-            return EditTextResult(
+            result = EditTextResult(
                 entry_id=entry_id, old_text=old_text, new_text=new_text
             )
+            logger.info("文字编辑完成: entry_ids=%s", entry_id)
+            return result
 
         # 锁外生成新 embedding
         assert self._embedding_provider is not None
@@ -647,7 +657,9 @@ class IndexManager:
             old_text=old_text,
         )
         await self._write_queue.put(req)
-        return await future
+        result = await future
+        logger.info("文字编辑完成: entry_ids=%s", entry_id)
+        return result
 
     async def set_speaker(self, entry_id: int, speaker: str | None) -> SetSpeakerResult:
         """设置或清空指定条目的 speaker。
@@ -666,6 +678,7 @@ class IndexManager:
             RefreshInProgressError: 刷新进行中或 pending 中。
             ValueError: entry_id 不存在。
         """
+        logger.info("设置发言人: entry_ids=%s, speaker=%r", entry_id, speaker)
         # 检查①：shutting_down
         if self._shutting_down:
             raise IndexAddCancelledError("Bot 正在关闭")
@@ -678,7 +691,7 @@ class IndexManager:
         self._ensure_write_worker()
 
         # 校验 entry 存在 + 获取 old_speaker
-        entry = await self._run_sync(self._metadata_store.get_entry, entry_id)
+        entry = await run_sync_with_request_id(self._metadata_store.get_entry, entry_id)
 
         # TOCTOU 防护（get_entry 期间 shutting_down 或 refresh 可能已激活）
         if self._shutting_down:
@@ -690,11 +703,13 @@ class IndexManager:
             raise ValueError(f"entry_id={entry_id} 不存在")
         old_speaker = entry.speaker
         if old_speaker == speaker:
-            return SetSpeakerResult(
+            result = SetSpeakerResult(
                 entry_id=entry_id,
                 old_speaker=old_speaker,
                 new_speaker=speaker,
             )
+            logger.info("发言人设置完成: entry_ids=%s", entry_id)
+            return result
 
         # 提交写入任务（不需要 embed，直接入队）
         loop = asyncio.get_running_loop()
@@ -706,7 +721,9 @@ class IndexManager:
             speaker=speaker,
         )
         await self._write_queue.put(req)
-        return await future
+        result = await future
+        logger.info("发言人设置完成: entry_ids=%s", entry_id)
+        return result
 
     async def add_tags(self, entry_id: int, tags: list[str]) -> AddTagResult:
         """为指定条目追加标签。
@@ -725,6 +742,7 @@ class IndexManager:
             RefreshInProgressError: 刷新进行中或 pending 中。
             ValueError: entry_id 不存在。
         """
+        logger.info("添加标签: entry_ids=%s, tags=%r", entry_id, tags)
         if self._shutting_down:
             raise IndexAddCancelledError("Bot 正在关闭")
         if self._refresh_active:
@@ -732,7 +750,7 @@ class IndexManager:
 
         self._ensure_write_worker()
 
-        entry = await self._run_sync(self._metadata_store.get_entry, entry_id)
+        entry = await run_sync_with_request_id(self._metadata_store.get_entry, entry_id)
         if entry is None:
             raise ValueError(f"entry_id={entry_id} 不存在")
 
@@ -750,7 +768,9 @@ class IndexManager:
             tags=list(tags),
         )
         await self._write_queue.put(req)
-        return await future
+        result = await future
+        logger.info("标签添加完成: entry_ids=%s", entry_id)
+        return result
 
     async def delete(self, entry_ids: list[int]) -> DeleteResult:
         """删除一个或多个表情包条目。
@@ -767,6 +787,7 @@ class IndexManager:
             IndexAddCancelledError: Bot 正在关闭。
             RefreshInProgressError: 刷新进行中或 pending 中。
         """
+        logger.info("删除图片: %s", entry_ids)
         if self._shutting_down:
             raise IndexAddCancelledError("Bot 正在关闭")
         if self._refresh_active:
@@ -787,7 +808,9 @@ class IndexManager:
             entry_ids=list(entry_ids),
         )
         await self._write_queue.put(req)
-        return await future
+        result = await future
+        logger.info("图片删除完成: %s", entry_ids)
+        return result
 
     async def info(self) -> IndexInfo:
         """返回当前索引内部统计信息（不含硬件）。
@@ -795,7 +818,7 @@ class IndexManager:
         Returns:
             IndexInfo 描述当前统计与状态。
         """
-        entries = await self._run_sync(self._metadata_store.get_all_entries)
+        entries = await run_sync_with_request_id(self._metadata_store.get_all_entries)
 
         speaker_counts: dict[str | None, int] = {}
         for entry in entries.values():
@@ -826,24 +849,35 @@ class IndexManager:
         Raises:
             RefreshInProgressError: 已有刷新任务在运行或 Bot 正在关闭。
         """
-        if self._shutting_down:
-            raise RefreshInProgressError("Bot 正在关闭")
-        if self._refresh_active:
-            raise RefreshInProgressError("已有刷新任务在运行")
+        async with timed(logger, "索引刷新"):
+            logger.info("开始刷新索引...")
+            if self._shutting_down:
+                raise RefreshInProgressError("Bot 正在关闭")
+            if self._refresh_active:
+                raise RefreshInProgressError("已有刷新任务在运行")
 
-        self._refresh_active = True
-        self._refresh_task = asyncio.current_task()
-        try:
-            if not self._write_queue.empty():
-                self._write_drained.clear()
-                await self._write_drained.wait()
+            self._refresh_active = True
+            self._refresh_task = asyncio.current_task()
+            try:
+                if not self._write_queue.empty():
+                    self._write_drained.clear()
+                    await self._write_drained.wait()
 
-            async with self._rwlock.write():
-                return await self._run_sync_internal()
-        finally:
-            self._refresh_active = False
-            if self._refresh_task is asyncio.current_task():
-                self._refresh_task = None
+                async with self._rwlock.write():
+                    result = await self._run_sync_internal()
+                    logger.info(
+                        "索引刷新完成: 新增=%d, 删除=%d, 去重=%d, 无文字移走=%d, 失败=%d",
+                        result.added,
+                        result.deleted,
+                        result.deduped,
+                        result.no_text_moved,
+                        len(result.failed),
+                    )
+                    return result
+            finally:
+                self._refresh_active = False
+                if self._refresh_task is asyncio.current_task():
+                    self._refresh_task = None
 
     def _ensure_write_worker(self) -> None:
         """确保 Write Worker task 已启动（延迟启动）。"""
@@ -934,7 +968,7 @@ class IndexManager:
             EmbeddingError: chroma upsert 失败，已回滚 sqlite。
         """
         # 写锁内 TOCTOU 检查 text 冲突
-        existing_id = await self._run_sync(
+        existing_id = await run_sync_with_request_id(
             self._metadata_store.get_id_by_text,
             req.text,
         )
@@ -944,7 +978,7 @@ class IndexManager:
             )
 
         # 先 sqlite
-        success = await self._run_sync(
+        success = await run_sync_with_request_id(
             self._metadata_store.update,
             req.entry_id,
             text=req.text,
@@ -958,7 +992,7 @@ class IndexManager:
             await self._vector_store.upsert(req.entry_id, req.embedding)
         except Exception as exc:
             try:
-                await self._run_sync(
+                await run_sync_with_request_id(
                     self._metadata_store.update,
                     req.entry_id,
                     text=req.old_text,
@@ -990,13 +1024,13 @@ class IndexManager:
             ValueError: entry_id 在写锁内已不存在。
         """
         # TOCTOU 防护：写锁内重新检查 entry 是否存在
-        entry = await self._run_sync(self._metadata_store.get_entry, req.entry_id)
+        entry = await run_sync_with_request_id(self._metadata_store.get_entry, req.entry_id)
         if entry is None:
             raise ValueError(f"entry_id={req.entry_id} 不存在（并发删除）")
         old_speaker = entry.speaker
 
         # 写 sqlite
-        success = await self._run_sync(
+        success = await run_sync_with_request_id(
             self._metadata_store.update,
             req.entry_id,
             speaker=req.speaker,
@@ -1022,7 +1056,7 @@ class IndexManager:
         Raises:
             ValueError: entry_id 在写锁内已不存在。
         """
-        entry = await self._run_sync(self._metadata_store.get_entry, req.entry_id)
+        entry = await run_sync_with_request_id(self._metadata_store.get_entry, req.entry_id)
         if entry is None:
             raise ValueError(f"entry_id={req.entry_id} 不存在（并发删除）")
 
@@ -1038,7 +1072,7 @@ class IndexManager:
                 all_tags=list(current_tags),
             )
 
-        success = await self._run_sync(
+        success = await run_sync_with_request_id(
             self._metadata_store.update,
             req.entry_id,
             tags=merged_tags,
@@ -1073,7 +1107,7 @@ class IndexManager:
         failed_ids: list[tuple[int, str]] = []
 
         for entry_id in req.entry_ids or []:
-            entry = await self._run_sync(self._metadata_store.get_entry, entry_id)
+            entry = await run_sync_with_request_id(self._metadata_store.get_entry, entry_id)
             if entry is None:
                 not_found_ids.append(entry_id)
                 continue
@@ -1092,7 +1126,7 @@ class IndexManager:
                     shutil.move(str(src), str(dst))
 
                 # 文件已归档（或本就不在 memes/），再删索引：先 sqlite 后 chroma
-                await self._run_sync(self._metadata_store.remove, entry_id)
+                await run_sync_with_request_id(self._metadata_store.remove, entry_id)
                 await self._vector_store.remove(entry_id)
 
                 deleted_ids.append(entry_id)
@@ -1190,21 +1224,6 @@ class IndexManager:
             failed=failed,
         )
 
-    async def _run_sync[_T](
-        self, fn: Callable[..., _T], *args: Any, **kwargs: Any
-    ) -> _T:
-        """用 asyncio.to_thread 包装 MetadataStore 同步方法，避免阻塞事件循环。
-
-        Args:
-            fn: 要在线程中执行的同步函数（通常是 MetadataStore 方法）。
-            *args: 传给 fn 的位置参数。
-            **kwargs: 传给 fn 的关键字参数。
-
-        Returns:
-            fn 的返回值（类型由 fn 签名推断）。
-        """
-        return await asyncio.to_thread(fn, *args, **kwargs)
-
     async def _sync_phase0_consistency(self, failed: list[str]) -> None:
         """阶段0：对齐 sqlite ↔ chroma 的 id 集合。
 
@@ -1215,35 +1234,37 @@ class IndexManager:
         Args:
             failed: 失败文件名收集列表，阶段0 重 embed 失败的 image_path 追加至此。
         """
-        entries = await self._run_sync(self._metadata_store.get_all_entries)
-        sqlite_ids = set(entries)
-        vs_count = self._vector_store.count()
-        chroma_ids = await self._get_chroma_ids()
+        async with timed(logger, "索引刷新-阶段0"):
+            entries = await run_sync_with_request_id(self._metadata_store.get_all_entries)
+            sqlite_ids = set(entries)
+            vs_count = self._vector_store.count()
+            chroma_ids = await self._get_chroma_ids()
 
-        # chroma 损坏/为空、sqlite 有数据 → rebuild_all 全量重 embed
-        if vs_count == 0 and sqlite_ids:
-            await self._rebuild_all_from_sqlite(entries, failed)
-            return
+            # chroma 损坏/为空、sqlite 有数据 → rebuild_all 全量重 embed
+            if vs_count == 0 and sqlite_ids:
+                await self._rebuild_all_from_sqlite(entries, failed)
+                return
 
-        # sqlite 有、chroma 无 → 重 embed upsert
-        missing = sqlite_ids - chroma_ids
-        for eid in missing:
-            text = entries[eid].text
-            if not text:
-                continue
-            try:
-                vec = await self._embedding_provider.embed(text)  # type: ignore[union-attr]
-            except Exception as exc:
-                logger.error("阶段0 重 embed 失败: id=%s, error=%s", eid, exc)
-                failed.append(entries[eid].image_path)
-                continue
-            await self._vector_store.upsert(eid, vec)
+            # sqlite 有、chroma 无 → 重 embed upsert
+            missing = sqlite_ids - chroma_ids
+            for idx, eid in enumerate(missing):
+                text = entries[eid].text
+                if not text:
+                    continue
+                try:
+                    vec = await self._embedding_provider.embed(text)  # type: ignore[union-attr]
+                except Exception as exc:
+                    logger.error("阶段0 重 embed 失败: id=%s, error=%s", eid, exc)
+                    failed.append(entries[eid].image_path)
+                    continue
+                await self._vector_store.upsert(eid, vec)
+                logger.debug("已处理 %d/%d 张图片", idx + 1, len(missing))
 
-        # chroma 有、sqlite 无 → 删孤儿向量
-        orphans = chroma_ids - sqlite_ids
-        if orphans:
-            logger.info("阶段0 清理孤儿向量: %s", orphans)
-            await self._vector_store.remove_many(list(orphans))
+            # chroma 有、sqlite 无 → 删孤儿向量
+            orphans = chroma_ids - sqlite_ids
+            if orphans:
+                logger.info("阶段0 清理孤儿向量: %s", orphans)
+                await self._vector_store.remove_many(list(orphans))
 
     async def _get_chroma_ids(self) -> set[int]:
         """获取 chroma 当前所有 id（用 collection.get() 取全量，与 embedding 维度无关）。
@@ -1263,7 +1284,7 @@ class IndexManager:
             failed: 失败文件名收集列表，重 embed 失败的 image_path 追加至此。
         """
         items: list[tuple[int, list[float]]] = []
-        for eid, entry in entries.items():
+        for idx, (eid, entry) in enumerate(entries.items()):
             if not entry.text:
                 continue
             try:
@@ -1273,6 +1294,7 @@ class IndexManager:
                 failed.append(entry.image_path)
                 continue
             items.append((eid, vec))
+            logger.debug("已处理 %d/%d 张图片", idx + 1, len(entries))
         await self._vector_store.rebuild_all(items)
 
     async def _sync_phase1_delete(self, existing: set[str]) -> int:
@@ -1284,17 +1306,20 @@ class IndexManager:
         Returns:
             本次删除的图片数量。
         """
-        entries = await self._run_sync(self._metadata_store.get_all_entries)
-        deleted = 0
-        for eid, entry in entries.items():
-            if entry.image_path not in existing:
-                logger.info(
-                    "图片已删除，移除索引: id=%s, image_path=%s", eid, entry.image_path
-                )
-                await self._run_sync(self._metadata_store.remove, eid)
-                await self._vector_store.remove(eid)
-                deleted += 1
-        return deleted
+        async with timed(logger, "索引刷新-阶段1"):
+            entries = await run_sync_with_request_id(self._metadata_store.get_all_entries)
+            deleted = 0
+            for eid, entry in entries.items():
+                if entry.image_path not in existing:
+                    logger.info(
+                        "图片已删除，移除索引: id=%s, image_path=%s",
+                        eid,
+                        entry.image_path,
+                    )
+                    await run_sync_with_request_id(self._metadata_store.remove, eid)
+                    await self._vector_store.remove(eid)
+                    deleted += 1
+            return deleted
 
     async def _sync_phase2_add(
         self, existing: set[str], failed: list[str]
@@ -1308,89 +1333,95 @@ class IndexManager:
         Returns:
             (added, deduped, no_text_moved) 三元组：新增、去重删除、无文字移走数量。
         """
-        entries = await self._run_sync(self._metadata_store.get_all_entries)
-        existing_paths = {e.image_path for e in entries.values()}
-        new_files = sorted(f for f in existing if f not in existing_paths)
-        if not new_files:
-            return (0, 0, 0)
+        async with timed(logger, "索引刷新-阶段2"):
+            entries = await run_sync_with_request_id(self._metadata_store.get_all_entries)
+            existing_paths = {e.image_path for e in entries.values()}
+            new_files = sorted(f for f in existing if f not in existing_paths)
+            if not new_files:
+                return (0, 0, 0)
 
-        logger.info("开始并行处理 %d 张新增图片", len(new_files))
-        raw = await asyncio.gather(
-            *(self._process_image_pipeline(fn) for fn in new_files),
-            return_exceptions=True,
-        )
+            logger.info("开始并行处理 %d 张新增图片", len(new_files))
+            raw = await asyncio.gather(
+                *(self._process_image_pipeline(fn) for fn in new_files),
+                return_exceptions=True,
+            )
 
-        success: dict[str, tuple[str, list[float]]] = {}
-        for filename, result in zip(new_files, raw):
-            if isinstance(result, BaseException):
-                logger.error("处理图片失败: filename=%s, error=%s", filename, result)
-                failed.append(filename)
-                continue
-            final_filename, text, embedding = result
-            # 并发同名去重：多张新增图转 webp 后可能产出同名 final_filename
-            # （_convert_image_to_webp 并行 resolve 的 TOCTOU 竞态兜底）。
-            # 基于 success dict 已有 key 去重，不依赖文件存在性。
-            if final_filename in success:
-                stem = Path(final_filename).stem
-                suffix = Path(final_filename).suffix
-                old_path = self._memes_dir / final_filename
-                n = 1
-                while (
-                    f"{stem}_{n}{suffix}" in success
-                    or (self._memes_dir / f"{stem}_{n}{suffix}").exists()
-                ):
-                    n += 1
-                final_filename = f"{stem}_{n}{suffix}"
-                new_path = self._memes_dir / final_filename
-                if old_path.exists():
-                    shutil.move(str(old_path), str(new_path))
-                logger.info("并发同名去重 rename: %s", final_filename)
-            success[final_filename] = (text, embedding)
-
-        # winner_keys 初始 = 已有条目的 text 集合
-        winner_keys: set[str] = {e.text for e in entries.values() if e.text}
-
-        added = deduped = no_text_moved = 0
-        for filename in sorted(success):
-            text, embedding = success[filename]
-            if not text:
-                await self._run_sync(self._move_to_no_text, filename)
-                no_text_moved += 1
-                continue
-            if text in winner_keys:
-                try:
-                    archived_path = await self._run_sync(
-                        self._move_to_replaced, filename
-                    )
-                except Exception as exc:
+            success: dict[str, tuple[str, list[float]]] = {}
+            for idx, (filename, result) in enumerate(zip(new_files, raw)):
+                if isinstance(result, BaseException):
                     logger.error(
-                        "去重新图归档失败，跳过该文件: filename=%s, error=%s",
-                        filename,
-                        exc,
+                        "处理图片失败: filename=%s, error=%s", filename, result
                     )
                     failed.append(filename)
                     continue
-                logger.info(
-                    "新图与已有索引去重，已归档新图: filename=%s, archived=%s",
-                    filename,
-                    archived_path,
-                )
-                deduped += 1
-                continue
-            # 正常新增：先 sqlite 后 chroma；upsert 失败回滚 sqlite
-            eid = await self._run_sync(self._metadata_store.add, filename, text)
-            try:
-                await self._vector_store.upsert(eid, embedding)
-            except Exception as exc:
-                logger.error("新增 upsert 失败，回滚 sqlite: id=%s, error=%s", eid, exc)
-                await self._run_sync(self._metadata_store.remove, eid)
-                failed.append(filename)
-                continue
-            winner_keys.add(text)
-            added += 1
-            logger.info("新增图片已加入索引: id=%s, filename=%s", eid, filename)
+                final_filename, text, embedding = result
+                # 并发同名去重：多张新增图转 webp 后可能产出同名 final_filename
+                # （_convert_image_to_webp 并行 resolve 的 TOCTOU 竞态兜底）。
+                # 基于 success dict 已有 key 去重，不依赖文件存在性。
+                if final_filename in success:
+                    stem = Path(final_filename).stem
+                    suffix = Path(final_filename).suffix
+                    old_path = self._memes_dir / final_filename
+                    n = 1
+                    while (
+                        f"{stem}_{n}{suffix}" in success
+                        or (self._memes_dir / f"{stem}_{n}{suffix}").exists()
+                    ):
+                        n += 1
+                    final_filename = f"{stem}_{n}{suffix}"
+                    new_path = self._memes_dir / final_filename
+                    if old_path.exists():
+                        shutil.move(str(old_path), str(new_path))
+                    logger.info("并发同名去重 rename: %s", final_filename)
+                success[final_filename] = (text, embedding)
+                logger.debug("已处理 %d/%d 张图片", idx + 1, len(new_files))
 
-        return (added, deduped, no_text_moved)
+            # winner_keys 初始 = 已有条目的 text 集合
+            winner_keys: set[str] = {e.text for e in entries.values() if e.text}
+
+            added = deduped = no_text_moved = 0
+            for filename in sorted(success):
+                text, embedding = success[filename]
+                if not text:
+                    await run_sync_with_request_id(self._move_to_no_text, filename)
+                    no_text_moved += 1
+                    continue
+                if text in winner_keys:
+                    try:
+                        archived_path = await run_sync_with_request_id(
+                            self._move_to_replaced, filename
+                        )
+                    except Exception as exc:
+                        logger.error(
+                            "去重新图归档失败，跳过该文件: filename=%s, error=%s",
+                            filename,
+                            exc,
+                        )
+                        failed.append(filename)
+                        continue
+                    logger.info(
+                        "新图与已有索引去重，已归档新图: filename=%s, archived=%s",
+                        filename,
+                        archived_path,
+                    )
+                    deduped += 1
+                    continue
+                # 正常新增：先 sqlite 后 chroma；upsert 失败回滚 sqlite
+                eid = await run_sync_with_request_id(self._metadata_store.add, filename, text)
+                try:
+                    await self._vector_store.upsert(eid, embedding)
+                except Exception as exc:
+                    logger.error(
+                        "新增 upsert 失败，回滚 sqlite: id=%s, error=%s", eid, exc
+                    )
+                    await run_sync_with_request_id(self._metadata_store.remove, eid)
+                    failed.append(filename)
+                    continue
+                winner_keys.add(text)
+                added += 1
+                logger.info("新增图片已加入索引: id=%s, filename=%s", eid, filename)
+
+            return (added, deduped, no_text_moved)
 
     async def _write_entry(
         self,
@@ -1419,7 +1450,7 @@ class IndexManager:
         """
         # 1. 无文字 → 移图，不进索引
         if not text:
-            moved_to = await self._run_sync(self._move_to_no_text, filename)
+            moved_to = await run_sync_with_request_id(self._move_to_no_text, filename)
             logger.info("OCR 无文字，已移至无文字目录: filename=%s", filename)
             return AddResult(
                 entry_id=None,
@@ -1430,14 +1461,14 @@ class IndexManager:
             )
 
         # 2. 去重命中已有条目 → update image_path + upsert，删旧图
-        old_id = await self._run_sync(self._metadata_store.get_id_by_text, text)
+        old_id = await run_sync_with_request_id(self._metadata_store.get_id_by_text, text)
         if old_id is not None:
-            old_entry = await self._run_sync(self._metadata_store.get_entry, old_id)
+            old_entry = await run_sync_with_request_id(self._metadata_store.get_entry, old_id)
             old_image_path = old_entry.image_path if old_entry else ""
             old_speaker = old_entry.speaker if old_entry else None
             old_tags = old_entry.tags if old_entry else []
             # 顺序：先改 sqlite 指向新图，再 upsert 向量，最后删旧图
-            await self._run_sync(
+            await run_sync_with_request_id(
                 self._metadata_store.update,
                 old_id,
                 image_path=filename,
@@ -1450,7 +1481,7 @@ class IndexManager:
                 logger.error(
                     "去重替换 upsert 失败，回滚 update: id=%s, error=%s", old_id, exc
                 )
-                await self._run_sync(
+                await run_sync_with_request_id(
                     self._metadata_store.update,
                     old_id,
                     image_path=old_image_path,
@@ -1462,7 +1493,7 @@ class IndexManager:
             # 归档旧图（最后移动，保证前序失败时旧图仍在）
             archived_path: str | None = None
             if old_image_path and old_image_path != filename:
-                archived_path = await self._run_sync(
+                archived_path = await run_sync_with_request_id(
                     self._move_to_replaced, old_image_path
                 )
             logger.info(
@@ -1483,7 +1514,7 @@ class IndexManager:
             )
 
         # 3. 正常新增：先 sqlite 后 chroma；upsert 失败回滚 sqlite + 删图
-        eid = await self._run_sync(
+        eid = await run_sync_with_request_id(
             self._metadata_store.add, filename, text, speaker, tags
         )
         try:
@@ -1492,7 +1523,7 @@ class IndexManager:
             logger.error(
                 "新增 upsert 失败，回滚 sqlite + 删图: id=%s, error=%s", eid, exc
             )
-            await self._run_sync(self._metadata_store.remove, eid)
+            await run_sync_with_request_id(self._metadata_store.remove, eid)
             (self._memes_dir / filename).unlink(missing_ok=True)
             raise EmbeddingError(f"新增 upsert 失败: {filename}") from exc
         logger.info("已添加索引记录: id=%s, filename=%s", eid, filename)

@@ -9,6 +9,7 @@ from google import genai
 from google.genai import errors as _genai_errors
 from google.genai import types
 
+from bot.log_context import get_request_id, set_request_id, timed
 from .retry_config import api_retry
 
 # Google GenAI SDK 异常类可能随版本变化，做防御性导入
@@ -76,33 +77,40 @@ class GoogleEmbeddingService:
             ValueError: 文本为空。
             RuntimeError: API 调用失败或返回为空。
         """
-        text = text.strip()
-        if not text:
-            raise ValueError("待向量化文本不能为空")
+        async with timed(logger, "Google Embedding"):
+            text = text.strip()
+            if not text:
+                raise ValueError("待向量化文本不能为空")
 
-        async with self._semaphore:
-            logger.debug("调用 Google Embedding API: model=%s", self._model)
-            try:
-                response = await asyncio.to_thread(
-                    self._client.models.embed_content,
-                    model=self._model,
-                    contents=text,
-                    config=types.EmbedContentConfig(output_dimensionality=1024),
-                )
-            except Exception as exc:
-                logger.info("Google Embedding API 调用失败: %s", exc)
-                raise RuntimeError(f"Google Embedding API 调用失败: {exc}") from exc
+            async with self._semaphore:
+                logger.debug("调用 Google Embedding API: model=%s", self._model)
+                rid = get_request_id()
 
-            if not response.embeddings:
-                logger.info("Google Embedding API 返回为空")
-                raise RuntimeError("Google Embedding API 返回为空")
+                def _call(*args: Any, **kwargs: Any) -> Any:
+                    with set_request_id(rid):
+                        return self._client.models.embed_content(*args, **kwargs)
 
-            embedding = response.embeddings[0].values
-            if embedding is None:
-                logger.info("Google Embedding API 返回为空")
-                raise RuntimeError("Google Embedding API 返回为空")
-            logger.debug("Embedding 完成: %d 维", len(embedding))
-            return embedding
+                try:
+                    response = await asyncio.to_thread(
+                        _call,
+                        model=self._model,
+                        contents=text,
+                        config=types.EmbedContentConfig(output_dimensionality=1024),
+                    )
+                except Exception as exc:
+                    logger.info("Google Embedding API 调用失败: %s", exc)
+                    raise RuntimeError(f"Google Embedding API 调用失败: {exc}") from exc
+
+                if not response.embeddings:
+                    logger.info("Google Embedding API 返回为空")
+                    raise RuntimeError("Google Embedding API 返回为空")
+
+                embedding = response.embeddings[0].values
+                if embedding is None:
+                    logger.info("Google Embedding API 返回为空")
+                    raise RuntimeError("Google Embedding API 返回为空")
+                logger.debug("Embedding 完成: %d 维", len(embedding))
+                return embedding
 
     async def close(self) -> None:
         """关闭服务。
@@ -111,7 +119,13 @@ class GoogleEmbeddingService:
         网络资源。由于 close() 是同步方法，通过 asyncio.to_thread 在线程池中
         执行，避免阻塞事件循环。
         """
-        await asyncio.to_thread(self._client.close)
+        rid = get_request_id()
+
+        def _close() -> None:
+            with set_request_id(rid):
+                self._client.close()
+
+        await asyncio.to_thread(_close)
 
 
 def create_google_embedding_service() -> GoogleEmbeddingService:

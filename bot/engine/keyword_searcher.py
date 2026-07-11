@@ -8,6 +8,8 @@ import logging
 import pylcs
 import jieba.posseg as pseg
 
+from bot.log_context import timed
+
 from .metadata_store import MemeEntry
 from .protocols import MetadataStoreProvider
 from .types import SearchResult
@@ -180,47 +182,48 @@ class KeywordSearcher:
             按相似度降序排列的搜索结果列表；limit=None 时返回全部匹配，否则最多返回 limit 条。
             无匹配时返回空列表。
         """
-        keyword = keyword.strip()
-        if not keyword:
-            logger.debug("关键词为空，返回空结果")
-            return []
+        with timed(logger, "关键词搜索"):
+            keyword = keyword.strip()
+            if not keyword:
+                logger.debug("关键词为空，返回空结果")
+                return []
 
-        raw = _strip_all_whitespace(keyword)
-        if not raw:
-            logger.debug("关键词去空白后为空，返回空结果")
-            return []
+            raw = _strip_all_whitespace(keyword)
+            if not raw:
+                logger.debug("关键词去空白后为空，返回空结果")
+                return []
 
-        if not entries:
-            logger.debug("索引为空，返回空结果")
-            return []
+            if not entries:
+                logger.debug("索引为空，返回空结果")
+                return []
 
-        exact_results = self._search_exact_substring(entries, raw)
-        if exact_results:
+            exact_results = self._search_exact_substring(entries, raw)
+            if exact_results:
+                logger.info(
+                    "关键词精确子串命中：keyword=%r, 命中=%d, 返回=%d",
+                    keyword,
+                    len(exact_results),
+                    (
+                        len(exact_results)
+                        if self._limit is None
+                        else min(len(exact_results), self._limit)
+                    ),
+                )
+                return exact_results[: self._limit]
+
+            cleaned = _strip_all_whitespace(_remove_particles(keyword))
+            if not cleaned:
+                logger.debug("关键词去助词后为空，返回空结果")
+                return []
+
+            results = self._search_fuzzy_lcs(entries, cleaned)
             logger.info(
-                "关键词精确子串命中：keyword=%r, 命中=%d, 返回=%d",
+                "关键词搜索完成：keyword=%r, 匹配=%d, 返回=%d",
                 keyword,
-                len(exact_results),
-                (
-                    len(exact_results)
-                    if self._limit is None
-                    else min(len(exact_results), self._limit)
-                ),
+                len(results),
+                len(results) if self._limit is None else min(len(results), self._limit),
             )
-            return exact_results[: self._limit]
-
-        cleaned = _strip_all_whitespace(_remove_particles(keyword))
-        if not cleaned:
-            logger.debug("关键词去助词后为空，返回空结果")
-            return []
-
-        results = self._search_fuzzy_lcs(entries, cleaned)
-        logger.info(
-            "关键词搜索完成：keyword=%r, 匹配=%d, 返回=%d",
-            keyword,
-            len(results),
-            len(results) if self._limit is None else min(len(results), self._limit),
-        )
-        return results[: self._limit]
+            return results[: self._limit]
 
     def search(self, keyword: str) -> list[SearchResult]:
         """根据关键词搜索表情包。

@@ -28,6 +28,7 @@ from bot.plugins._search_utils import (
     handle_got_selection,
 )
 from bot.session import session_manager
+from bot.log_context import generate_request_id, set_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -91,49 +92,51 @@ async def handle_query(
         args: 命令参数（CommandArg 注入）。
     """
     user_id = event.get_user_id()
-    logger.info("用户 %s 调用 /query", user_id)
+    request_id = generate_request_id()
+    with set_request_id(request_id):
+        logger.info("用户 %s 调用 /query", user_id)
 
-    try:
-        if not is_authorized(user_id):
-            log_unauthorized(user_id, "query")
-            await matcher.finish(None)
-            return
+        try:
+            if not is_authorized(user_id):
+                log_unauthorized(user_id, "query")
+                await matcher.finish(None)
+                return
 
-        if not session_manager.activate_chat(user_id, "query", matcher):
-            await matcher.finish("已有命令在处理中，请先 /cancel")
-            return
+            if not session_manager.activate_chat(user_id, "query", matcher):
+                await matcher.finish("已有命令在处理中，请先 /cancel")
+                return
 
-        text = args.extract_plain_text().strip()
-        keyword, speakers, tags = _parse_args(text)
+            text = args.extract_plain_text().strip()
+            keyword, speakers, tags = _parse_args(text)
 
-        if not keyword and not speakers and not tags:
+            if not keyword and not speakers and not tags:
+                session_manager.deactivate_chat(user_id)
+                logger.info("用户 %s 的 /query 缺少参数", user_id)
+                await matcher.finish(QUERY_USAGE)
+                return
+
+            logger.info(
+                "用户 %s 组合检索: keyword=%r, speakers=%r, tags=%r",
+                user_id,
+                keyword,
+                speakers,
+                tags,
+            )
+            options = QUERY_KW_OPTIONS if keyword else QUERY_FILTER_OPTIONS
+            matcher.state["query_options"] = options
+            await execute_combined_search(
+                bot, event, matcher, keyword, speakers, tags, options=options
+            )
+        except asyncio.CancelledError:
             session_manager.deactivate_chat(user_id)
-            logger.info("用户 %s 的 /query 缺少参数", user_id)
-            await matcher.finish(QUERY_USAGE)
-            return
-
-        logger.info(
-            "用户 %s 组合检索: keyword=%r, speakers=%r, tags=%r",
-            user_id,
-            keyword,
-            speakers,
-            tags,
-        )
-        options = QUERY_KW_OPTIONS if keyword else QUERY_FILTER_OPTIONS
-        matcher.state["query_options"] = options
-        await execute_combined_search(
-            bot, event, matcher, keyword, speakers, tags, options=options
-        )
-    except asyncio.CancelledError:
-        session_manager.deactivate_chat(user_id)
-        raise FinishedException
-    except FinishedException:
-        session_manager.deactivate_chat(user_id)
-        raise
-    except Exception:
-        logger.exception("用户 %s 的 /query 处理异常", user_id)
-        session_manager.deactivate_chat(user_id)
-        raise
+            raise FinishedException
+        except FinishedException:
+            session_manager.deactivate_chat(user_id)
+            raise
+        except Exception:
+            logger.exception("用户 %s 的 /query 处理异常", user_id)
+            session_manager.deactivate_chat(user_id)
+            raise
 
 
 @query_cmd.got("selection")
@@ -143,7 +146,11 @@ async def got_selection(
     matcher: Matcher,
     selection_msg: Message = Arg("selection"),
 ) -> None:
-    options: PresentOptions = matcher.state.get("query_options", QUERY_FILTER_OPTIONS)
-    await handle_got_selection(
-        bot, event, matcher, selection_msg, "/query", options=options
-    )
+    request_id = generate_request_id()
+    with set_request_id(request_id):
+        options: PresentOptions = matcher.state.get(
+            "query_options", QUERY_FILTER_OPTIONS
+        )
+        await handle_got_selection(
+            bot, event, matcher, selection_msg, "/query", options=options
+        )

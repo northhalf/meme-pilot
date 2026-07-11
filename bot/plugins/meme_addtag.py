@@ -22,15 +22,14 @@ from bot.engine.index_manager import (
     IndexAddCancelledError,
     RefreshInProgressError,
 )
+from bot.log_context import generate_request_id, set_request_id
 from bot.plugins._help_text import HELP_TEXT
 from bot.plugins._search_utils import got_intercept_bypass
 from bot.session import session_manager, timeout_session
 
 logger = logging.getLogger(__name__)
 
-addtag_cmd = on_command(
-    "addtag", rule=to_me(), priority=5, block=True, aliases={"at"}
-)
+addtag_cmd = on_command("addtag", rule=to_me(), priority=5, block=True, aliases={"at"})
 
 
 @addtag_cmd.handle()
@@ -46,82 +45,86 @@ async def handle_addtag(
         args: 命令参数（CommandArg 注入，含 entry_id 与标签）。
     """
     user_id = event.get_user_id()
-    logger.info("用户 %s 调用 /addtag", user_id)
-
-    try:
-        # 授权校验
-        if not is_authorized(user_id):
-            log_unauthorized(user_id, "addtag")
-            await matcher.finish(None)
-            return
-
-        # 仅限私聊
-        if event.message_type != "private":
-            await matcher.finish("此命令仅限私聊使用")
-            return
-
-        # 会话检查
-        if not session_manager.activate_chat(user_id, "addtag", matcher):
-            await matcher.finish("已有命令在处理中，请先 /cancel")
-            return
-
-        # 解析参数
-        text_part = args.extract_plain_text().strip()
-        parts = text_part.split(maxsplit=1)
-        if len(parts) < 2:
-            session_manager.deactivate_chat(user_id)
-            await matcher.finish("用法：/addtag <entry_id> <tag> [<tag>...]")
-            return
+    request_id = generate_request_id()
+    with set_request_id(request_id):
+        logger.info("用户 %s 调用 /addtag", user_id)
 
         try:
-            entry_id = int(parts[0])
-        except ValueError:
-            session_manager.deactivate_chat(user_id)
-            await matcher.finish("entry_id 必须为数字")
-            return
+            # 授权校验
+            if not is_authorized(user_id):
+                log_unauthorized(user_id, "addtag")
+                await matcher.finish(None)
+                return
 
-        # 解析标签，过滤空串
-        tags = [tag.strip() for tag in parts[1].split() if tag.strip()]
+            # 仅限私聊
+            if event.message_type != "private":
+                await matcher.finish("此命令仅限私聊使用")
+                return
 
-        # 校验 entry 存在
-        store = get_metadata_store()
-        entry = store.get_entry(entry_id)
-        if entry is None:
-            session_manager.deactivate_chat(user_id)
-            await matcher.finish(f"未找到 id 为 {entry_id} 的表情包")
-            return
+            # 会话检查
+            if not session_manager.activate_chat(user_id, "addtag", matcher):
+                await matcher.finish("已有命令在处理中，请先 /cancel")
+                return
 
-        # 确认消息（纯文本，不发送图片）
-        current_tags_text = ", ".join(entry.tags) if entry.tags else "(无)"
-        current_tags_set = set(entry.tags)
-        new_tags_text = ", ".join([tag for tag in tags if tag not in current_tags_set])
-        await matcher.send(
-            f"当前 OCR 文本：{entry.text}\n"
-            f"当前标签：{current_tags_text}\n"
-            f"新增标签：{new_tags_text}\n"
-            "回复「确认」或「yes」确认添加，回复其他内容取消",
-        )
+            # 解析参数
+            text_part = args.extract_plain_text().strip()
+            parts = text_part.split(maxsplit=1)
+            if len(parts) < 2:
+                session_manager.deactivate_chat(user_id)
+                await matcher.finish("用法：/addtag <entry_id> <tag> [<tag>...]")
+                return
 
-        # 存入 state
-        matcher.state["entry_id"] = entry_id
-        matcher.state["tags"] = tags
+            try:
+                entry_id = int(parts[0])
+            except ValueError:
+                session_manager.deactivate_chat(user_id)
+                await matcher.finish("entry_id 必须为数字")
+                return
 
-        # 注册超时
-        selection_id = str(uuid.uuid4())
-        task = asyncio.create_task(
-            timeout_session(
-                bot,
-                event,
-                user_id,
-                selection_id,
-                "标签添加已取消（超时）",
-            ),
-        )
-        session_manager.create_selection(user_id, selection_id, task)
-        session_manager.reset_current_task(user_id)
+            # 解析标签，过滤空串
+            tags = [tag.strip() for tag in parts[1].split() if tag.strip()]
 
-    except asyncio.CancelledError:
-        raise FinishedException
+            # 校验 entry 存在
+            store = get_metadata_store()
+            entry = store.get_entry(entry_id)
+            if entry is None:
+                session_manager.deactivate_chat(user_id)
+                await matcher.finish(f"未找到 id 为 {entry_id} 的表情包")
+                return
+
+            # 确认消息（纯文本，不发送原图）
+            current_tags_text = ", ".join(entry.tags) if entry.tags else "(无)"
+            current_tags_set = set(entry.tags)
+            new_tags_text = ", ".join(
+                [tag for tag in tags if tag not in current_tags_set]
+            )
+            await matcher.send(
+                f"当前 OCR 文本：{entry.text}\n"
+                f"当前标签：{current_tags_text}\n"
+                f"新增标签：{new_tags_text}\n"
+                "回复「确认」或「yes」确认添加，回复其他内容取消",
+            )
+
+            # 存入 state
+            matcher.state["entry_id"] = entry_id
+            matcher.state["tags"] = tags
+
+            # 注册超时
+            selection_id = str(uuid.uuid4())
+            task = asyncio.create_task(
+                timeout_session(
+                    bot,
+                    event,
+                    user_id,
+                    selection_id,
+                    "标签添加已取消（超时）",
+                ),
+            )
+            session_manager.create_selection(user_id, selection_id, task)
+            session_manager.reset_current_task(user_id)
+
+        except asyncio.CancelledError:
+            raise FinishedException
 
 
 @addtag_cmd.got("confirm")
@@ -140,61 +143,64 @@ async def got_confirm(
         confirm_msg: got("confirm") 接收到的消息。
     """
     user_id = event.get_user_id()
+    request_id = generate_request_id()
+    with set_request_id(request_id):
+        with session_manager.handler_context(user_id, matcher):
+            try:
+                text = event.get_plaintext().strip()
 
-    with session_manager.handler_context(user_id, matcher):
-        try:
-            text = event.get_plaintext().strip()
+                # 旁路拦截 /help 和 /cancel
+                if await got_intercept_bypass(user_id, matcher, text, HELP_TEXT):
+                    return
 
-            # 旁路拦截 /help 和 /cancel
-            if await got_intercept_bypass(user_id, matcher, text, HELP_TEXT):
-                return
+                if text.strip().lower() in ("确认", "yes", "y"):
+                    session_manager.remove_selection(user_id)
+                    entry_id = matcher.state["entry_id"]
+                    tags = list(matcher.state["tags"])
 
-            if text.strip().lower() in ("确认", "yes", "y"):
-                session_manager.remove_selection(user_id)
-                entry_id = matcher.state["entry_id"]
-                tags = list(matcher.state["tags"])
-
-                try:
-                    result = await asyncio.wait_for(
-                        get_index_manager().add_tags(entry_id, tags),
-                        timeout=get_index_manager().add_user_timeout,
-                    )
-                except asyncio.TimeoutError:
-                    await matcher.finish("添加处理超时，请稍后再试")
-                except IndexAddCancelledError:
-                    await matcher.finish("服务正在关闭，请稍后再试")
-                except RefreshInProgressError:
-                    await matcher.finish("索引正在刷新，请稍后再试")
-                except ValueError:
-                    await matcher.finish(f"未找到 id 为 {entry_id} 的表情包")
+                    try:
+                        result = await asyncio.wait_for(
+                            get_index_manager().add_tags(entry_id, tags),
+                            timeout=get_index_manager().add_user_timeout,
+                        )
+                    except asyncio.TimeoutError:
+                        await matcher.finish("添加处理超时，请稍后再试")
+                    except IndexAddCancelledError:
+                        await matcher.finish("服务正在关闭，请稍后再试")
+                    except RefreshInProgressError:
+                        await matcher.finish("索引正在刷新，请稍后再试")
+                    except ValueError:
+                        await matcher.finish(f"未找到 id 为 {entry_id} 的表情包")
+                    else:
+                        session_manager.deactivate_chat(user_id)
+                        added_text = (
+                            ", ".join(result.added_tags) if result.added_tags else "无"
+                        )
+                        all_text = (
+                            ", ".join(result.all_tags) if result.all_tags else "无"
+                        )
+                        await matcher.finish(
+                            f"标签已添加 ✅\n"
+                            f"本次新增：{added_text}\n"
+                            f"全部标签：{all_text}",
+                        )
+                        return
                 else:
                     session_manager.deactivate_chat(user_id)
-                    added_text = (
-                        ", ".join(result.added_tags) if result.added_tags else "无"
-                    )
-                    all_text = ", ".join(result.all_tags) if result.all_tags else "无"
-                    await matcher.finish(
-                        f"标签已添加 ✅\n"
-                        f"本次新增：{added_text}\n"
-                        f"全部标签：{all_text}",
-                    )
-                    return
-            else:
+                    await matcher.finish("已取消")
+
+                # 异常统一清理
                 session_manager.deactivate_chat(user_id)
-                await matcher.finish("已取消")
 
-            # 异常统一清理
-            session_manager.deactivate_chat(user_id)
-
-        except FinishedException:
-            session_manager.deactivate_chat(user_id)
-            raise
-        except RejectedException:
-            raise
-        except asyncio.CancelledError:
-            session_manager.deactivate_chat(user_id)
-            raise FinishedException
-        except Exception:
-            logger.exception("用户 %s 的 /addtag 处理异常", user_id)
-            session_manager.deactivate_chat(user_id)
-            raise
+            except FinishedException:
+                session_manager.deactivate_chat(user_id)
+                raise
+            except RejectedException:
+                raise
+            except asyncio.CancelledError:
+                session_manager.deactivate_chat(user_id)
+                raise FinishedException
+            except Exception:
+                logger.exception("用户 %s 的 /addtag 处理异常", user_id)
+                session_manager.deactivate_chat(user_id)
+                raise

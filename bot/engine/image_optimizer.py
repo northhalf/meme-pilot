@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from bot.log_context import timed
+
 from PIL import Image
 
 logger = logging.getLogger(__name__)
@@ -109,32 +111,41 @@ class ImageOptimizer:
 
         suffix = path.suffix.lower()
 
-        # 优先级 1：.webp 源
-        if suffix == ".webp":
-            return await self._optimize_webp_source(path)
+        async with timed(logger, "图片优化"):
+            logger.debug("优化图片: %s", path.name)
 
-        # 优先级 2：开关开 + 可转换格式 -> 强制转 WebP
-        if self._should_convert_to_webp and suffix in self.CONVERTIBLE_TO_WEBP:
-            return await self._convert_to_webp_branch(path)
+            # 优先级 1：.webp 源
+            if suffix == ".webp":
+                result = await self._optimize_webp_source(path)
 
-        # 优先级 3：BMP 跳过
-        if suffix in self.PASS_THROUGH:
-            size = path.stat().st_size
-            logger.debug("跳过压缩: %s (节省 0 字节)", path.name)
-            return OptimizeResult(
-                original_size=size,
-                optimized_size=size,
-                saved=0,
-                skipped=True,
-                output_path=str(path),
+            # 优先级 2：开关开 + 可转换格式 -> 强制转 WebP
+            elif self._should_convert_to_webp and suffix in self.CONVERTIBLE_TO_WEBP:
+                result = await self._convert_to_webp_branch(path)
+
+            # 优先级 3：BMP 跳过
+            elif suffix in self.PASS_THROUGH:
+                size = path.stat().st_size
+                logger.debug("跳过压缩: %s (节省 0 字节)", path.name)
+                result = OptimizeResult(
+                    original_size=size,
+                    optimized_size=size,
+                    saved=0,
+                    skipped=True,
+                    output_path=str(path),
+                )
+
+            # 不支持的格式
+            elif suffix not in self.COMPRESSIBLE:
+                raise ValueError(f"不支持的图片格式: {suffix}")
+
+            # 优先级 3：同格式压缩
+            else:
+                result = await self._compress_same_format(path, suffix)
+
+            logger.info(
+                "图片优化完成: %s -> %s", path.name, Path(result.output_path).name
             )
-
-        # 不支持的格式
-        if suffix not in self.COMPRESSIBLE:
-            raise ValueError(f"不支持的图片格式: {suffix}")
-
-        # 优先级 3：同格式压缩
-        return await self._compress_same_format(path, suffix)
+            return result
 
     async def _optimize_webp_source(self, path: Path) -> OptimizeResult:
         """优先级 1：压缩 .webp 源，变小才覆盖，不改名。
@@ -152,7 +163,9 @@ class ImageOptimizer:
             RuntimeError: 压缩失败。
         """
         compress_fn = (
-            self._compress_webp_lossy if self._should_convert_to_webp else self._compress_webp
+            self._compress_webp_lossy
+            if self._should_convert_to_webp
+            else self._compress_webp
         )
         async with self._semaphore:
             original_size = path.stat().st_size
@@ -197,9 +210,7 @@ class ImageOptimizer:
         async with self._semaphore:
             original_size = path.stat().st_size
             try:
-                new_path = await asyncio.to_thread(
-                    self._convert_image_to_webp, path
-                )
+                new_path = await asyncio.to_thread(self._convert_image_to_webp, path)
             except (ValueError, RuntimeError):
                 raise
             except Exception as exc:

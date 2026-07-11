@@ -16,6 +16,7 @@ import os
 import openai
 from openai import AsyncOpenAI
 
+from bot.log_context import timed
 from .retry_config import api_retry
 
 logger = logging.getLogger(__name__)
@@ -92,34 +93,35 @@ class OpenAIEmbeddingService:
             ValueError: 文本为空。
             RuntimeError: API 调用失败或返回为空。
         """
-        text = text.strip()
-        if not text:
-            raise ValueError("待向量化文本不能为空")
+        async with timed(logger, "OpenAI Embedding"):
+            text = text.strip()
+            if not text:
+                raise ValueError("待向量化文本不能为空")
 
-        async with self._semaphore:
-            logger.debug(
-                "调用 Embedding API: model=%s, text_len=%d",
-                self._model,
-                len(text),
-            )
-            try:
-                response = await self._client.embeddings.create(
-                    model=self._model, input=text, dimensions=1024
+            async with self._semaphore:
+                logger.debug(
+                    "调用 Embedding API: model=%s, text_len=%d",
+                    self._model,
+                    len(text),
                 )
-            except openai.APIError:
-                # 让 tenacity 重试可重试的 OpenAI API 异常
-                raise
-            except Exception as exc:
-                logger.info("Embedding API 调用失败: %s", exc)
-                raise RuntimeError(f"Embedding API 调用失败: {exc}") from exc
+                try:
+                    response = await self._client.embeddings.create(
+                        model=self._model, input=text, dimensions=1024
+                    )
+                except openai.APIError:
+                    # 让 tenacity 重试可重试的 OpenAI API 异常
+                    raise
+                except Exception as exc:
+                    logger.info("Embedding API 调用失败: %s", exc)
+                    raise RuntimeError(f"Embedding API 调用失败: {exc}") from exc
 
-            if not response.data:
-                logger.info("Embedding API 返回为空")
-                raise RuntimeError("Embedding API 返回为空")
+                if not response.data:
+                    logger.info("Embedding API 返回为空")
+                    raise RuntimeError("Embedding API 返回为空")
 
-            embedding = response.data[0].embedding
-            logger.debug("Embedding 完成: %d 维", len(embedding))
-            return embedding
+                embedding = response.data[0].embedding
+                logger.debug("Embedding 完成: %d 维", len(embedding))
+                return embedding
 
     async def close(self) -> None:
         """释放 AsyncOpenAI HTTP 客户端会话。"""

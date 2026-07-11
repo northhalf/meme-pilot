@@ -21,6 +21,7 @@ from bot.engine.index_manager import IndexAddCancelledError, RefreshInProgressEr
 from bot.plugins._help_text import HELP_TEXT
 from bot.plugins._search_utils import got_intercept_bypass
 from bot.session import session_manager, timeout_session
+from bot.log_context import generate_request_id, set_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -55,84 +56,88 @@ async def handle_delete(
         args: 命令参数（CommandArg 注入），包含待删除的 id 列表。
     """
     user_id = event.get_user_id()
-    logger.info("用户 %s 调用 /del", user_id)
+    request_id = generate_request_id()
+    with set_request_id(request_id):
+        logger.info("用户 %s 调用 /del", user_id)
 
-    try:
-        # 授权校验
-        if not is_authorized(user_id):
-            log_unauthorized(user_id, "del")
-            await matcher.finish(None)
-            return
-
-        # 仅限私聊
-        if event.message_type != "private":
-            await matcher.finish("此命令仅限私聊使用")
-            return
-
-        # 会话检查
-        if not session_manager.activate_chat(user_id, "del", matcher):
-            await matcher.finish("已有命令在处理中，请先 /cancel")
-            return
-
-        # 解析参数
-        text_part = args.extract_plain_text().strip()
-        tokens = text_part.split()
-        if not tokens:
-            session_manager.deactivate_chat(user_id)
-            await matcher.finish("用法：/del <id>...")
-            return
-
-        entry_ids: list[int] = []
-        for token in tokens:
-            try:
-                entry_ids.append(int(token))
-            except ValueError:
-                session_manager.deactivate_chat(user_id)
-                await matcher.finish("id 必须为数字")
+        try:
+            # 授权校验
+            if not is_authorized(user_id):
+                log_unauthorized(user_id, "del")
+                await matcher.finish(None)
                 return
 
-        # 去重，保持顺序
-        entry_ids = list(dict.fromkeys(entry_ids))
+            # 仅限私聊
+            if event.message_type != "private":
+                await matcher.finish("此命令仅限私聊使用")
+                return
 
-        # 查询每个 id
-        store = get_metadata_store()
-        found: list[tuple[int, str]] = []
-        not_found_ids: list[int] = []
-        for eid in entry_ids:
-            entry = store.get_entry(eid)
-            if entry is None:
-                not_found_ids.append(eid)
-            else:
-                found.append((eid, entry.text))
+            # 会话检查
+            if not session_manager.activate_chat(user_id, "del", matcher):
+                await matcher.finish("已有命令在处理中，请先 /cancel")
+                return
 
-        if not found:
-            session_manager.deactivate_chat(user_id)
-            await matcher.finish("未找到任何表情包")
-            return
+            # 解析参数
+            text_part = args.extract_plain_text().strip()
+            tokens = text_part.split()
+            if not tokens:
+                session_manager.deactivate_chat(user_id)
+                await matcher.finish("用法：/del <id>...")
+                return
 
-        # 构建摘要确认消息
-        lines = ["确认删除以下表情包？回复「确认」执行删除，回复其他内容取消。"]
-        for eid, text in found:
-            lines.append(f"{eid}, {_truncate_text(text)}")
-        if not_found_ids:
-            lines.append(f"未找到 id：{', '.join(str(i) for i in not_found_ids)}")
+            entry_ids: list[int] = []
+            for token in tokens:
+                try:
+                    entry_ids.append(int(token))
+                except ValueError:
+                    session_manager.deactivate_chat(user_id)
+                    await matcher.finish("id 必须为数字")
+                    return
 
-        await matcher.send("\n".join(lines))
+            # 去重，保持顺序
+            entry_ids = list(dict.fromkeys(entry_ids))
 
-        # 存入 state
-        matcher.state["entry_ids"] = [eid for eid, _ in found]
-        matcher.state["not_found_ids"] = not_found_ids
+            # 查询每个 id
+            store = get_metadata_store()
+            found: list[tuple[int, str]] = []
+            not_found_ids: list[int] = []
+            for eid in entry_ids:
+                entry = store.get_entry(eid)
+                if entry is None:
+                    not_found_ids.append(eid)
+                else:
+                    found.append((eid, entry.text))
 
-        # 注册超时
-        selection_id = str(uuid.uuid4())
-        task = asyncio.create_task(
-            timeout_session(bot, event, user_id, selection_id, "删除已取消（超时）"),
-        )
-        session_manager.create_selection(user_id, selection_id, task)
-        session_manager.reset_current_task(user_id)
+            if not found:
+                session_manager.deactivate_chat(user_id)
+                await matcher.finish("未找到任何表情包")
+                return
 
-    except asyncio.CancelledError:
-        raise FinishedException
+            # 构建摘要确认消息
+            lines = ["确认删除以下表情包？回复「确认」执行删除，回复其他内容取消。"]
+            for eid, text in found:
+                lines.append(f"{eid}, {_truncate_text(text)}")
+            if not_found_ids:
+                lines.append(f"未找到 id：{', '.join(str(i) for i in not_found_ids)}")
+
+            await matcher.send("\n".join(lines))
+
+            # 存入 state
+            matcher.state["entry_ids"] = [eid for eid, _ in found]
+            matcher.state["not_found_ids"] = not_found_ids
+
+            # 注册超时
+            selection_id = str(uuid.uuid4())
+            task = asyncio.create_task(
+                timeout_session(
+                    bot, event, user_id, selection_id, "删除已取消（超时）"
+                ),
+            )
+            session_manager.create_selection(user_id, selection_id, task)
+            session_manager.reset_current_task(user_id)
+
+        except asyncio.CancelledError:
+            raise FinishedException
 
 
 @delete_cmd.got("confirm")
@@ -151,67 +156,70 @@ async def got_confirm(
         confirm_msg: got("confirm") 接收到的消息。
     """
     user_id = event.get_user_id()
+    request_id = generate_request_id()
+    with set_request_id(request_id):
 
-    with session_manager.handler_context(user_id, matcher):
-        try:
-            text = event.get_plaintext().strip()
+        with session_manager.handler_context(user_id, matcher):
+            try:
+                text = event.get_plaintext().strip()
 
-            # 旁路拦截 /help 和 /cancel
-            if await got_intercept_bypass(user_id, matcher, text, HELP_TEXT):
-                return
+                # 旁路拦截 /help 和 /cancel
+                if await got_intercept_bypass(user_id, matcher, text, HELP_TEXT):
+                    return
 
-            if text.strip().lower() in ("确认", "yes", "y"):
-                session_manager.remove_selection(user_id)
+                if text.strip().lower() in ("确认", "yes", "y"):
+                    session_manager.remove_selection(user_id)
 
-                try:
-                    result = await asyncio.wait_for(
-                        get_index_manager().delete(matcher.state["entry_ids"]),
-                        timeout=get_index_manager().add_user_timeout,
-                    )
-                except asyncio.TimeoutError:
-                    await matcher.finish("删除处理超时，请稍后再试")
-                except IndexAddCancelledError:
-                    await matcher.finish("服务正在关闭，请稍后再试")
-                except RefreshInProgressError:
-                    await matcher.finish("索引正在刷新，请稍后再试")
-                except Exception:
-                    logger.exception("用户 %s 的 /del 删除异常", user_id)
-                    await matcher.finish("删除过程中发生异常，请稍后重试")
+                    try:
+                        result = await asyncio.wait_for(
+                            get_index_manager().delete(matcher.state["entry_ids"]),
+                            timeout=get_index_manager().add_user_timeout,
+                        )
+                    except asyncio.TimeoutError:
+                        await matcher.finish("删除处理超时，请稍后再试")
+                    except IndexAddCancelledError:
+                        await matcher.finish("服务正在关闭，请稍后再试")
+                    except RefreshInProgressError:
+                        await matcher.finish("索引正在刷新，请稍后再试")
+                    except Exception:
+                        logger.exception("用户 %s 的 /del 删除异常", user_id)
+                        await matcher.finish("删除过程中发生异常，请稍后重试")
+                    else:
+                        session_manager.deactivate_chat(user_id)
+                        lines = ["删除结果如下:"]
+                        if result.deleted_ids:
+                            lines.append(
+                                "成功：" + "、".join(str(i) for i in result.deleted_ids)
+                            )
+                        if result.not_found_ids:
+                            lines.append(
+                                "未找到："
+                                + "、".join(str(i) for i in result.not_found_ids)
+                            )
+                        if result.failed_ids:
+                            failed_parts = [
+                                f"id:{eid} 原因:『{reason}』"
+                                for eid, reason in result.failed_ids
+                            ]
+                            lines.append("失败：" + "、".join(failed_parts))
+                        await matcher.finish("\n".join(lines))
+                        return
                 else:
                     session_manager.deactivate_chat(user_id)
-                    lines = ["删除结果如下:"]
-                    if result.deleted_ids:
-                        lines.append(
-                            "成功：" + "、".join(str(i) for i in result.deleted_ids)
-                        )
-                    if result.not_found_ids:
-                        lines.append(
-                            "未找到：" + "、".join(str(i) for i in result.not_found_ids)
-                        )
-                    if result.failed_ids:
-                        failed_parts = [
-                            f"id:{eid} 原因:『{reason}』"
-                            for eid, reason in result.failed_ids
-                        ]
-                        lines.append("失败：" + "、".join(failed_parts))
-                    await matcher.finish("\n".join(lines))
-                    return
-            else:
+                    await matcher.finish("已取消删除")
+
+                # 异常统一清理
                 session_manager.deactivate_chat(user_id)
-                await matcher.finish("已取消删除")
 
-            # 异常统一清理
-            session_manager.deactivate_chat(user_id)
-
-        except FinishedException:
-            session_manager.deactivate_chat(user_id)
-            raise
-        except RejectedException:
-            raise
-        except asyncio.CancelledError:
-            session_manager.deactivate_chat(user_id)
-            raise FinishedException
-        except Exception:
-            logger.exception("用户 %s 的 /del 处理异常", user_id)
-            session_manager.deactivate_chat(user_id)
-            raise
+            except FinishedException:
+                session_manager.deactivate_chat(user_id)
+                raise
+            except RejectedException:
+                raise
+            except asyncio.CancelledError:
+                session_manager.deactivate_chat(user_id)
+                raise FinishedException
+            except Exception:
+                logger.exception("用户 %s 的 /del 处理异常", user_id)
+                session_manager.deactivate_chat(user_id)
+                raise

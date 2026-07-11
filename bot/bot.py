@@ -28,6 +28,7 @@ from bot.config import (
     read_int_env,
     read_ocr_provider,
 )
+from bot.log_context import set_request_id
 from bot.engine import (
     AIMatcher,
     ImageOptimizer,
@@ -55,21 +56,13 @@ async def _background_sync(index_manager: IndexManager) -> None:
     Args:
         index_manager: 已加载索引的 IndexManager 实例。
     """
-    logger.info("开始后台索引同步...")
-    try:
-        result = await index_manager.refresh()
-        logger.info(
-            "后台索引同步完成: 新增=%d, 删除=%d, 去重=%d, 无文字移走=%d, 失败=%d",
-            result.added,
-            result.deleted,
-            result.deduped,
-            result.no_text_moved,
-            len(result.failed),
-        )
-        if result.failed:
-            logger.warning("同步失败文件（前 10 个）: %s", result.failed[:10])
-    except Exception:
-        logger.exception("后台索引同步失败，Bot 继续运行（用已有索引）")
+    with set_request_id("background"):
+        try:
+            result = await index_manager.refresh()
+            if result.failed:
+                logger.warning("同步失败文件（前 10 个）: %s", result.failed[:10])
+        except Exception:
+            logger.exception("后台索引同步失败，Bot 继续运行（用已有索引）")
 
 
 async def _on_startup() -> None:
@@ -97,9 +90,14 @@ async def _on_startup() -> None:
         read_embedding_provider(),
     )
     rerank_service = RerankService(concurrency=read_int_env("RERANK_CONCURRENCY"))
+    logger.info("Rerank 服务已初始化")
     image_optimizer = ImageOptimizer(
         concurrency=read_int_env("COMPRESS_CONCURRENCY"),
         should_convert_to_webp=read_convert_to_webp(),
+    )
+    logger.info(
+        "图片优化器已初始化: convert_to_webp=%s",
+        read_convert_to_webp(),
     )
 
     # 3. 创建 MetadataStore 与 VectorStore
@@ -136,7 +134,8 @@ async def _on_startup() -> None:
         semantic_searcher=semantic_searcher,
         combined_searcher=combined_searcher,
     )
-    await index_manager.load()
+    with set_request_id("background"):
+        await index_manager.load()
 
     # 6. 注册到 app_state（Bot 立即可用）
     init_app(

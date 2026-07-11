@@ -10,6 +10,7 @@ from nonebot.adapters.onebot.v11 import Bot, MessageEvent
 from nonebot.rule import to_me
 
 from bot.auth import is_authorized, log_unauthorized
+from bot.log_context import generate_request_id, set_request_id
 from bot.plugins._help_text import HELP_TEXT
 
 logger = logging.getLogger(__name__)
@@ -28,10 +29,12 @@ async def handle_help(bot: Bot, event: MessageEvent) -> None:
         event: 消息事件。
     """
     user_id = event.get_user_id()
-    logger.info("用户 %s 调用 /help", user_id)
+    request_id = generate_request_id()
+    with set_request_id(request_id):
+        logger.info("用户 %s 调用 /help", user_id)
 
-    if not is_authorized(user_id):
-        log_unauthorized(user_id, "help")
-        return
+        if not is_authorized(user_id):
+            log_unauthorized(user_id, "help")
+            return
 
-    await help_cmd.finish(HELP_TEXT)
+        await help_cmd.finish(HELP_TEXT)

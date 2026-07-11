@@ -19,6 +19,8 @@ import sqlite3
 import threading
 from dataclasses import dataclass, field, replace
 
+from bot.log_context import timed
+
 logger = logging.getLogger(__name__)
 
 _UNSET = object()  # 哨兵值，区分「不修改字段」与显式的 None
@@ -183,7 +185,9 @@ class MetadataStore:
             id → MemeEntry 映射（value 为缓存内 frozen 引用，不可修改）。
         """
         with self._lock:
-            return self._entries.copy()
+            entries = self._entries.copy()
+        logger.debug("返回全部 %d 条元数据", len(entries))
+        return entries
 
     def get_entry(self, entry_id: int) -> MemeEntry | None:
         """按 id 查询单条记录。
@@ -197,7 +201,10 @@ class MetadataStore:
             对应 MemeEntry（缓存内 frozen 引用，不可修改）；id 不存在时返回 None。
         """
         with self._lock:
-            return self._entries.get(entry_id)
+            entry = self._entries.get(entry_id)
+            if entry is None:
+                logger.debug("未找到元数据: %d", entry_id)
+            return entry
 
     def get_by_filename(self, image_path: str) -> MemeEntry | None:
         """按图片路径查询。
@@ -215,6 +222,7 @@ class MetadataStore:
                 (image_path,),
             ).fetchone()
             if row is None:
+                logger.debug("未找到元数据: %s", image_path)
                 return None
         return self.get_entry(row["id"])
 
@@ -286,29 +294,31 @@ class MetadataStore:
         Raises:
             DuplicateEntryError: text 或 image_path 撞 UNIQUE 约束。
         """
-        with self._lock:
-            conn = self._require_conn()
-            entry_id = int(conn.execute(_FIND_NEXT_ID_SQL).fetchone()["next_id"])
-            try:
-                conn.execute(
-                    "INSERT INTO meme (id, image_path, text, speaker) VALUES (?, ?, ?, ?)",
-                    (entry_id, image_path, text, speaker),
+        with timed(logger, "MetadataStore 添加"):
+            with self._lock:
+                conn = self._require_conn()
+                entry_id = int(conn.execute(_FIND_NEXT_ID_SQL).fetchone()["next_id"])
+                try:
+                    conn.execute(
+                        "INSERT INTO meme (id, image_path, text, speaker) VALUES (?, ?, ?, ?)",
+                        (entry_id, image_path, text, speaker),
+                    )
+                except sqlite3.IntegrityError as exc:
+                    conn.rollback()
+                    conflicts = self._detect_conflicts(image_path=image_path, text=text)
+                    raise DuplicateEntryError(conflicts) from exc
+                self._write_tags(entry_id, tags)
+                conn.commit()
+                self._text_to_id[text] = entry_id
+                self._entries[entry_id] = MemeEntry(
+                    id=entry_id,
+                    image_path=image_path,
+                    text=text,
+                    speaker=speaker,
+                    tags=sorted(set(tags or [])),
                 )
-            except sqlite3.IntegrityError as exc:
-                conn.rollback()
-                conflicts = self._detect_conflicts(image_path=image_path, text=text)
-                raise DuplicateEntryError(conflicts) from exc
-            self._write_tags(entry_id, tags)
-            conn.commit()
-            self._text_to_id[text] = entry_id
-            self._entries[entry_id] = MemeEntry(
-                id=entry_id,
-                image_path=image_path,
-                text=text,
-                speaker=speaker,
-                tags=sorted(set(tags or [])),
-            )
-        return entry_id
+            logger.debug("添加元数据: id=%d, image_path=%s", entry_id, image_path)
+            return entry_id
 
     def add_with_id(
         self,
@@ -356,6 +366,7 @@ class MetadataStore:
                 speaker=speaker,
                 tags=sorted(set(tags or [])),
             )
+        logger.debug("添加元数据: id=%d, image_path=%s", entry_id, image_path)
         return entry_id
 
     def update(
@@ -385,67 +396,77 @@ class MetadataStore:
         Returns:
             True 表示找到并更新，False 表示 id 不存在。
         """
-        with self._lock:
-            conn = self._require_conn()
-            row = conn.execute(
-                "SELECT id, text FROM meme WHERE id = ?", (entry_id,)
-            ).fetchone()
-            if row is None:
-                return False
+        with timed(logger, "MetadataStore 更新"):
+            with self._lock:
+                conn = self._require_conn()
+                row = conn.execute(
+                    "SELECT id, text FROM meme WHERE id = ?", (entry_id,)
+                ).fetchone()
+                if row is None:
+                    logger.debug("未找到元数据: %d", entry_id)
+                    return False
 
-            sets: list[str] = []
-            params: list[object] = []
-            if image_path is not _UNSET:
-                sets.append("image_path = ?")
-                params.append(image_path)
-            if text is not _UNSET:
-                sets.append("text = ?")
-                params.append(text)
-            if speaker is not _UNSET:
-                sets.append("speaker = ?")
-                params.append(speaker)
+                sets: list[str] = []
+                params: list[object] = []
+                if image_path is not _UNSET:
+                    sets.append("image_path = ?")
+                    params.append(image_path)
+                if text is not _UNSET:
+                    sets.append("text = ?")
+                    params.append(text)
+                if speaker is not _UNSET:
+                    sets.append("speaker = ?")
+                    params.append(speaker)
 
-            if sets:
-                params.append(entry_id)
-                try:
-                    conn.execute(
-                        f"UPDATE meme SET {', '.join(sets)} WHERE id = ?", params
+                if sets:
+                    params.append(entry_id)
+                    try:
+                        conn.execute(
+                            f"UPDATE meme SET {', '.join(sets)} WHERE id = ?", params
+                        )
+                    except sqlite3.IntegrityError as exc:
+                        conn.rollback()
+                        conflicts = self._detect_conflicts(
+                            image_path=image_path if image_path is not _UNSET else None,
+                            text=text if text is not _UNSET else None,
+                            exclude_id=entry_id,
+                        )
+                        raise DuplicateEntryError(conflicts) from exc
+
+                if tags is not None:
+                    conn.execute("DELETE FROM meme_tag WHERE meme_id = ?", (entry_id,))
+                    self._write_tags(entry_id, tags)
+
+                conn.commit()
+
+                # 维护 _text_to_id
+                old_text = row["text"]
+                new_text: str = text if text is not _UNSET else old_text  # type: ignore[assignment]
+                if (
+                    old_text in self._text_to_id
+                    and self._text_to_id[old_text] == entry_id
+                ):
+                    del self._text_to_id[old_text]
+                self._text_to_id[new_text] = entry_id
+
+                # 维护 _entries（frozen，用 replace 生成新对象替换缓存槽位）
+                old_entry = self._entries.get(entry_id)
+                if old_entry is not None:
+                    self._entries[entry_id] = replace(
+                        old_entry,
+                        image_path=(
+                            image_path
+                            if image_path is not _UNSET
+                            else old_entry.image_path
+                        ),
+                        text=new_text,
+                        speaker=(
+                            speaker if speaker is not _UNSET else old_entry.speaker
+                        ),
+                        tags=sorted(set(tags)) if tags is not None else old_entry.tags,
                     )
-                except sqlite3.IntegrityError as exc:
-                    conn.rollback()
-                    conflicts = self._detect_conflicts(
-                        image_path=image_path if image_path is not _UNSET else None,
-                        text=text if text is not _UNSET else None,
-                        exclude_id=entry_id,
-                    )
-                    raise DuplicateEntryError(conflicts) from exc
-
-            if tags is not None:
-                conn.execute("DELETE FROM meme_tag WHERE meme_id = ?", (entry_id,))
-                self._write_tags(entry_id, tags)
-
-            conn.commit()
-
-            # 维护 _text_to_id
-            old_text = row["text"]
-            new_text: str = text if text is not _UNSET else old_text  # type: ignore[assignment]
-            if old_text in self._text_to_id and self._text_to_id[old_text] == entry_id:
-                del self._text_to_id[old_text]
-            self._text_to_id[new_text] = entry_id
-
-            # 维护 _entries（frozen，用 replace 生成新对象替换缓存槽位）
-            old_entry = self._entries.get(entry_id)
-            if old_entry is not None:
-                self._entries[entry_id] = replace(
-                    old_entry,
-                    image_path=(
-                        image_path if image_path is not _UNSET else old_entry.image_path
-                    ),
-                    text=new_text,
-                    speaker=(speaker if speaker is not _UNSET else old_entry.speaker),
-                    tags=sorted(set(tags)) if tags is not None else old_entry.tags,
-                )
-        return True
+            logger.debug("更新元数据: %d", entry_id)
+            return True
 
     def remove(self, entry_id: int) -> bool:
         """删除单条记录；CASCADE 删 meme_tag，同步 _text_to_id。
@@ -456,20 +477,23 @@ class MetadataStore:
         Returns:
             True 表示删除成功，False 表示 id 不存在。
         """
-        with self._lock:
-            conn = self._require_conn()
-            row = conn.execute(
-                "SELECT text FROM meme WHERE id = ?", (entry_id,)
-            ).fetchone()
-            if row is None:
-                return False
-            conn.execute("DELETE FROM meme WHERE id = ?", (entry_id,))
-            conn.commit()
-            text = row["text"]
-            if self._text_to_id.get(text) == entry_id:
-                del self._text_to_id[text]
-            self._entries.pop(entry_id, None)
-        return True
+        with timed(logger, "MetadataStore 删除"):
+            with self._lock:
+                conn = self._require_conn()
+                row = conn.execute(
+                    "SELECT text FROM meme WHERE id = ?", (entry_id,)
+                ).fetchone()
+                if row is None:
+                    logger.debug("未找到元数据: %d", entry_id)
+                    return False
+                conn.execute("DELETE FROM meme WHERE id = ?", (entry_id,))
+                conn.commit()
+                text = row["text"]
+                if self._text_to_id.get(text) == entry_id:
+                    del self._text_to_id[text]
+                self._entries.pop(entry_id, None)
+            logger.debug("删除元数据: %d", entry_id)
+            return True
 
     # ------------------------------------------------------------------
     # 内部

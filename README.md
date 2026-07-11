@@ -254,6 +254,16 @@ docker compose logs -f bot
 # 文件日志级别为 DEBUG，控制台为 INFO
 ```
 
+#### 日志格式与追踪
+
+- 所有 `bot.*` 模块的日志统一输出到 `log/bot.log`（DEBUG 及以上）和容器标准输出（INFO 及以上）。
+- 每条用户命令会生成一个 8 位短 `request_id`，以 `[req:xxxxxxx]` 前缀贯穿插件、engine、OCR、Embedding、Store 等全链路日志，方便定位一次请求的完整调用路径。
+- 关键操作（OCR、Embedding、Rerank、搜索、索引刷新、图片优化、Store 批量写入等）会自动记录耗时：`<操作> 完成/失败，耗时 x.xx ms`，默认写入 DEBUG 级别日志。
+- 如需调整某个模块的日志级别，可在 `bot.py` 启动后通过标准库 `logging` 设置，例如：
+  ```python
+  logging.getLogger("bot.engine.index_manager").setLevel(logging.WARNING)
+  ```
+
 > 💡 本地构建需要代理时，执行 `cp docker-compose.override.yml.example docker-compose.override.yml`（docker compose 会自动加载该文件），按需修改其中的代理地址；不需要代理时删除该文件即可。
 
 首次启动会自动扫描 `memes/` 目录中的图片，按 `OCR_PROVIDER` 配置（默认 `rapidocr`，本地 ONNX 推理）提取文字并建立索引。索引同步在后台执行，Bot 启动后立即可用；同步期间搜索命令会提示"索引更新较慢，请稍后再试"。
@@ -396,6 +406,7 @@ meme-pilot/
     ├── auth.py              # 授权校验模块
     ├── session.py           # 共享会话管理（/add、/search 防重复提交）
     ├── logging_config.py    # 日志滚动配置
+    ├── log_context.py       # request_id 传播与耗时统计工具
     ├── plugins/
     │   ├── meme_search.py       # /search 命令
     │   ├── meme_query.py        # /query 命令

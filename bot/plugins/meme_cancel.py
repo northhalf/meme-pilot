@@ -12,6 +12,7 @@ from nonebot.matcher import Matcher
 from nonebot.rule import to_me
 
 from bot.auth import is_authorized, log_unauthorized
+from bot.log_context import generate_request_id, set_request_id
 from bot.session import session_manager
 
 logger = logging.getLogger(__name__)
@@ -32,14 +33,16 @@ async def handle_cancel(bot: Bot, event: MessageEvent, matcher: Matcher) -> None
         matcher: NoneBot2 Matcher 实例。
     """
     user_id = event.get_user_id()
-    logger.info("用户 %s 调用 /cancel", user_id)
+    request_id = generate_request_id()
+    with set_request_id(request_id):
+        logger.info("用户 %s 调用 /cancel", user_id)
 
-    # 授权校验：非授权用户静默忽略（仅记录日志，不回复提示）
-    if not is_authorized(user_id):
-        log_unauthorized(user_id, "cancel")
-        await matcher.finish(None)
-        return
+        # 授权校验：非授权用户静默忽略（仅记录日志，不回复提示）
+        if not is_authorized(user_id):
+            log_unauthorized(user_id, "cancel")
+            await matcher.finish(None)
+            return
 
-    succeed_cancel = await session_manager.execute_cancel(user_id)
-    if not succeed_cancel:
-        await matcher.finish("当前没有活跃的会话")
+        succeed_cancel = await session_manager.execute_cancel(user_id)
+        if not succeed_cancel:
+            await matcher.finish("当前没有活跃的会话")

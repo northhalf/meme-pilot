@@ -11,6 +11,8 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+from bot.log_context import RequestIdFilter
+
 
 def setup_logging(log_dir: str = "log") -> None:
     """配置 bot 日志滚动机制。
@@ -50,4 +52,6 @@ def setup_logging(log_dir: str = "log") -> None:
     bot_logger.setLevel(logging.DEBUG)
     bot_logger.addHandler(file_handler)
     bot_logger.addHandler(stream_handler)
+    # 注入 request_id 前缀 filter（只在顶层 bot logger 注册一次）
+    bot_logger.addFilter(RequestIdFilter())
     bot_logger.propagate = False

@@ -31,6 +31,7 @@ api
     ├── bot.md
     ├── config.md
     ├── logging_config.md
+    ├── log_context.md
     ├── auth.md
     ├── app_state.md
     ├── session.md
@@ -671,6 +672,37 @@ NoneBot2 应用入口，详见 `docs/api/bot/bot.md`。
 ```python
 def setup_logging(log_dir: str = "log") -> None
 ```
+
+### `docs/api/bot/log_context.md`
+
+```python
+def generate_request_id() -> str
+```
+
+```python
+@contextmanager
+def set_request_id(request_id: str | None) -> Generator[None, None, None]
+```
+
+```python
+class RequestIdFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool
+```
+
+```python
+class timed:
+    def __init__(
+        self,
+        logger: logging.Logger,
+        operation: str,
+        level: int = logging.DEBUG,
+    ) -> None
+```
+
+- `generate_request_id()`：生成 8 位 UUID hex 短请求 ID，用于单次用户请求的全链路追踪。
+- `set_request_id(request_id)`：上下文管理器，设置当前 `ContextVar` 的 request_id，退出时自动恢复。
+- `RequestIdFilter`：日志 `Filter`，把当前 request_id 以 `[req:xxx]` 前缀注入日志消息；应在顶层 `bot` logger 上注册一次，子 logger 通过继承获得，避免重复前缀。
+- `timed`：操作耗时统计工具，支持 `async with`、`with` 和装饰器三种用法；退出时按日志级别输出「操作名 完成/失败，耗时 x.xx ms」。
 
 ### `docs/api/bot/app_state.md`
 

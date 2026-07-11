@@ -2,6 +2,7 @@
 
 import logging
 
+from bot.log_context import timed
 from .protocols import MetadataStoreProvider, VectorQueryProvider
 from .types import SearchResult
 
@@ -36,24 +37,27 @@ class SemanticSearcher:
         Returns:
             与向量最相似的 SearchResult 列表；metadata 缺失的命中会被跳过。
         """
-        hits = await self.vector_store.query(query_vector, n_results=limit)
-        entries = self.metadata_store.get_all_entries()
-        results: list[SearchResult] = []
-        for hit in hits:
-            entry = entries.get(hit.entry_id)
-            if entry is None:
-                logger.warning(
-                    "召回 hit 的 metadata 缺失，跳过：entry_id=%s", hit.entry_id
+        async with timed(logger, "语义搜索"):
+            logger.debug("语义搜索入口: limit=%s", limit)
+            hits = await self.vector_store.query(query_vector, n_results=limit)
+            entries = self.metadata_store.get_all_entries()
+            results: list[SearchResult] = []
+            for hit in hits:
+                entry = entries.get(hit.entry_id)
+                if entry is None:
+                    logger.warning(
+                        "召回 hit 的 metadata 缺失，跳过：entry_id=%s", hit.entry_id
+                    )
+                    continue
+                results.append(
+                    SearchResult(
+                        entry_id=entry.id,
+                        image_path=entry.image_path,
+                        text=entry.text,
+                        similarity=hit.similarity,
+                        speaker=entry.speaker,
+                        tags=entry.tags,
+                    )
                 )
-                continue
-            results.append(
-                SearchResult(
-                    entry_id=entry.id,
-                    image_path=entry.image_path,
-                    text=entry.text,
-                    similarity=hit.similarity,
-                    speaker=entry.speaker,
-                    tags=entry.tags,
-                )
-            )
-        return results
+            logger.info("语义搜索返回 %d 个结果", len(results))
+            return results
