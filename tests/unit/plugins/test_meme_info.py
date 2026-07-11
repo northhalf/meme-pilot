@@ -17,6 +17,7 @@ _mock_cmd.handle.return_value = lambda fn: fn
 _mock_cmd.got.return_value = lambda fn: fn
 
 with patch("nonebot.on_command", return_value=_mock_cmd):
+    from nonebot.adapters.onebot.v11 import Message
     from bot.plugins import meme_info
     from bot.plugins.meme_info import handle_info
 
@@ -215,12 +216,17 @@ class TestHandleInfoDetail:
 
             matcher.finish.assert_awaited_once()
             reply = matcher.finish.call_args[0][0]
-            assert "id: 42" in reply
-            assert "文本：加班心累" in reply
-            assert "文件名：test.jpg" in reply
-            assert "大小：1.50 KiB" in reply
-            assert "说话人：小明" in reply
-            assert "标签：吐槽, 加班" in reply
+            assert isinstance(reply, Message)
+            assert reply[0].type == "image"
+            assert "file://" in reply[0].data["file"]
+            assert reply[1].type == "text"
+            text = reply[1].data["text"]
+            assert "id: 42" in text
+            assert "文本：加班心累" in text
+            assert "文件名：test.jpg" in text
+            assert "大小：1.50 KiB" in text
+            assert "说话人：小明" in text
+            assert "标签：吐槽, 加班" in text
 
     @pytest.mark.asyncio
     @patch("bot.plugins.meme_info.get_index_manager")

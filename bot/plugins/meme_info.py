@@ -11,7 +11,7 @@ from pathlib import Path
 import humanize
 import psutil
 from nonebot import on_command
-from nonebot.adapters.onebot.v11 import Bot, Message, MessageEvent
+from nonebot.adapters.onebot.v11 import Bot, Message, MessageEvent, MessageSegment
 from nonebot.exception import FinishedException
 from nonebot.matcher import Matcher
 from nonebot.params import CommandArg
@@ -29,16 +29,21 @@ logger = logging.getLogger(__name__)
 info_cmd = on_command("info", rule=to_me(), priority=5, block=True)
 
 
-def _build_detail_reply(entry: MemeEntry) -> str:
-    """组装 /info <id> 的详情回复。
+def _build_detail_message(entry: MemeEntry) -> Message | str:
+    """组装 /info <id> 的详情回复消息。
+
+    若表情包文件存在，则在消息最前面插入图片，随后跟随文本详情；
+    若文件不存在，则仅返回文本。
 
     Args:
         entry: 表情包元数据条目。
 
     Returns:
-        包含 id、文本、文件名、大小、说话人、标签的多行文本。
+        包含图片与文本的消息；文件不存在时返回纯文本。
     """
     image_path = Path(MEMES_DIR) / entry.image_path
+    file_exists = image_path.is_file()
+
     try:
         size_text = humanize.naturalsize(
             image_path.stat().st_size, binary=True, format="%.2f"
@@ -52,7 +57,7 @@ def _build_detail_reply(entry: MemeEntry) -> str:
     speaker_text = entry.speaker if entry.speaker else "无"
     tags_text = ", ".join(entry.tags) if entry.tags else "无"
 
-    return (
+    text = (
         f"id: {entry.id}\n"
         f"文本：{entry.text}\n"
         f"文件名：{entry.image_path}\n"
@@ -60,6 +65,15 @@ def _build_detail_reply(entry: MemeEntry) -> str:
         f"说话人：{speaker_text}\n"
         f"标签：{tags_text}"
     )
+
+    if file_exists:
+        return Message(
+            [
+                MessageSegment.image("file://" + str(image_path.resolve())),
+                MessageSegment.text("\n" + text),
+            ]
+        )
+    return text
 
 
 @info_cmd.handle()
@@ -120,7 +134,7 @@ async def handle_info(
                     entry = None
                 else:
                     if entry is not None:
-                        await matcher.finish(_build_detail_reply(entry))
+                        await matcher.finish(_build_detail_message(entry))
                         return
                 # id 无效或不存在时回退到总体信息分支
 

@@ -963,7 +963,7 @@ NoneBot2 命令插件，注册 `/info` 命令。
 - 依赖：`app_state.get_index_manager()`、`auth.is_authorized()`、`psutil`、`bot.config.MEMES_DIR`
 - 流程：
   - `/info` → 获取索引统计 → 读取系统内存、进程内存、CPU 占用 → 返回状态消息
-  - `/info <id>` → 持读锁调用 `IndexManager.get_entry(entry_id)` → 读取文件大小 → 返回详情文本
+  - `/info <id>` → 持读锁调用 `IndexManager.get_entry(entry_id)` → 读取文件大小 → 若文件存在则先发送表情包图片、再发送详情文本，否则仅发送文本
 - 回复内容：
   - 总体：表情包数量、speaker 排行（前 10）、当前状态、系统内存占用、进程内存占用、CPU 占用
   - 详情：`id`、`文本`、`文件名`、`大小`、`说话人`、`标签`
