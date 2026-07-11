@@ -1,6 +1,6 @@
 """日志上下文工具。
 
-提供 request_id 的隐式传播、请求 ID 注入 filter 和操作耗时统计。
+提供 request_id 的隐式传播、请求 ID 注入 formatter 和操作耗时统计。
 """
 
 import asyncio
@@ -83,26 +83,34 @@ async def run_sync_with_request_id(
     return await asyncio.to_thread(_wrapper, *args, **kwargs)
 
 
-class RequestIdFilter(logging.Filter):
-    """把当前 request_id 注入日志消息前的 Filter。
+class RequestIdFormatter(logging.Formatter):
+    """在格式化日志消息时注入当前 request_id 的 Formatter。
 
-    注意：本 Filter 应只在顶层 ``bot`` logger 上注册一次，子 logger 通过继承获得。
-    重复注册会导致 ``[req:xxx]`` 前缀被重复添加。
+    本 Formatter 作用于 Handler 层，任何经过该 Handler 的日志记录
+    （包括 ``bot.plugins.*``、``bot.engine.*`` 等子 logger）都会自动带上
+    ``[req:xxx]`` 前缀，且多个 Handler 共用不会导致重复前缀。
+
+    使用时应把 ``setup_logging`` 中的两个 Handler 都设置为该 Formatter。
     """
 
-    def filter(self, record: logging.LogRecord) -> bool:
-        """将当前 request_id 注入日志记录的消息前。
+    def formatMessage(self, record: logging.LogRecord) -> str:
+        """格式化单条日志记录，必要时在消息前追加 request_id 前缀。
 
         Args:
             record: 日志记录对象。
 
         Returns:
-            始终返回 True，表示该记录继续向后传递。
+            格式化后的日志字符串。
         """
         rid = get_request_id()
         if rid is not None:
-            record.msg = f"[req:{rid}] {record.msg}"
-        return True
+            original_message = record.message
+            record.message = f"[req:{rid}] {record.message}"
+            try:
+                return super().formatMessage(record)
+            finally:
+                record.message = original_message
+        return super().formatMessage(record)
 
 
 class timed:

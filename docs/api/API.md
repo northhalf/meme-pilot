@@ -688,8 +688,8 @@ def set_request_id(request_id: str | None) -> Generator[None, None, None]
 ```
 
 ```python
-class RequestIdFilter(logging.Filter):
-    def filter(self, record: logging.LogRecord) -> bool
+class RequestIdFormatter(logging.Formatter):
+    def formatMessage(self, record: logging.LogRecord) -> str
 ```
 
 ```python
@@ -704,7 +704,7 @@ class timed:
 
 - `generate_request_id()`：生成 8 位 UUID hex 短请求 ID，用于单次用户请求的全链路追踪。
 - `set_request_id(request_id)`：上下文管理器，设置当前 `ContextVar` 的 request_id，退出时自动恢复。
-- `RequestIdFilter`：日志 `Filter`，把当前 request_id 以 `[req:xxx]` 前缀注入日志消息；应在顶层 `bot` logger 上注册一次，子 logger 通过继承获得，避免重复前缀。
+- `RequestIdFormatter`：日志 `Formatter`，在 Handler 格式化时把当前 request_id 以 `[req:xxx]` 前缀注入 `%(message)s`；`setup_logging()` 已将其设为默认 formatter，所有子 logger 记录都会自动带前缀。
 - `timed`：操作耗时统计工具，支持 `async with`、`with` 和装饰器三种用法；退出时按日志级别输出「操作名 完成/失败，耗时 x.xx ms」。
 
 ### `docs/api/bot/app_state.md`

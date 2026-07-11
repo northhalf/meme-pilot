@@ -26,9 +26,9 @@
 
 | 处理器 | 目标 | 级别 | 格式 |
 |--------|------|------|------|
-| `RotatingFileHandler` | `<log_dir>/bot.log`，单文件不超过 10 MB，保留 3 个备份 | DEBUG | `时间 - 模块名 - 级别 - 消息` |
-| `StreamHandler` | stdout | INFO | `时间 - 模块名 - 级别 - 消息` |
+| `RotatingFileHandler` | `<log_dir>/bot.log`，单文件不超过 10 MB，保留 3 个备份 | DEBUG | `时间 - 模块名 - 级别 - [req:xxx] 消息`（通过 `RequestIdFormatter` 注入） |
+| `StreamHandler` | stdout | INFO | `时间 - 模块名 - 级别 - [req:xxx] 消息`（通过 `RequestIdFormatter` 注入） |
 
 启动时调用一次。自动创建 `<log_dir>` 目录。
 
-子 logger（`bot.plugins.*`、`bot.engine.*` 等）通过 Python logging 的继承关系自动获取父级配置。`bot` logger 设置 `propagate = False`，日志消息不会传播到根 logger。
+子 logger（`bot.plugins.*`、`bot.engine.*` 等）通过 Python logging 的继承关系自动获取父级 handler 与 formatter。`bot` logger 设置 `propagate = False`，日志消息不会传播到根 logger。

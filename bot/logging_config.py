@@ -11,7 +11,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from bot.log_context import RequestIdFilter
+from bot.log_context import RequestIdFormatter
 
 # 日志文件滚动配置
 MAX_LOG_FILE_BYTES: int = 10_485_760  # 10 MB
@@ -36,7 +36,7 @@ def setup_logging(log_dir: str = "log") -> None:
 
     LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     LOG_DATE_FMT = "%Y-%m-%d %H:%M:%S"
-    formatter = logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FMT)
+    formatter = RequestIdFormatter(LOG_FORMAT, datefmt=LOG_DATE_FMT)
 
     file_handler = RotatingFileHandler(
         _log_dir / "bot.log",
@@ -56,6 +56,4 @@ def setup_logging(log_dir: str = "log") -> None:
     bot_logger.setLevel(logging.DEBUG)
     bot_logger.addHandler(file_handler)
     bot_logger.addHandler(stream_handler)
-    # 注入 request_id 前缀 filter（只在顶层 bot logger 注册一次）
-    bot_logger.addFilter(RequestIdFilter())
     bot_logger.propagate = False

@@ -11,6 +11,7 @@ from typing import Generator
 
 import pytest
 
+from bot.log_context import set_request_id
 from bot.logging_config import (
     MAX_LOG_BACKUP_COUNT,
     MAX_LOG_FILE_BYTES,
@@ -130,6 +131,24 @@ class TestSetupLogging:
 
         content = log_file.read_text(encoding="utf-8")
         assert "测试日志写入" in content
+
+    def test_request_id_prefix_on_child_logger(self, tmp_path: Path) -> None:
+        """setup_logging 应使 bot 子 logger 的日志也带 request_id 前缀。"""
+        log_dir = tmp_path / "log"
+        setup_logging(log_dir=str(log_dir))
+
+        child = logging.getLogger("bot.child")
+        with set_request_id("testrid"):
+            child.info("子 logger 测试消息")
+
+        # 刷新 handler 确保写入磁盘
+        for h in logging.getLogger("bot").handlers:
+            h.flush()
+
+        log_file = log_dir / "bot.log"
+        content = log_file.read_text(encoding="utf-8")
+        assert "[req:testrid]" in content
+        assert "子 logger 测试消息" in content
 
     def test_debug_not_in_stdout_filtered(self, tmp_path: Path) -> None:
         """StreamHandler level 为 INFO，应过滤 DEBUG 消息。"""

@@ -1,5 +1,9 @@
 # Logger 增强 Implementation Plan
 
+> **实现演进说明**：本计划中的 `RequestIdFilter` 方案已被替换为 `RequestIdFormatter`
+>（作用于 Handler 的 `logging.Formatter`），`RequestIdFilter` 类已从代码库中删除。
+> 具体实现请以 `bot/log_context.py` 和 `bot/logging_config.py` 当前源码为准。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 为 engine 与 plugins 增加统一的 request_id 追踪、关键操作耗时统计和多级别日志，同时保持现有日志配置不变。

@@ -5,7 +5,7 @@ import logging
 import pytest
 
 from bot.log_context import (
-    RequestIdFilter,
+    RequestIdFormatter,
     generate_request_id,
     get_request_id,
     set_request_id,
@@ -13,23 +13,24 @@ from bot.log_context import (
 )
 
 
-class _Capture(logging.Handler):
-    """用于测试的临时日志捕获 Handler。"""
+class _FormattedCapture(logging.Handler):
+    """捕获格式化后字符串的临时 Handler。"""
 
     def __init__(self) -> None:
         super().__init__()
-        self.records: list[logging.LogRecord] = []
+        self.outputs: list[str] = []
 
     def emit(self, record: logging.LogRecord) -> None:
-        self.records.append(record)
+        self.outputs.append(self.format(record))
 
 
-def _capture_with_filter(logger: logging.Logger) -> _Capture:
-    """创建带 RequestIdFilter 的捕获 Handler 并附加到 logger。"""
-    handler = _Capture()
+def _capture_with_formatter(logger: logging.Logger) -> _FormattedCapture:
+    """创建带 RequestIdFormatter 的捕获 Handler 并附加到 logger。"""
+    handler = _FormattedCapture()
     handler.setLevel(logging.DEBUG)
-    handler.addFilter(RequestIdFilter())
+    handler.setFormatter(RequestIdFormatter("%(message)s"))
     logger.addHandler(handler)
+    logger.propagate = False
     return handler
 
 
@@ -59,44 +60,60 @@ def test_set_request_id_nested():
     assert get_request_id() is None
 
 
-def test_request_id_filter_injects_prefix(caplog):
-    """RequestIdFilter 应在日志消息前注入 [req:xxx]。"""
-    logger = logging.getLogger("test_request_id_filter")
+def test_request_id_formatter_injects_prefix():
+    """RequestIdFormatter 应在日志消息前注入 [req:xxx]。"""
+    logger = logging.getLogger("test_request_id_formatter")
     logger.setLevel(logging.DEBUG)
-    capture = _capture_with_filter(logger)
+    capture = _capture_with_formatter(logger)
 
     with set_request_id("rid123"):
         logger.info("测试消息")
 
-    record = capture.records[0]
-    assert "[req:rid123] 测试消息" in record.getMessage()
+    assert capture.outputs == ["[req:rid123] 测试消息"]
 
 
-def test_request_id_filter_no_prefix_without_id(caplog):
-    """无 request_id 时不应注入前缀。"""
-    logger = logging.getLogger("test_request_id_filter_no_id")
+def test_request_id_formatter_no_prefix_without_id():
+    """无 request_id 时 RequestIdFormatter 不应注入前缀。"""
+    logger = logging.getLogger("test_request_id_formatter_no_id")
     logger.setLevel(logging.DEBUG)
-    capture = _capture_with_filter(logger)
+    capture = _capture_with_formatter(logger)
 
     logger.info("无 id 消息")
 
-    record = capture.records[0]
-    assert record.msg == "无 id 消息"
+    assert capture.outputs == ["无 id 消息"]
 
 
-def test_request_id_filter_preserves_lazy_formatting_args(caplog):
-    """RequestIdFilter 应保留 record.args，不破坏延迟格式化。"""
-    logger = logging.getLogger("test_request_id_filter_args")
+def test_request_id_formatter_preserves_lazy_formatting_args():
+    """RequestIdFormatter 应保留延迟格式化参数。"""
+    logger = logging.getLogger("test_request_id_formatter_args")
     logger.setLevel(logging.DEBUG)
-    capture = _capture_with_filter(logger)
+    capture = _capture_with_formatter(logger)
 
     with set_request_id("rid123"):
         logger.info("用户 %s 调用", "alice")
 
-    record = capture.records[0]
-    assert record.msg == "[req:rid123] 用户 %s 调用"
-    assert record.args == ("alice",)
-    assert record.getMessage() == "[req:rid123] 用户 alice 调用"
+    assert capture.outputs == ["[req:rid123] 用户 alice 调用"]
+
+
+def test_request_id_formatter_shared_record_no_double_prefix():
+    """多个 Handler 共用 RequestIdFormatter 时不应重复添加前缀。"""
+    logger = logging.getLogger("test_request_id_formatter_shared")
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False
+
+    fmt = RequestIdFormatter("%(message)s")
+    h1 = _FormattedCapture()
+    h1.setFormatter(fmt)
+    h2 = _FormattedCapture()
+    h2.setFormatter(fmt)
+    logger.addHandler(h1)
+    logger.addHandler(h2)
+
+    with set_request_id("rid123"):
+        logger.info("测试消息")
+
+    assert h1.outputs == ["[req:rid123] 测试消息"]
+    assert h2.outputs == ["[req:rid123] 测试消息"]
 
 
 @pytest.mark.asyncio

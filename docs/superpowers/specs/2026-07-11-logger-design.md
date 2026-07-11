@@ -1,5 +1,10 @@
 # Logger 增强设计文档
 
+> **实现演进说明**：本文档为初始设计稿。实际代码中 `RequestIdFilter` 已被删除，
+> 改为在 `RequestIdFormatter`（作用于 Handler 的 `logging.Formatter`）中注入
+> `[req:xxx]` 前缀。具体实现请以 `bot/log_context.py` 和 `bot/logging_config.py`
+> 的当前源码为准。
+
 ## 1. 背景与目标
 
 当前项目使用 Python 标准库 `logging`，通过 `bot/logging_config.py` 配置顶层 `bot` logger，输出到：

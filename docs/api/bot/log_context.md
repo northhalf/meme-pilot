@@ -48,15 +48,15 @@
 
 ## 类
 
-### `RequestIdFilter(logging.Filter)`
+### `RequestIdFormatter(logging.Formatter)`
 
-把当前 request_id 注入日志消息前的 `logging.Filter`。
+在格式化日志消息时注入当前 request_id 的 `logging.Formatter`。
 
 | 方法 | 签名 | 说明 |
 |------|------|------|
-| `filter` | `filter(self, record: logging.LogRecord) -> bool` | 若当前上下文存在 request_id，则在 `record.msg` 前追加 `[req:xxx]` 前缀 |
+| `formatMessage` | `formatMessage(self, record: logging.LogRecord) -> str` | 若当前上下文存在 request_id，则在输出消息的 `%(message)s` 部分前追加 `[req:xxx]` 前缀 |
 
-注意：本 Filter 应只在顶层 `bot` logger 上注册一次，子 logger 通过继承获得。重复注册会导致 `[req:xxx]` 前缀被重复添加。
+本 Formatter 作用于 Handler 层，任何经过该 Handler 的日志记录（包括 `bot.plugins.*`、`bot.engine.*` 等子 logger）都会自动带上 `[req:xxx]` 前缀，且多个 Handler 共用不会导致重复前缀。`setup_logging()` 已将其设置为默认 formatter。
 
 ### `timed`
 
