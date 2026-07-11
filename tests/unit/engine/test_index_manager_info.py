@@ -201,3 +201,28 @@ class TestInfo:
         # 会话清理后仍空闲
         info_after = await index_manager.info()
         assert info_after.status == "空闲"
+
+
+class TestGetEntry:
+    """IndexManager.get_entry() 单元测试。"""
+
+    @pytest.mark.anyio
+    async def test_get_entry_existing(self, index_manager: IndexManager) -> None:
+        """存在的 id 返回对应 MemeEntry。"""
+        metadata_store = index_manager._metadata_store
+        metadata_store.add("a.jpg", "加班心累", speaker="小明", tags=["吐槽"])
+
+        entry = await index_manager.get_entry(1)
+
+        assert entry is not None
+        assert entry.id == 1
+        assert entry.image_path == "a.jpg"
+        assert entry.text == "加班心累"
+        assert entry.speaker == "小明"
+        assert entry.tags == ["吐槽"]
+
+    @pytest.mark.anyio
+    async def test_get_entry_not_found(self, index_manager: IndexManager) -> None:
+        """不存在的 id 返回 None。"""
+        entry = await index_manager.get_entry(999)
+        assert entry is None

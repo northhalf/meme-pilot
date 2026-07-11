@@ -841,6 +841,25 @@ class IndexManager:
             status=status,
         )
 
+    async def get_entry(self, entry_id: int) -> MemeEntry | None:
+        """按 id 查询单条表情包元数据。
+
+        持读锁调用 MetadataStore，保证与刷新期间的写入互斥，读取视图一致。
+
+        Args:
+            entry_id: 索引 id。
+
+        Returns:
+            对应 MemeEntry；id 不存在时返回 None。
+
+        Raises:
+            asyncio.TimeoutError: 等待读锁超时（刷新长时间占用写锁）。
+        """
+        async with self._rwlock.read(timeout=self.read_timeout):
+            return await run_sync_with_request_id(
+                self._metadata_store.get_entry, entry_id
+            )
+
     async def refresh(self) -> SyncResult:
         """独占执行索引同步（refresh）。
 

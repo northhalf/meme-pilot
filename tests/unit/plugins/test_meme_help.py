@@ -63,7 +63,7 @@ class TestHandleHelp:
         _mock_cmd.finish.assert_awaited_once()
         call_args = _mock_cmd.finish.call_args[0][0]
         assert "/help" in call_args
-        assert "/search" in call_args
+        assert "/query" in call_args
         assert "/ai" in call_args
         assert "/add" in call_args
         assert "/refresh" in call_args

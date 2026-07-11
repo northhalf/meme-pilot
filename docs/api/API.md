@@ -51,7 +51,7 @@ api
         ├── meme_plain_text.md
         ├── meme_rand.md
         ├── meme_sim.md
-        ├── meme_search.md
+        ├── meme_search.md（已删除说明）
         └── meme_query.md
 ```
 
@@ -309,6 +309,9 @@ class IndexManager:
 
     async def info(self) -> IndexInfo
     # 返回当前索引统计信息（条目数、speaker 排行、状态）；不含硬件信息
+
+    async def get_entry(self, entry_id: int) -> MemeEntry | None
+    # 持读锁按 id 查询 MetadataStore；id 不存在返回 None；超时抛 asyncio.TimeoutError
 
     async def refresh(self) -> SyncResult
     # 独占写锁执行同步；运行期间新的 add/refresh 被拒绝
@@ -753,7 +756,7 @@ NoneBot2 命令插件，注册 `/refresh` 命令。
 
 ### `bot/plugins/_search_utils.py`
 
-搜索核心逻辑模块，以下划线开头避免 NoneBot2 自动加载为插件。提供 `format_metadata_line`、`resolve_selection`、`present_candidates`、`dispatch_search_results`、`execute_search`、`handle_got_selection`、`got_intercept_bypass` 供 `meme_search`、`meme_rand`、`meme_sim` 等插件复用。
+搜索核心逻辑模块，以下划线开头避免 NoneBot2 自动加载为插件。提供 `format_metadata_line`、`resolve_selection`、`present_candidates`、`dispatch_search_results`、`execute_search`、`handle_got_selection`、`got_intercept_bypass` 供 `meme_rand`、`meme_sim`、`meme_plain_text` 等插件复用。
 
 ```python
 PAGE_SIZE: int = 10
@@ -833,7 +836,7 @@ async def got_intercept_bypass(
 ```
 
 - 依赖：`app_state.get_index_manager()`、`bot.session.session_manager`、`bot.plugins._search_utils.got_intercept_bypass`、`bot.config.MEMES_DIR`、`bot.plugins._help_text.HELP_TEXT`
-- 供 `meme_search.py`、`meme_rand.py`、`meme_sim.py` 共享
+- 供 `meme_rand.py`、`meme_sim.py`、`meme_plain_text.py` 共享
 
 ### `bot/plugins/_help_text.py`
 
@@ -867,7 +870,7 @@ NoneBot2 命令插件，注册 `/cancel` 命令。
 兜底消息插件，处理普通文本和未知斜杠命令。
 
 - 注册：`on_message(rule=to_me(), priority=99, block=False)`
-- 普通文本：等同执行 `/search`，调用 `_search_utils.execute_search`（传入 SEARCH_OPTIONS：展示关键词相似度百分比 score + 回复 n 翻页；支持私聊和群聊 @bot）
+- 普通文本：等同执行关键词搜索（原 `/search` 已删除，仅保留此兜底入口），调用 `_search_utils.execute_search`（传入 SEARCH_OPTIONS：展示关键词相似度百分比 score + 回复 n 翻页；支持私聊和群聊 @bot）
 - 未知斜杠命令：回复"未知命令"并附帮助摘要（支持私聊和群聊 @bot）
 - got：`catch_all.got("selection")` 薄包装，委托 `_search_utils.handle_got_selection()` 处理搜索多结果选择
 - 依赖：`auth.is_authorized()`、`_search_utils.execute_search`、`_search_utils.handle_got_selection`、`bot.plugins._help_text.HELP_TEXT`、`bot.session.session_manager`
@@ -956,11 +959,18 @@ NoneBot2 命令插件，注册 `/del` 命令。
 
 NoneBot2 命令插件，注册 `/info` 命令。
 
-- 依赖：`app_state.get_index_manager()`、`auth.is_authorized()`、`psutil`
-- 管道：`IndexManager.info()`
-- 流程：`/info` → 获取索引统计 → 读取内存/CPU 占用 → 返回状态消息
-- 回复内容：表情包数量、speaker 排行（前 10）、当前状态、内存占用、CPU 占用
-- 群聊：授权用户群聊 @bot 调用时同样返回状态信息
+- 注册：`on_command("info", rule=to_me(), priority=5, block=True)`，参数经 `CommandArg()` 提取
+- 依赖：`app_state.get_index_manager()`、`auth.is_authorized()`、`psutil`、`bot.config.MEMES_DIR`
+- 流程：
+  - `/info` → 获取索引统计 → 读取系统内存、进程内存、CPU 占用 → 返回状态消息
+  - `/info <id>` → 持读锁调用 `IndexManager.get_entry(entry_id)` → 读取文件大小 → 返回详情文本
+- 回复内容：
+  - 总体：表情包数量、speaker 排行（前 10）、当前状态、系统内存占用、进程内存占用、CPU 占用
+  - 详情：`id`、`文本`、`文件名`、`大小`、`说话人`、`标签`
+- 特殊行为：
+  - id 非数字或不存在时回退到总体信息
+  - 读锁等待超时时回复 `索引更新较慢，请稍后再试`
+- 群聊：授权用户群聊 @bot 调用时同样返回状态信息或详情
 
 ### `bot/plugins/meme_ai.py`
 
@@ -996,12 +1006,9 @@ NoneBot2 命令插件，注册 `/sim` 命令（语义相似度全库召回 + 分
 
 ### `bot/plugins/meme_search.py`
 
-NoneBot2 命令插件，注册 `/search` 命令（薄包装，核心逻辑委托 `_search_utils`）。
+已删除。
 
-- 注册：`on_command("search", rule=to_me(), priority=5, block=True, aliases={"s"})`，参数经 `CommandArg()` 提取（短命令 `/s` 等价）
-- 依赖：`auth.is_authorized()`、`_search_utils.execute_search`、`_search_utils.handle_got_selection`、`bot.session.session_manager`
-- 流程：`handle_search` — 授权校验 → 会话检查 → 提取关键词 → `execute_search`（传入 SEARCH_OPTIONS：展示关键词相似度百分比 score + 回复 n 翻页）
-- 选择：`got_selection` — 薄包装，委托 `_search_utils.handle_got_selection()`；命中后先发送图片，再发送 `format_metadata_line()` 元数据文本消息
+原 `/search <关键词>`（短命令 `/s`）命令已移除；普通文本兜底搜索与 `/query` 继续提供关键词搜索能力。
 
 ### `bot/plugins/meme_query.py`
 

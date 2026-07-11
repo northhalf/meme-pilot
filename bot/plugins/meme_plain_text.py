@@ -1,6 +1,6 @@
 """兜底消息插件 — 处理普通文本和未知斜杠命令。
 
-授权用户发送普通文本时，等同执行 /search。
+授权用户发送普通文本时，按关键词执行兜底搜索。
 授权用户发送未知斜杠命令时，回复"未知命令"并附帮助摘要。
 非授权用户静默忽略。
 """
@@ -37,7 +37,7 @@ SEARCH_OPTIONS = PresentOptions(
 )
 
 # ---------------------------------------------------------------------------
-# 兜底：纯文本 → /search；未知斜杠命令 → 回复帮助摘要
+# 兜底：纯文本 → 关键词搜索；未知斜杠命令 → 回复帮助摘要
 # priority=99 在所有具体命令（priority=5）之后运行；
 # block=False 不阻止其他 matcher 处理消息。
 # ---------------------------------------------------------------------------
@@ -49,7 +49,7 @@ catch_all = on_message(rule=to_me(), priority=99, block=False)
 async def handle_plain_text(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
     """兜底处理授权用户的普通文本和未知斜杠命令。
 
-    授权用户私聊发送不以 / 开头的普通文本时，等同执行 /search。
+    授权用户私聊发送不以 / 开头的普通文本时，按关键词执行兜底搜索。
     授权用户私聊发送未知斜杠命令时，回复"未知命令"并附帮助摘要。
     非授权用户静默忽略。
     """
@@ -70,8 +70,8 @@ async def handle_plain_text(bot: Bot, event: MessageEvent, matcher: Matcher) -> 
                 await matcher.finish(f"未知命令\n\n{HELP_TEXT}")
                 return
 
-            # 普通文本当作 /search
-            logger.info("用户 %s 的普通文本当作 /search: %r", user_id, text)
+            # 普通文本按关键词兜底搜索
+            logger.info("用户 %s 的普通文本执行关键词搜索: %r", user_id, text)
             # 会话检查：拒绝而非覆盖
             if not session_manager.activate_chat(user_id, "search", matcher):
                 await matcher.finish("已有命令在处理中，请先 /cancel")

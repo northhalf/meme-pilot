@@ -36,5 +36,6 @@ log/
 
 # claude code
 .claude/settings.local.json
+.claude/worktrees/
 .codegraph/
 CLAUDE.local.md

@@ -12,7 +12,7 @@ catch_all = on_message(rule=to_me(), priority=99, block=False)
 
 ### 普通文本
 
-授权用户私聊或群聊 @bot 发送不以 `/` 开头的普通文本时，等同执行 `/search`：
+授权用户私聊或群聊 @bot 发送不以 `/` 开头的普通文本时，按关键词执行兜底搜索（原 `/search` 命令已删除，仅保留此兜底入口）：
 1. 授权校验
 2. `session_manager.activate_chat()` 激活会话，若已有活跃会话则 `matcher.finish("已有命令在处理中，请先 /cancel")`
 3. 调用 `_search_utils.execute_search()` 执行搜索
