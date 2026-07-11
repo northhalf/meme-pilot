@@ -15,14 +15,15 @@ from pathlib import Path
 from typing import Protocol
 
 from bot.config import read_add_command_timeout, read_read_lock_timeout
-from bot.log_context import run_sync_with_request_id, timed
+from bot.log_context import timed
+
 from .ai_matcher import AIMatcher, AIMatchResult
+from .combined_searcher import CombinedSearcher
 from .image_optimizer import OptimizeResult
 from .keyword_searcher import KeywordSearcher
 from .metadata_store import MemeEntry
 from .protocols import EmbeddingProvider
 from .random_searcher import RandomSearcher
-from .combined_searcher import CombinedSearcher
 from .rwlock import IndexRwLock
 from .semantic_searcher import SemanticSearcher
 from .types import SearchResult
@@ -397,8 +398,8 @@ class IndexManager:
         """
         logger.info("开始加载索引...")
         await asyncio.gather(
-            run_sync_with_request_id(self._metadata_store.load),
-            run_sync_with_request_id(self._vector_store.load),
+            asyncio.to_thread(self._metadata_store.load),
+            asyncio.to_thread(self._vector_store.load),
         )
         logger.info("索引加载完成")
         logger.info("IndexManager 加载完成: %d 条记录", self.entry_count)
@@ -625,7 +626,7 @@ class IndexManager:
         self._ensure_write_worker()
 
         # 校验 entry 存在 + 获取旧 text（用于回滚）
-        entry = await run_sync_with_request_id(self._metadata_store.get_entry, entry_id)
+        entry = await asyncio.to_thread(self._metadata_store.get_entry, entry_id)
         if entry is None:
             raise ValueError(f"entry_id={entry_id} 不存在")
         old_text = entry.text
@@ -692,7 +693,7 @@ class IndexManager:
         self._ensure_write_worker()
 
         # 校验 entry 存在 + 获取 old_speaker
-        entry = await run_sync_with_request_id(self._metadata_store.get_entry, entry_id)
+        entry = await asyncio.to_thread(self._metadata_store.get_entry, entry_id)
 
         # TOCTOU 防护（get_entry 期间 shutting_down 或 refresh 可能已激活）
         if self._shutting_down:
@@ -751,7 +752,7 @@ class IndexManager:
 
         self._ensure_write_worker()
 
-        entry = await run_sync_with_request_id(self._metadata_store.get_entry, entry_id)
+        entry = await asyncio.to_thread(self._metadata_store.get_entry, entry_id)
         if entry is None:
             raise ValueError(f"entry_id={entry_id} 不存在")
 
@@ -819,7 +820,7 @@ class IndexManager:
         Returns:
             IndexInfo 描述当前统计与状态。
         """
-        entries = await run_sync_with_request_id(self._metadata_store.get_all_entries)
+        entries = await asyncio.to_thread(self._metadata_store.get_all_entries)
 
         speaker_counts: dict[str | None, int] = {}
         for entry in entries.values():
@@ -856,9 +857,7 @@ class IndexManager:
             asyncio.TimeoutError: 等待读锁超时（刷新长时间占用写锁）。
         """
         async with self._rwlock.read(timeout=self.read_timeout):
-            return await run_sync_with_request_id(
-                self._metadata_store.get_entry, entry_id
-            )
+            return await asyncio.to_thread(self._metadata_store.get_entry, entry_id)
 
     async def refresh(self) -> SyncResult:
         """独占执行索引同步（refresh）。
@@ -988,7 +987,7 @@ class IndexManager:
             EmbeddingError: chroma upsert 失败，已回滚 sqlite。
         """
         # 写锁内 TOCTOU 检查 text 冲突
-        existing_id = await run_sync_with_request_id(
+        existing_id = await asyncio.to_thread(
             self._metadata_store.get_id_by_text,
             req.text,
         )
@@ -998,7 +997,7 @@ class IndexManager:
             )
 
         # 先 sqlite
-        success = await run_sync_with_request_id(
+        success = await asyncio.to_thread(
             self._metadata_store.update,
             req.entry_id,
             text=req.text,
@@ -1012,7 +1011,7 @@ class IndexManager:
             await self._vector_store.upsert(req.entry_id, req.embedding)
         except Exception as exc:
             try:
-                await run_sync_with_request_id(
+                await asyncio.to_thread(
                     self._metadata_store.update,
                     req.entry_id,
                     text=req.old_text,
@@ -1044,15 +1043,13 @@ class IndexManager:
             ValueError: entry_id 在写锁内已不存在。
         """
         # TOCTOU 防护：写锁内重新检查 entry 是否存在
-        entry = await run_sync_with_request_id(
-            self._metadata_store.get_entry, req.entry_id
-        )
+        entry = await asyncio.to_thread(self._metadata_store.get_entry, req.entry_id)
         if entry is None:
             raise ValueError(f"entry_id={req.entry_id} 不存在（并发删除）")
         old_speaker = entry.speaker
 
         # 写 sqlite
-        success = await run_sync_with_request_id(
+        success = await asyncio.to_thread(
             self._metadata_store.update,
             req.entry_id,
             speaker=req.speaker,
@@ -1078,9 +1075,7 @@ class IndexManager:
         Raises:
             ValueError: entry_id 在写锁内已不存在。
         """
-        entry = await run_sync_with_request_id(
-            self._metadata_store.get_entry, req.entry_id
-        )
+        entry = await asyncio.to_thread(self._metadata_store.get_entry, req.entry_id)
         if entry is None:
             raise ValueError(f"entry_id={req.entry_id} 不存在（并发删除）")
 
@@ -1096,7 +1091,7 @@ class IndexManager:
                 all_tags=list(current_tags),
             )
 
-        success = await run_sync_with_request_id(
+        success = await asyncio.to_thread(
             self._metadata_store.update,
             req.entry_id,
             tags=merged_tags,
@@ -1131,9 +1126,7 @@ class IndexManager:
         failed_ids: list[tuple[int, str]] = []
 
         for entry_id in req.entry_ids or []:
-            entry = await run_sync_with_request_id(
-                self._metadata_store.get_entry, entry_id
-            )
+            entry = await asyncio.to_thread(self._metadata_store.get_entry, entry_id)
             if entry is None:
                 not_found_ids.append(entry_id)
                 continue
@@ -1152,7 +1145,7 @@ class IndexManager:
                     shutil.move(str(src), str(dst))
 
                 # 文件已归档（或本就不在 memes/），再删索引：先 sqlite 后 chroma
-                await run_sync_with_request_id(self._metadata_store.remove, entry_id)
+                await asyncio.to_thread(self._metadata_store.remove, entry_id)
                 await self._vector_store.remove(entry_id)
 
                 deleted_ids.append(entry_id)
@@ -1253,9 +1246,7 @@ class IndexManager:
             failed: 失败文件名收集列表，阶段0 重 embed 失败的 image_path 追加至此。
         """
         async with timed(logger, "索引刷新-阶段0"):
-            entries = await run_sync_with_request_id(
-                self._metadata_store.get_all_entries
-            )
+            entries = await asyncio.to_thread(self._metadata_store.get_all_entries)
             sqlite_ids = set(entries)
             vs_count = self._vector_store.count()
             chroma_ids = await self._get_chroma_ids()
@@ -1327,9 +1318,7 @@ class IndexManager:
             本次删除的图片数量。
         """
         async with timed(logger, "索引刷新-阶段1"):
-            entries = await run_sync_with_request_id(
-                self._metadata_store.get_all_entries
-            )
+            entries = await asyncio.to_thread(self._metadata_store.get_all_entries)
             deleted = 0
             for eid, entry in entries.items():
                 if entry.image_path not in existing:
@@ -1338,7 +1327,7 @@ class IndexManager:
                         eid,
                         entry.image_path,
                     )
-                    await run_sync_with_request_id(self._metadata_store.remove, eid)
+                    await asyncio.to_thread(self._metadata_store.remove, eid)
                     await self._vector_store.remove(eid)
                     deleted += 1
             return deleted
@@ -1356,9 +1345,7 @@ class IndexManager:
             (added, deduped, no_text_moved) 三元组：新增、去重删除、无文字移走数量。
         """
         async with timed(logger, "索引刷新-阶段2"):
-            entries = await run_sync_with_request_id(
-                self._metadata_store.get_all_entries
-            )
+            entries = await asyncio.to_thread(self._metadata_store.get_all_entries)
             existing_paths = {e.image_path for e in entries.values()}
             new_files = sorted(f for f in existing if f not in existing_paths)
             if not new_files:
@@ -1407,12 +1394,12 @@ class IndexManager:
             for filename in sorted(success):
                 text, embedding = success[filename]
                 if not text:
-                    await run_sync_with_request_id(self._move_to_no_text, filename)
+                    await asyncio.to_thread(self._move_to_no_text, filename)
                     no_text_moved += 1
                     continue
                 if text in winner_keys:
                     try:
-                        archived_path = await run_sync_with_request_id(
+                        archived_path = await asyncio.to_thread(
                             self._move_to_replaced, filename
                         )
                     except Exception as exc:
@@ -1431,16 +1418,14 @@ class IndexManager:
                     deduped += 1
                     continue
                 # 正常新增：先 sqlite 后 chroma；upsert 失败回滚 sqlite
-                eid = await run_sync_with_request_id(
-                    self._metadata_store.add, filename, text
-                )
+                eid = await asyncio.to_thread(self._metadata_store.add, filename, text)
                 try:
                     await self._vector_store.upsert(eid, embedding)
                 except Exception as exc:
                     logger.error(
                         "新增 upsert 失败，回滚 sqlite: id=%s, error=%s", eid, exc
                     )
-                    await run_sync_with_request_id(self._metadata_store.remove, eid)
+                    await asyncio.to_thread(self._metadata_store.remove, eid)
                     failed.append(filename)
                     continue
                 winner_keys.add(text)
@@ -1476,7 +1461,7 @@ class IndexManager:
         """
         # 1. 无文字 → 移图，不进索引
         if not text:
-            moved_to = await run_sync_with_request_id(self._move_to_no_text, filename)
+            moved_to = await asyncio.to_thread(self._move_to_no_text, filename)
             logger.info("OCR 无文字，已移至无文字目录: filename=%s", filename)
             return AddResult(
                 entry_id=None,
@@ -1487,18 +1472,14 @@ class IndexManager:
             )
 
         # 2. 去重命中已有条目 → update image_path + upsert，删旧图
-        old_id = await run_sync_with_request_id(
-            self._metadata_store.get_id_by_text, text
-        )
+        old_id = await asyncio.to_thread(self._metadata_store.get_id_by_text, text)
         if old_id is not None:
-            old_entry = await run_sync_with_request_id(
-                self._metadata_store.get_entry, old_id
-            )
+            old_entry = await asyncio.to_thread(self._metadata_store.get_entry, old_id)
             old_image_path = old_entry.image_path if old_entry else ""
             old_speaker = old_entry.speaker if old_entry else None
             old_tags = old_entry.tags if old_entry else []
             # 顺序：先改 sqlite 指向新图，再 upsert 向量，最后删旧图
-            await run_sync_with_request_id(
+            await asyncio.to_thread(
                 self._metadata_store.update,
                 old_id,
                 image_path=filename,
@@ -1511,7 +1492,7 @@ class IndexManager:
                 logger.error(
                     "去重替换 upsert 失败，回滚 update: id=%s, error=%s", old_id, exc
                 )
-                await run_sync_with_request_id(
+                await asyncio.to_thread(
                     self._metadata_store.update,
                     old_id,
                     image_path=old_image_path,
@@ -1523,7 +1504,7 @@ class IndexManager:
             # 归档旧图（最后移动，保证前序失败时旧图仍在）
             archived_path: str | None = None
             if old_image_path and old_image_path != filename:
-                archived_path = await run_sync_with_request_id(
+                archived_path = await asyncio.to_thread(
                     self._move_to_replaced, old_image_path
                 )
             logger.info(
@@ -1544,7 +1525,7 @@ class IndexManager:
             )
 
         # 3. 正常新增：先 sqlite 后 chroma；upsert 失败回滚 sqlite + 删图
-        eid = await run_sync_with_request_id(
+        eid = await asyncio.to_thread(
             self._metadata_store.add, filename, text, speaker, tags
         )
         try:
@@ -1553,7 +1534,7 @@ class IndexManager:
             logger.error(
                 "新增 upsert 失败，回滚 sqlite + 删图: id=%s, error=%s", eid, exc
             )
-            await run_sync_with_request_id(self._metadata_store.remove, eid)
+            await asyncio.to_thread(self._metadata_store.remove, eid)
             (self._memes_dir / filename).unlink(missing_ok=True)
             raise EmbeddingError(f"新增 upsert 失败: {filename}") from exc
         logger.info("已添加索引记录: id=%s, filename=%s", eid, filename)

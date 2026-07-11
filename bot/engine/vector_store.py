@@ -11,6 +11,7 @@ cosine 距离的 HNSW 索引，query 返回 Top-N (entry_id, similarity)。
 - remove 不存在静默：chromadb delete 对不存在 id 本身即静默，无需捕获。
 """
 
+import asyncio
 import logging
 import threading
 from dataclasses import dataclass
@@ -18,7 +19,7 @@ from typing import Any
 
 import chromadb
 
-from bot.log_context import run_sync_with_request_id, timed
+from bot.log_context import timed
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +137,7 @@ class VectorStore:
         """
         async with timed(logger, "VectorStore upsert"):
             logger.debug("upsert 向量 id=%d, 维度=%d", entry_id, len(embedding))
-            await run_sync_with_request_id(self._upsert_sync, entry_id, embedding)
+            await asyncio.to_thread(self._upsert_sync, entry_id, embedding)
 
     def _remove_sync(self, entry_id: int) -> None:
         """同步删除一条向量（内部持 _lock，id 转 str，不存在静默）。
@@ -153,7 +154,7 @@ class VectorStore:
         Args:
             entry_id: 要删除的索引 id。
         """
-        await run_sync_with_request_id(self._remove_sync, entry_id)
+        await asyncio.to_thread(self._remove_sync, entry_id)
 
     def _remove_many_sync(self, entry_ids: list[int]) -> None:
         """同步批量删除向量（内部持 _lock，id 转 str，不存在的静默）。
@@ -174,7 +175,7 @@ class VectorStore:
         """
         async with timed(logger, "VectorStore 批量删除"):
             logger.debug("删除向量: %s", entry_ids)
-            await run_sync_with_request_id(self._remove_many_sync, entry_ids)
+            await asyncio.to_thread(self._remove_many_sync, entry_ids)
 
     def _query_sync(
         self, query_embedding: list[float], n_results: int | None
@@ -220,9 +221,7 @@ class VectorStore:
         Returns:
             按 similarity 降序排列的 VectorHit 列表；collection 为空时返回 []。
         """
-        result = await run_sync_with_request_id(
-            self._query_sync, query_embedding, n_results
-        )
+        result = await asyncio.to_thread(self._query_sync, query_embedding, n_results)
         logger.debug("向量查询返回 %d 个候选", len(result))
         return result
 
@@ -252,7 +251,7 @@ class VectorStore:
         Args:
             items: (entry_id, embedding) 列表；为空时仅重建空 collection。
         """
-        await run_sync_with_request_id(self._rebuild_all_sync, items)
+        await asyncio.to_thread(self._rebuild_all_sync, items)
 
     def count(self) -> int:
         """当前向量数。
@@ -279,4 +278,4 @@ class VectorStore:
         Returns:
             entry_id 集合。
         """
-        return await run_sync_with_request_id(self._get_all_ids_sync)
+        return await asyncio.to_thread(self._get_all_ids_sync)

@@ -11,7 +11,6 @@ import pytest
 
 from typing import cast
 
-from bot.log_context import run_sync_with_request_id
 from bot.engine.ai_matcher import AIMatcher
 from bot.engine.index_manager import (
     AddResult,
@@ -191,6 +190,8 @@ class MockOcrProvider:
     async def ocr(self, image_path: str) -> str:
         return Path(image_path).stem
 
+    async def close(self) -> None:
+        pass
 
 class MockEmbeddingProvider:
     """Embedding provider mock：返回固定维度向量。"""
@@ -201,6 +202,8 @@ class MockEmbeddingProvider:
     async def embed(self, text: str) -> list[float]:
         return [float(ord(text[0]) if text else 0)] * self._dim
 
+    async def close(self) -> None:
+        pass
 
 class MockOptimizer:
     """图片优化器 mock：不做任何操作。"""
@@ -463,10 +466,14 @@ async def test_process_image_pipeline_empty_text(
         async def ocr(self, image_path: str) -> str:
             return ""
 
+        async def close(self) -> None:
+            pass
     class SpyEmbeddingProvider:
         async def embed(self, text: str) -> list[float]:
             raise AssertionError("空文本不应调用 embed")
 
+        async def close(self) -> None:
+            pass
     index_manager._ocr_provider = EmptyOcrProvider()
     index_manager._embedding_provider = SpyEmbeddingProvider()
     (Path(index_manager._memes_dir) / "blank.jpg").write_bytes(b"fake")
@@ -541,6 +548,8 @@ class TestAdd:
             async def ocr(self, image_path: str) -> str:
                 return "相同文本"
 
+            async def close(self) -> None:
+                pass
         # 让两次 add 的 OCR 文本相同，触发去重替换
         index_manager._ocr_provider = ConstantOcrProvider()
         (Path(index_manager._memes_dir) / "old.jpg").write_bytes(b"fake")
@@ -572,6 +581,8 @@ class TestAdd:
             async def ocr(self, image_path: str) -> str:
                 return "相同文本"
 
+            async def close(self) -> None:
+                pass
         index_manager._ocr_provider = ConstantOcrProvider()
         replaced_dir = Path(index_manager._replaced_dir)
 
@@ -586,7 +597,7 @@ class TestAdd:
         # 第二次替换：再次把同名 old.jpg 移入 memes_replaced/
         # 通过手动调用 _move_to_replaced 模拟同名冲突
         (Path(index_manager._memes_dir) / "old.jpg").write_bytes(b"3")
-        archived = await run_sync_with_request_id(
+        archived = await asyncio.to_thread(
             index_manager._move_to_replaced, "old.jpg"
         )
         assert archived == str(replaced_dir / "old_1.jpg")
@@ -602,6 +613,8 @@ class TestAdd:
             async def ocr(self, image_path: str) -> str:
                 return "相同文本"
 
+            async def close(self) -> None:
+                pass
         index_manager._ocr_provider = ConstantOcrProvider()
         (Path(index_manager._memes_dir) / "old.jpg").write_bytes(b"fake")
         (Path(index_manager._memes_dir) / "new.jpg").write_bytes(b"fake")
@@ -636,6 +649,8 @@ class TestAdd:
             async def ocr(self, image_path: str) -> str:
                 return ""
 
+            async def close(self) -> None:
+                pass
         index_manager._ocr_provider = EmptyOcrProvider()
         memes_dir = Path(index_manager._memes_dir)
         no_text_dir = Path(index_manager._no_text_dir)
@@ -1021,6 +1036,8 @@ class TestRefresh:
             async def ocr(self, image_path: str) -> str:
                 return "重复文本"
 
+            async def close(self) -> None:
+                pass
         index_manager._ocr_provider = ConstantOcrProvider()
         memes_dir = Path(index_manager._memes_dir)
         replaced_dir = Path(index_manager._replaced_dir)
@@ -1046,6 +1063,8 @@ class TestRefresh:
             async def ocr(self, image_path: str) -> str:
                 return ""
 
+            async def close(self) -> None:
+                pass
         index_manager._ocr_provider = EmptyOcrProvider()
         memes_dir = Path(index_manager._memes_dir)
         no_text_dir = Path(index_manager._no_text_dir)
@@ -1175,6 +1194,8 @@ class TestSemanticSearch:
             async def embed(self, text: str) -> list[float]:
                 return [0.0] * 1024
 
+            async def close(self) -> None:
+                pass
         index_manager._embedding_provider = ZeroEmbeddingProvider()
         with pytest.raises(ValueError, match="零向量"):
             await index_manager.semantic_search("任意描述")
@@ -1414,6 +1435,8 @@ class FakeEmbeddingProvider:
     async def embed(self, text: str) -> list[float]:
         return self._vec
 
+    async def close(self) -> None:
+        pass
 
 class TestPipelineFinalFilename:
     """_process_image_pipeline 返回 final_filename 与降级测试。"""
@@ -1531,6 +1554,7 @@ class TestAddConvertsToWebp:
         )
         result = await im.add("meme_001.jpg", speaker="小明", tags=["吐槽"])
         assert result.reason == "added"
+        assert result.entry_id is not None
         entry = md.get_entry(result.entry_id)
         assert entry is not None
         assert entry.image_path == "meme_001.webp"
@@ -1553,6 +1577,7 @@ class TestAddConvertsToWebp:
         )
         result = await im.add("meme_002.png")
         assert result.reason == "added"
+        assert result.entry_id is not None
         entry = md.get_entry(result.entry_id)
         assert entry is not None
         assert entry.image_path == "meme_002.png"

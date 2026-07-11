@@ -32,20 +32,6 @@
 
 使用 `with set_request_id(rid): ...` 在代码块内临时设置 request_id，离开代码块后自动恢复。
 
-### `run_sync_with_request_id(fn, *args, **kwargs) -> _T`
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `fn` | `Callable[..., _T]` | 要在线程中执行的同步函数 |
-| `*args` | `Any` | 传给 fn 的位置参数 |
-| `**kwargs` | `Any` | 传给 fn 的关键字参数 |
-
-| | 类型 | 说明 |
-|--|------|------|
-| **返回** | `_T` | fn 的返回值 |
-
-在线程池中执行同步函数，并在线程内恢复当前 request_id。适用于 `asyncio.to_thread` 调用点，保证跨线程日志仍带 `[req:xxx]` 前缀。
-
 ## 类
 
 ### `RequestIdFormatter(logging.Formatter)`

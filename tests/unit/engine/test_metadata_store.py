@@ -2,6 +2,7 @@
 
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -392,7 +393,7 @@ class TestReadPathHitsCache:
                 self._real = real
                 self.execute_count = 0
 
-            def execute(self, *args: object, **kwargs: object) -> object:
+            def execute(self, *args: Any, **kwargs: Any) -> Any:
                 self.execute_count += 1
                 return self._real.execute(*args, **kwargs)
 

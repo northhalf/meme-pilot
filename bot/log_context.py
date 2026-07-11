@@ -3,7 +3,6 @@
 提供 request_id 的隐式传播、请求 ID 注入 formatter 和操作耗时统计。
 """
 
-import asyncio
 import contextvars
 import functools
 import inspect
@@ -11,10 +10,9 @@ import logging
 import time
 import uuid
 from contextlib import contextmanager
-from typing import Any, Callable, Generator, TypeVar
+from typing import Callable, Generator, TypeVar
 
 F = TypeVar("F", bound=Callable)
-_T = TypeVar("_T")
 
 REQUEST_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "request_id", default=None
@@ -54,33 +52,6 @@ def set_request_id(request_id: str | None) -> Generator[None, None, None]:
         yield
     finally:
         REQUEST_ID.reset(token)
-
-
-async def run_sync_with_request_id(
-    fn: Callable[..., _T],
-    *args: Any,
-    **kwargs: Any,
-) -> _T:
-    """在线程池中执行同步函数，并在线程内恢复 request_id。
-
-    调用前捕获当前 request_id，在线程包装函数内通过 ``set_request_id`` 恢复，
-    保证跨 ``asyncio.to_thread`` 边界的日志仍带 ``[req:xxx]`` 前缀。
-
-    Args:
-        fn: 要在线程中执行的同步函数。
-        *args: 传给 fn 的位置参数。
-        **kwargs: 传给 fn 的关键字参数。
-
-    Returns:
-        fn 的返回值。
-    """
-    rid = get_request_id()
-
-    def _wrapper(*args: Any, **kwargs: Any) -> _T:
-        with set_request_id(rid):
-            return fn(*args, **kwargs)
-
-    return await asyncio.to_thread(_wrapper, *args, **kwargs)
 
 
 class RequestIdFormatter(logging.Formatter):

@@ -59,6 +59,8 @@ class MockEmbeddingProvider:
             raise self._error
         return self._embedding
 
+    async def close(self) -> None:
+        pass
 
 class MockReranker:
     def __init__(self, result: Any = 0, exc: Exception | None = None) -> None:

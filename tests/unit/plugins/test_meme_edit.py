@@ -202,7 +202,7 @@ class TestHandleEdit:
             event = _make_event(text="/e 5 新文本")
             matcher = _make_matcher()
 
-            asyncio.run(handle_edit(bot, event, matcher, args=_make_message("5 新文本")))
+            asyncio.run(handle_edit(bot, event, matcher, args=_make_message("5 新文本")))  # type: ignore[arg-type]
 
             assert matcher.state["entry_id"] == 5
             assert matcher.state["new_text"] == "新文本"
