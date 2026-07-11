@@ -11,7 +11,11 @@ from typing import Generator
 
 import pytest
 
-from bot.logging_config import setup_logging
+from bot.logging_config import (
+    MAX_LOG_BACKUP_COUNT,
+    MAX_LOG_FILE_BYTES,
+    setup_logging,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -80,7 +84,7 @@ class TestSetupLogging:
         assert logging.getLogger("bot").level == logging.DEBUG
 
     def test_file_handler_debug_level(self, tmp_path: Path) -> None:
-        """FileHandler level 应为 DEBUG。"""
+        """RotatingFileHandler level 应为 DEBUG。"""
         setup_logging(log_dir=str(tmp_path / "log"))
         fh = _get_file_handlers()[0]
         assert fh.level == logging.DEBUG
@@ -92,19 +96,19 @@ class TestSetupLogging:
         assert sh.level == logging.INFO
 
     def test_file_handler_max_bytes(self, tmp_path: Path) -> None:
-        """FileHandler maxBytes 应为 1_048_576 (1 MB)。"""
+        """RotatingFileHandler maxBytes 应为 10_485_760 (10 MB)。"""
         setup_logging(log_dir=str(tmp_path / "log"))
         fh = _get_file_handlers()[0]
-        assert fh.maxBytes == 1_048_576
+        assert fh.maxBytes == MAX_LOG_FILE_BYTES
 
     def test_file_handler_backup_count(self, tmp_path: Path) -> None:
-        """FileHandler backupCount 应为 1。"""
+        """RotatingFileHandler backupCount 应为 3。"""
         setup_logging(log_dir=str(tmp_path / "log"))
         fh = _get_file_handlers()[0]
-        assert fh.backupCount == 1
+        assert fh.backupCount == MAX_LOG_BACKUP_COUNT
 
     def test_file_handler_encoding(self, tmp_path: Path) -> None:
-        """FileHandler encoding 应为 utf-8。"""
+        """RotatingFileHandler encoding 应为 utf-8。"""
         setup_logging(log_dir=str(tmp_path / "log"))
         fh = _get_file_handlers()[0]
         assert fh.encoding == "utf-8"

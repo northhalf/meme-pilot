@@ -21,8 +21,8 @@ from bot.app_state import get_index_manager
 from bot.auth import is_authorized, log_unauthorized
 from bot.config import MEMES_DIR
 from bot.engine.metadata_store import MemeEntry
-from bot.session import session_manager
 from bot.log_context import generate_request_id, set_request_id
+from bot.session import session_manager
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +163,9 @@ async def handle_info(
             if not ranking_lines:
                 ranking_lines.append("  暂无数据")
 
+            logger.debug(
+                "/info 条目数=%d, speakers=%s", info.entry_count, info.speaker_ranking
+            )
             try:
                 process_mem_text = humanize.naturalsize(
                     psutil.Process().memory_info().rss, binary=True, format="%.0f"

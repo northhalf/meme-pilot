@@ -23,10 +23,10 @@ from bot.engine.index_manager import (
     IndexAddCancelledError,
     RefreshInProgressError,
 )
+from bot.log_context import generate_request_id, set_request_id
 from bot.plugins._help_text import HELP_TEXT
 from bot.plugins._search_utils import got_intercept_bypass
 from bot.session import session_manager, timeout_session
-from bot.log_context import generate_request_id, set_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +87,8 @@ async def handle_setspeaker(
             speaker: str | None = parts[1].strip() if len(parts) > 1 else None
             if speaker is not None and not speaker:
                 speaker = None
+
+            logger.debug("/setspeaker 参数: entry_id=%s, speaker=%r", entry_id, speaker)
 
             # 校验 entry 存在
             store = get_metadata_store()
@@ -153,7 +155,6 @@ async def got_confirm(
     user_id = event.get_user_id()
     request_id = generate_request_id()
     with set_request_id(request_id):
-
         with session_manager.handler_context(user_id, matcher):
             try:
                 text = event.get_plaintext().strip()
@@ -181,14 +182,20 @@ async def got_confirm(
                         await matcher.finish(f"未找到 id 为 {entry_id} 的表情包")
                     else:
                         session_manager.deactivate_chat(user_id)
+                        logger.info(
+                            "/setspeaker 成功: entry_id=%s, speaker=%r",
+                            entry_id,
+                            speaker,
+                        )
                         old_text = result.old_speaker if result.old_speaker else "无"
                         new_text = result.new_speaker if result.new_speaker else "无"
                         await matcher.finish(
-                            f"说话人已设置 ✅\n" f"旧：{old_text}\n" f"新：{new_text}",
+                            f"说话人已设置 ✅\n旧：{old_text}\n新：{new_text}",
                         )
                         return
                 else:
                     session_manager.deactivate_chat(user_id)
+                    logger.info("用户 %s 取消 /setspeaker", user_id)
                     await matcher.finish("已取消")
 
                 # 异常统一清理

@@ -18,10 +18,10 @@ from nonebot.rule import to_me
 from bot.app_state import get_index_manager, get_metadata_store
 from bot.auth import is_authorized, log_unauthorized
 from bot.engine.index_manager import IndexAddCancelledError, RefreshInProgressError
+from bot.log_context import generate_request_id, set_request_id
 from bot.plugins._help_text import HELP_TEXT
 from bot.plugins._search_utils import got_intercept_bypass
 from bot.session import session_manager, timeout_session
-from bot.log_context import generate_request_id, set_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +96,7 @@ async def handle_delete(
 
             # 去重，保持顺序
             entry_ids = list(dict.fromkeys(entry_ids))
+            logger.debug("/del 目标 entry_ids: %s", entry_ids)
 
             # 查询每个 id
             store = get_metadata_store()
@@ -107,6 +108,10 @@ async def handle_delete(
                     not_found_ids.append(eid)
                 else:
                     found.append((eid, entry.text))
+
+            logger.debug(
+                "/del 找到 %d 条，未找到 %d 条", len(found), len(not_found_ids)
+            )
 
             if not found:
                 session_manager.deactivate_chat(user_id)
@@ -158,7 +163,6 @@ async def got_confirm(
     user_id = event.get_user_id()
     request_id = generate_request_id()
     with set_request_id(request_id):
-
         with session_manager.handler_context(user_id, matcher):
             try:
                 text = event.get_plaintext().strip()
@@ -186,6 +190,18 @@ async def got_confirm(
                         await matcher.finish("删除过程中发生异常，请稍后重试")
                     else:
                         session_manager.deactivate_chat(user_id)
+                        logger.info(
+                            "/del 完成: 成功=%d, 未找到=%d, 失败=%d",
+                            len(result.deleted_ids),
+                            len(result.not_found_ids),
+                            len(result.failed_ids),
+                        )
+                        logger.debug(
+                            "/del 详情: 成功=%r, 未找到=%r, 失败=%r",
+                            result.deleted_ids,
+                            result.not_found_ids,
+                            result.failed_ids,
+                        )
                         lines = ["删除结果如下:"]
                         if result.deleted_ids:
                             lines.append(
@@ -206,6 +222,7 @@ async def got_confirm(
                         return
                 else:
                     session_manager.deactivate_chat(user_id)
+                    logger.info("用户 %s 取消 /del", user_id)
                     await matcher.finish("已取消删除")
 
                 # 异常统一清理

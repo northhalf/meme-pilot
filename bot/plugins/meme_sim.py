@@ -15,6 +15,7 @@ from nonebot.rule import to_me
 
 from bot.app_state import get_index_manager
 from bot.auth import is_authorized, log_unauthorized
+from bot.log_context import generate_request_id, set_request_id
 from bot.plugins._search_utils import (
     NEXT_PAGE_TRIGGER,
     PresentOptions,
@@ -22,7 +23,6 @@ from bot.plugins._search_utils import (
     handle_got_selection,
 )
 from bot.session import session_manager
-from bot.log_context import generate_request_id, set_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +71,7 @@ async def handle_sim(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
                 await matcher.finish("/sim <描述文本>")
                 return
 
+            logger.debug("/sim 描述: %r", description)
             logger.info("用户 %s /sim 描述: %r", user_id, description)
 
             # 获取 IndexManager
@@ -92,7 +93,9 @@ async def handle_sim(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
                 return
             except ValueError:
                 logger.warning(
-                    "用户 %s 的 /sim embedding 异常: description=%r", user_id, description
+                    "用户 %s 的 /sim embedding 异常: description=%r",
+                    user_id,
+                    description,
                 )
                 session_manager.deactivate_chat(user_id)
                 await matcher.finish("AI 服务暂时不可用，稍后重试")
@@ -109,7 +112,10 @@ async def handle_sim(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
                 await matcher.finish("没有找到匹配的表情包 🙁")
                 return
 
-            await dispatch_search_results(bot, event, matcher, results, options=SIM_OPTIONS)
+            logger.info("/sim 召回结果数: %d", len(results))
+            await dispatch_search_results(
+                bot, event, matcher, results, options=SIM_OPTIONS
+            )
         except asyncio.CancelledError:
             session_manager.deactivate_chat(user_id)
             raise FinishedException

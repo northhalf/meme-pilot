@@ -7,9 +7,9 @@
 import asyncio
 import hashlib
 import logging
+import uuid
 from datetime import datetime
 from pathlib import Path
-import uuid
 
 import httpx
 from nonebot import on_command
@@ -32,10 +32,10 @@ from bot.engine.index_manager import (
     resolve_unique_filename,
 )
 from bot.engine.retry_config import api_retry
-from bot.plugins._help_text import HELP_TEXT
-from bot.session import session_manager, timeout_session
-from bot.plugins._search_utils import got_intercept_bypass, format_metadata_line
 from bot.log_context import generate_request_id, set_request_id
+from bot.plugins._help_text import HELP_TEXT
+from bot.plugins._search_utils import format_metadata_line, got_intercept_bypass
+from bot.session import session_manager, timeout_session
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +89,7 @@ async def handle_add(
             tags = parts[1:] if len(parts) > 1 else []
             matcher.state["speaker"] = speaker
             matcher.state["tags"] = tags
+            logger.debug("/add 参数: speaker=%r, tags=%r", speaker, tags)
 
             selection_id = str(uuid.uuid4())
             task = asyncio.create_task(
@@ -123,7 +124,6 @@ async def got_image(
     user_id = event.get_user_id()
     request_id = generate_request_id()
     with set_request_id(request_id):
-
         with session_manager.handler_context(user_id, matcher):
             try:
                 # ── 阶段 0：/help 和 /cancel 旁路拦截 ──
@@ -157,6 +157,11 @@ async def got_image(
                 image_url = urls[0]
                 speaker = matcher.state.get("speaker")
                 tags = matcher.state.get("tags", [])
+                logger.debug(
+                    "/add 收到图片 URL: %r, 扩展名: %r",
+                    image_url,
+                    Path(image_url.split("?")[0]).suffix,
+                )
 
                 # 下载图片
                 try:
@@ -189,6 +194,8 @@ async def got_image(
                     await matcher.finish("图片保存失败")
                     return
 
+                logger.info("图片已保存: %s", filename)
+
                 # 调用 IndexManager 处理
                 try:
                     result = await index_manager.add(
@@ -212,11 +219,16 @@ async def got_image(
                 except EmbeddingError as exc:
                     logger.error("Embedding 失败: %s", exc)
                     msg = "Embedding 服务不可用"
-                except Exception as exc:
+                except Exception:
                     logger.exception("添加表情包异常")
                     msg = "添加失败，请查看日志"
                 else:
                     # 成功：回复结果
+                    logger.info(
+                        "/add 成功: entry_id=%s, reason=%s",
+                        result.entry_id,
+                        result.reason,
+                    )
                     session_manager.deactivate_chat(user_id)
                     if result.reason == "no_text":
                         await matcher.finish("未识别到文字，已移至 meme_no_text/")
@@ -224,17 +236,25 @@ async def got_image(
                         ocr_display = _format_ocr_text(result.text)
                         await matcher.finish(
                             f"替换旧图✅，id：{result.entry_id}，识别到的文字为：\n「{ocr_display}」\n"
-                            f"{format_metadata_line(entry_id = result.entry_id, # pyright: ignore[reportArgumentType]
-                                                    speaker=result.speaker,
-                                                      tags=result.tags)}"
+                            f"{
+                                format_metadata_line(
+                                    entry_id=result.entry_id,  # pyright: ignore[reportArgumentType]
+                                    speaker=result.speaker,
+                                    tags=result.tags,
+                                )
+                            }"
                         )
                     else:
                         ocr_display = _format_ocr_text(result.text)
                         await matcher.finish(
                             f"新增表情包✅，id：{result.entry_id}，识别到的文字为：\n「{ocr_display}」\n"
-                            f"{format_metadata_line(entry_id = result.entry_id, # pyright: ignore[reportArgumentType]
-                                                    speaker=result.speaker,
-                                                      tags=result.tags)}"
+                            f"{
+                                format_metadata_line(
+                                    entry_id=result.entry_id,  # pyright: ignore[reportArgumentType]
+                                    speaker=result.speaker,
+                                    tags=result.tags,
+                                )
+                            }"
                         )
                     return
 

@@ -66,6 +66,7 @@ async def handle_plain_text(bot: Bot, event: MessageEvent, matcher: Matcher) -> 
                 return
 
             if text.startswith("/"):
+                logger.debug("普通文本命中帮助旁路")
                 logger.info("用户 %s 发送未知命令: %r", user_id, text)
                 await matcher.finish(f"未知命令\n\n{HELP_TEXT}")
                 return

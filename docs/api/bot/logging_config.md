@@ -2,6 +2,13 @@
 
 > 本文档只记录模块对外接口。模块内部 `_` 前缀函数和方法不在此列出。
 
+## 模块级常量
+
+| 常量 | 类型 | 值 | 说明 |
+|------|------|------|------|
+| `MAX_LOG_FILE_BYTES` | `int` | `10_485_760` | 单个日志文件大小上限，10 MB |
+| `MAX_LOG_BACKUP_COUNT` | `int` | `3` | 滚动日志保留的备份文件数量 |
+
 ## 模块级函数
 
 ### `setup_logging(log_dir: str = "log") -> None`
@@ -19,7 +26,7 @@
 
 | 处理器 | 目标 | 级别 | 格式 |
 |--------|------|------|------|
-| `RotatingFileHandler` | `<log_dir>/bot.log`，单文件不超过 1 MB，保留 1 个备份 | DEBUG | `时间 - 模块名 - 级别 - 消息` |
+| `RotatingFileHandler` | `<log_dir>/bot.log`，单文件不超过 10 MB，保留 3 个备份 | DEBUG | `时间 - 模块名 - 级别 - 消息` |
 | `StreamHandler` | stdout | INFO | `时间 - 模块名 - 级别 - 消息` |
 
 启动时调用一次。自动创建 `<log_dir>` 目录。

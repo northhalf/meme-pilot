@@ -23,10 +23,10 @@ from bot.engine.index_manager import (
     IndexAddCancelledError,
     RefreshInProgressError,
 )
+from bot.log_context import generate_request_id, set_request_id
 from bot.plugins._help_text import HELP_TEXT
 from bot.plugins._search_utils import got_intercept_bypass
 from bot.session import session_manager, timeout_session
-from bot.log_context import generate_request_id, set_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +88,8 @@ async def handle_edit(
                 await matcher.finish("新文本不能为空")
                 return
 
+            logger.debug("/edittext 参数: entry_id=%s, new_text=%r", entry_id, new_text)
+
             # 校验 entry 存在
             store = get_metadata_store()
             entry = store.get_entry(entry_id)
@@ -110,7 +112,9 @@ async def handle_edit(
             # 注册超时
             selection_id = str(uuid.uuid4())
             task = asyncio.create_task(
-                timeout_session(bot, event, user_id, selection_id, "修改已取消（超时）"),
+                timeout_session(
+                    bot, event, user_id, selection_id, "修改已取消（超时）"
+                ),
             )
             session_manager.create_selection(user_id, selection_id, task)
             session_manager.reset_current_task(user_id)
@@ -137,7 +141,6 @@ async def got_confirm(
     user_id = event.get_user_id()
     request_id = generate_request_id()
     with set_request_id(request_id):
-
         with session_manager.handler_context(user_id, matcher):
             try:
                 text = event.get_plaintext().strip()
@@ -169,6 +172,7 @@ async def got_confirm(
                         await matcher.finish("修改失败（Embedding 异常），请稍后重试")
                     else:
                         session_manager.deactivate_chat(user_id)
+                        logger.info("/edittext 成功: entry_id=%s", entry_id)
                         await matcher.finish(
                             f"OCR 文本已修改 ✅\n"
                             f"旧：{result.old_text}\n"
@@ -177,6 +181,7 @@ async def got_confirm(
                         return
                 else:
                     session_manager.deactivate_chat(user_id)
+                    logger.info("用户 %s 取消 /edittext", user_id)
                     await matcher.finish("已取消修改")
 
                 # 异常统一清理

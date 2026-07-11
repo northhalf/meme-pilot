@@ -24,6 +24,7 @@ from bot.app_state import get_index_manager
 from bot.auth import is_authorized, log_unauthorized
 from bot.config import MEMES_DIR
 from bot.log_context import generate_request_id, set_request_id
+from bot.plugins._help_text import HELP_TEXT
 from bot.plugins._search_utils import (
     dispatch_search_results,
     format_metadata_line,
@@ -31,7 +32,6 @@ from bot.plugins._search_utils import (
     present_candidates,
     resolve_selection,
 )
-from bot.plugins._help_text import HELP_TEXT
 from bot.session import session_manager
 
 logger = logging.getLogger(__name__)
@@ -73,6 +73,8 @@ async def handle_rand(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
             keyword = raw_text.removeprefix("/rand").removeprefix("rand").strip()
             keyword = keyword or None
 
+            logger.debug("/rand 关键词: %r", keyword)
+
             # 获取 IndexManager
             try:
                 index_manager = get_index_manager()
@@ -107,6 +109,7 @@ async def handle_rand(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
 
             # 保存关键词，供换一批复用
             matcher.state["keyword"] = keyword
+            logger.info("/rand 发送结果数: %d", len(results))
             await dispatch_search_results(
                 bot, event, matcher, results, prompt_suffix="回复 0 换一批"
             )

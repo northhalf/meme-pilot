@@ -242,7 +242,7 @@ docker compose up -d
 # 5. 查看日志
 docker compose logs -f bot
 
-# 日志同时写入 log/bot.log（滚动日志，单文件 <= 1MB，最多保留 1 个备份 bot.log.1）
+# 日志同时写入 log/bot.log（滚动日志，单文件 <= 10MB，最多保留 3 个备份 bot.log.1~3）
 # 文件日志级别为 DEBUG，控制台为 INFO
 ```
 
@@ -380,8 +380,10 @@ meme-pilot/
 │   ├── index.db             # sqlite 元数据（id、image_path、text、speaker + meme_tag）
 │   └── chroma/              # ChromaDB 向量库（collection memes，cosine）
 ├── log/                     # 日志目录（Docker 卷挂载）
-│   ├── bot.log              # 当前日志（<= 1MB）
-│   └── bot.log.1            # 上一份日志备份
+│   ├── bot.log              # 当前日志（<= 10MB）
+│   ├── bot.log.1            # 上一份日志备份
+│   ├── bot.log.2            # 上二份日志备份
+│   └── bot.log.3            # 上三份日志备份
 ├── scripts/
 │   └── convert_memes_to_webp.py # 存量图片批量转 WebP 迁移脚本
 ├── tests/                   # 测试目录规划

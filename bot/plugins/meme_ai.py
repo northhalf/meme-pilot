@@ -16,10 +16,9 @@ from nonebot.rule import to_me
 from bot.app_state import get_index_manager
 from bot.auth import is_authorized, log_unauthorized
 from bot.config import MEMES_DIR
-from bot.engine.ai_matcher import AIMatchResult
+from bot.log_context import generate_request_id, set_request_id
 from bot.plugins._search_utils import format_metadata_line
 from bot.session import session_manager
-from bot.log_context import generate_request_id, set_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +76,8 @@ async def handle_ai(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
                 await matcher.finish("/ai <自然语言描述>")
                 return
 
+            logger.debug("/ai 描述: %r", description)
+
             # 并发：发送进度提示 + 执行 AI 匹配
             try:
                 _, match_result = await asyncio.gather(
@@ -103,6 +104,8 @@ async def handle_ai(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
                 session_manager.deactivate_chat(user_id)
                 await matcher.finish("没有找到匹配的表情包 🙁")
                 return
+
+            logger.info("/ai 命中 entry_id=%s", match_result.entry_id)
 
             # 发送匹配图片（本地文件使用 file:/// URI）
             image_path = MEMES_DIR / match_result.image_path

@@ -2,7 +2,7 @@
 
 通过 setup_logging() 配置机器人日志：
 - 只配置最顶层的 "bot" logger，子 logger 通过继承关系获取配置
-- RotatingFileHandler：写入 log/bot.log，DEBUG 级别，单文件 <= 1MB，保留 1 个备份
+- RotatingFileHandler：写入 log/bot.log，DEBUG 级别，单文件 <= 10 MB，保留 3 个备份
 - StreamHandler：输出到 stdout，INFO 级别
 - 第三方库（uvicorn、websockets 等）的日志不影响 bot.log
 """
@@ -13,6 +13,10 @@ from pathlib import Path
 
 from bot.log_context import RequestIdFilter
 
+# 日志文件滚动配置
+MAX_LOG_FILE_BYTES: int = 10_485_760  # 10 MB
+MAX_LOG_BACKUP_COUNT: int = 3
+
 
 def setup_logging(log_dir: str = "log") -> None:
     """配置 bot 日志滚动机制。
@@ -22,7 +26,7 @@ def setup_logging(log_dir: str = "log") -> None:
 
     日志同时输出到：
     - stdout（INFO 级别及以上）
-    - <log_dir>/bot.log（DEBUG 级别及以上，单文件 <= 1MB，保留 1 个备份）
+    - <log_dir>/bot.log（DEBUG 级别及以上，单文件 <= 10 MB，保留 3 个备份）
 
     Args:
         log_dir: 日志目录路径，默认 "log"。
@@ -36,8 +40,8 @@ def setup_logging(log_dir: str = "log") -> None:
 
     file_handler = RotatingFileHandler(
         _log_dir / "bot.log",
-        maxBytes=1_048_576,
-        backupCount=1,
+        maxBytes=MAX_LOG_FILE_BYTES,
+        backupCount=MAX_LOG_BACKUP_COUNT,
         encoding="utf-8",
     )
     file_handler.setLevel(logging.DEBUG)

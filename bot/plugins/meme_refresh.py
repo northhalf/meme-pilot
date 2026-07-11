@@ -16,8 +16,8 @@ from nonebot.rule import to_me
 from bot.app_state import get_index_manager
 from bot.auth import is_authorized, log_unauthorized
 from bot.engine.index_manager import RefreshInProgressError
-from bot.session import session_manager
 from bot.log_context import generate_request_id, set_request_id
+from bot.session import session_manager
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +70,15 @@ async def handle_refresh(bot: Bot, event: MessageEvent, matcher: Matcher) -> Non
             try:
                 await bot.send(event, "正在刷新索引，请稍候...")
                 result = await index_manager.refresh()
+                logger.info("用户 %s 的 /refresh 完成", user_id)
+                logger.info(
+                    "/refresh 统计: 新增=%d, 删除=%d, 去重=%d, 无文字移走=%d, 失败=%d",
+                    result.added,
+                    result.deleted,
+                    result.deduped,
+                    result.no_text_moved,
+                    len(result.failed),
+                )
             except RefreshInProgressError:
                 logger.info("用户 %s 触发刷新但已有任务在运行", user_id)
                 session_manager.deactivate_chat(user_id)

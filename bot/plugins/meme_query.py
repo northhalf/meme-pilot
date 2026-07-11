@@ -21,6 +21,7 @@ from nonebot.params import Arg, CommandArg
 from nonebot.rule import to_me
 
 from bot.auth import is_authorized, log_unauthorized
+from bot.log_context import generate_request_id, set_request_id
 from bot.plugins._search_utils import (
     NEXT_PAGE_TRIGGER,
     PresentOptions,
@@ -28,7 +29,6 @@ from bot.plugins._search_utils import (
     handle_got_selection,
 )
 from bot.session import session_manager
-from bot.log_context import generate_request_id, set_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +115,9 @@ async def handle_query(
                 await matcher.finish(QUERY_USAGE)
                 return
 
+            logger.debug(
+                "/query 参数: keyword=%r, speakers=%s, tags=%s", keyword, speakers, tags
+            )
             logger.info(
                 "用户 %s 组合检索: keyword=%r, speakers=%r, tags=%r",
                 user_id,

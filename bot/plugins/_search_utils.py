@@ -14,8 +14,8 @@ from typing import Literal
 from nonebot.adapters.onebot.v11 import (
     Bot,
     Message,
-    MessageSegment,
     MessageEvent,
+    MessageSegment,
 )
 from nonebot.exception import FinishedException, RejectedException
 from nonebot.matcher import Matcher
@@ -23,9 +23,7 @@ from nonebot.matcher import Matcher
 from bot.app_state import get_index_manager
 from bot.config import MEMES_DIR
 from bot.engine.types import SearchResult
-
 from bot.plugins._help_text import HELP_TEXT
-
 from bot.session import session_manager, timeout_session
 
 logger = logging.getLogger(__name__)
@@ -305,6 +303,7 @@ async def execute_search(
     # 执行搜索
     try:
         results = await index_manager.search(keyword)
+        logger.info("search 搜索结果数: %d", len(results))
     except asyncio.TimeoutError:
         logger.info("用户 %s 的搜索等待读锁超时", user_id)
         session_manager.deactivate_chat(user_id)
@@ -355,6 +354,7 @@ async def execute_combined_search(
 
     try:
         results = await index_manager.search_combined(keyword, speakers, tags)
+        logger.info("/query 结果数: %d", len(results))
     except asyncio.TimeoutError:
         logger.info("用户 %s 的组合检索等待读锁超时", user_id)
         session_manager.deactivate_chat(user_id)

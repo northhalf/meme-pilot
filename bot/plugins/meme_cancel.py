@@ -46,3 +46,5 @@ async def handle_cancel(bot: Bot, event: MessageEvent, matcher: Matcher) -> None
         succeed_cancel = await session_manager.execute_cancel(user_id)
         if not succeed_cancel:
             await matcher.finish("当前没有活跃的会话")
+
+        logger.info("用户 %s 的 /cancel 成功", user_id)

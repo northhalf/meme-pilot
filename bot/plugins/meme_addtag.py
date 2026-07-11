@@ -84,6 +84,8 @@ async def handle_addtag(
             # 解析标签，过滤空串
             tags = [tag.strip() for tag in parts[1].split() if tag.strip()]
 
+            logger.debug("/addtag 参数: entry_id=%s, tags=%r", entry_id, tags)
+
             # 校验 entry 存在
             store = get_metadata_store()
             entry = store.get_entry(entry_id)
@@ -173,6 +175,9 @@ async def got_confirm(
                         await matcher.finish(f"未找到 id 为 {entry_id} 的表情包")
                     else:
                         session_manager.deactivate_chat(user_id)
+                        logger.info(
+                            "/addtag 成功: entry_id=%s, tags=%r", entry_id, tags
+                        )
                         added_text = (
                             ", ".join(result.added_tags) if result.added_tags else "无"
                         )
@@ -187,6 +192,7 @@ async def got_confirm(
                         return
                 else:
                     session_manager.deactivate_chat(user_id)
+                    logger.info("用户 %s 取消 /addtag", user_id)
                     await matcher.finish("已取消")
 
                 # 异常统一清理

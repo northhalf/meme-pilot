@@ -702,7 +702,7 @@ Bot 持读锁查询 entry_id=42，读取文件大小，组装回复：
 - 支持手动向 memes/ 目录添加图片后 `/refresh` 更新
 - 新增图片压缩/转换成功后会直接覆盖 `memes/` 中的原图片文件（转 WebP 时生成新 `.webp` 文件并删除原文件）
 - 日志通过 `logging_config.py` 中的 `setup_logging()` 统一配置，同时输出到 stdout（`docker compose logs` 可查看）和文件 `log/bot.log`
-- 文件日志采用滚动机制：`bot.log` 为当前文件，`bot.log.1` 为上一份备份；单个文件上限 1 MB，由 Python 标准库 `RotatingFileHandler` 管理
+- 文件日志采用滚动机制：`bot.log` 为当前文件，`bot.log.1` / `bot.log.2` / `bot.log.3` 为备份；单个文件上限 10 MB，由 Python 标准库 `RotatingFileHandler` 管理
 - stdout 日志级别为 INFO，文件日志级别为 DEBUG
 - `log/` 目录通过 Docker 卷 `./log:/app/log` 挂载到宿主机，`log/` 不纳入版本控制
 
@@ -804,8 +804,10 @@ meme-pilot/
 │   ├── index.db               # sqlite 元数据：id、image_path、text、speaker + meme_tag
 │   └── chroma/                # ChromaDB 向量库（collection memes，cosine）
 ├── log/                       # 日志目录（不纳入版本控制，Docker 卷挂载）
-│   ├── bot.log                # 当前日志文件（<= 1MB）
-│   └── bot.log.1              # 上一份日志备份
+│   ├── bot.log                # 当前日志文件（<= 10MB）
+│   ├── bot.log.1              # 上一份日志备份
+│   ├── bot.log.2              # 上二份日志备份
+│   └── bot.log.3              # 上三份日志备份
 ├── scripts/
 │   └── convert_memes_to_webp.py # 存量图片批量转 WebP + 更新 index.db 迁移脚本
 ├── tests/                     # 测试目录规划
