@@ -104,15 +104,23 @@ with session_manager.handler_context(scope, matcher):
     ...
 ```
 
-### `execute_cancel(scope, message="当前会话已取消") -> bool`
+### `execute_cancel(scope: ChatScope, event: MessageEvent, message="当前会话已取消") -> bool`
 
 执行取消逻辑。
 
 1. 检查是否有活跃会话，无则返回 `False`
 2. `current_task.cancel()`（非当前 task 且未完成时）
 3. `remove_selection()` + 取消 `timeout_task`
-4. 在旧 matcher 上 `finish()`（发送 `message` 到原上下文）
+4. 在旧 matcher 上通过 `reply_utils.finish(event, chat.matcher, message)` 发送 `message` 到原上下文（群聊自动带 reply）
 5. `deactivate_chat(scope)`
+
+**参数：**
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `scope` | `ChatScope` | 要取消的聊天作用域 |
+| `event` | `MessageEvent` | 当前消息事件，用于构造群聊 reply |
+| `message` | `str` | 取消提示文本，默认 `"当前会话已取消"` |
 
 **返回：** `True` 表示成功重置对话，`False` 表示无活跃会话（调用方处理提示）。
 
@@ -120,12 +128,12 @@ with session_manager.handler_context(scope, matcher):
 
 ## 模块级工具函数
 
-### `timeout_session(bot, event, scope, selection_id, message, *, on_cleanup=None, timeout=None) -> None`
+### `timeout_session(bot: Bot, event: MessageEvent, scope: ChatScope, selection_id: str, message: str, *, on_cleanup=None, timeout=None) -> None`
 
 会话超时检查任务。
 
 超时后按 `scope + selection_id` 双重校验：
-- 匹配 → `remove_selection` + `deactivate_chat` 清理会话 + 可选 `on_cleanup` + 发送超时提示
+- 匹配 → `remove_selection` + `deactivate_chat` 清理会话 + 可选 `on_cleanup` + 通过 `reply_utils.bot_send(event, bot, message)` 发送超时提示（群聊自动带 reply）
 - 不匹配（被新选择或 /cancel 覆盖）→ 静默退出
 
 支持 `CancelledError` 捕获，超时任务可被外部取消。内部通过 `session_manager.get_selection()` 公共方法访问会话状态。

@@ -14,12 +14,12 @@ from typing import Any, Awaitable, Literal
 
 from nonebot.adapters.onebot.v11 import (
     Bot,
-    Event,
     MessageEvent,
 )
 from nonebot.exception import FinishedException
 from nonebot.matcher import Matcher
 
+from bot import reply as reply_utils
 from bot.config import read_session_timeout
 
 logger = logging.getLogger(__name__)
@@ -262,7 +262,10 @@ class SessionManager:
     # ── 取消 ──
 
     async def execute_cancel(
-        self, scope: ChatScope, message: str = "当前会话已取消"
+        self,
+        scope: ChatScope,
+        event: MessageEvent,
+        message: str = "当前会话已取消",
     ) -> bool:
         """执行取消逻辑。
 
@@ -279,10 +282,11 @@ class SessionManager:
 
         Args:
             scope: 聊天作用域。
+            event: 当前消息事件，用于构造群聊 reply。
             message: 结束事件的提示信息。
 
         Returns:
-            bool: 无活跃会话返回 False，成功返回 True。
+            无活跃会话返回 False，成功返回 True。
         """
         chat = self._chat_sessions.get(scope)
         if not (chat and chat.active):
@@ -305,7 +309,7 @@ class SessionManager:
         # finish 老 matcher（发送取消消息到原上下文）
         if chat.matcher:
             try:
-                await chat.matcher.finish(message)
+                await reply_utils.finish(event, chat.matcher, message)
             except FinishedException:
                 pass
 
@@ -322,7 +326,7 @@ session_manager = SessionManager()
 
 async def timeout_session(
     bot: Bot,
-    event: Event,
+    event: MessageEvent,
     scope: ChatScope,
     selection_id: str,
     message: str,
@@ -363,6 +367,6 @@ async def timeout_session(
             if asyncio.iscoroutine(result) or asyncio.isfuture(result):
                 await result
         try:
-            await bot.send(event, message)
+            await reply_utils.bot_send(event, bot, message)
         except Exception:
             logger.debug("发送超时消息失败", exc_info=True)

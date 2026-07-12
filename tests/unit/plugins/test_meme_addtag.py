@@ -3,7 +3,10 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from nonebot.adapters.onebot.v11 import Message
+
 from bot.engine.index_manager import AddTagResult
+from tests.conftest import extract_message_text
 
 
 # 在导入插件前 mock nonebot.on_command，避免 NoneBot2 完整初始化
@@ -105,11 +108,16 @@ class TestHandleAddtag:
             bot = _make_bot()
             event = _make_event()
             event.message_type = "group"
+            event.message_id = 123456
             matcher = _make_matcher()
 
             asyncio.run(handle_addtag(bot, event, matcher, args=_make_message("")))  # type: ignore[arg-type]
 
-            matcher.finish.assert_awaited_once_with("此命令仅限私聊使用")
+            matcher.finish.assert_awaited_once()
+            msg = matcher.finish.await_args[0][0]
+            assert extract_message_text(msg) == "此命令仅限私聊使用"
+            if isinstance(msg, Message):
+                assert msg[0].type == "reply"
 
     def test_active_session_conflict(self) -> None:
         """已有活跃会话 → 提示 /cancel。"""
@@ -126,7 +134,9 @@ class TestHandleAddtag:
 
             asyncio.run(handle_addtag(bot, event, matcher, args=_make_message("3 标签")))  # type: ignore[arg-type]
 
-            matcher.finish.assert_awaited_once_with("已有命令在处理中，请先 /cancel")
+            matcher.finish.assert_awaited_once()
+            msg = matcher.finish.await_args[0][0]
+            assert extract_message_text(msg) == "已有命令在处理中，请先 /cancel"
 
     def test_missing_args(self) -> None:
         """无参数 → 回复用法提示。"""
@@ -145,7 +155,7 @@ class TestHandleAddtag:
 
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
-            assert "用法" in msg
+            assert "用法" in extract_message_text(msg)
 
     def test_missing_tags(self) -> None:
         """只有 entry_id 无标签 → 回复用法提示。"""
@@ -164,7 +174,7 @@ class TestHandleAddtag:
 
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
-            assert "用法" in msg
+            assert "用法" in extract_message_text(msg)
 
     def test_invalid_entry_id(self) -> None:
         """非数字 entry_id → 回复 entry_id 必须为数字。"""
@@ -181,7 +191,9 @@ class TestHandleAddtag:
 
             asyncio.run(handle_addtag(bot, event, matcher, args=_make_message("abc 标签")))  # type: ignore[arg-type]
 
-            matcher.finish.assert_awaited_once_with("entry_id 必须为数字")
+            matcher.finish.assert_awaited_once()
+            msg = matcher.finish.await_args[0][0]
+            assert extract_message_text(msg) == "entry_id 必须为数字"
 
     def test_entry_not_found(self) -> None:
         """entry_id 不存在 → 回复未找到。"""
@@ -205,7 +217,7 @@ class TestHandleAddtag:
 
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
-            assert "未找到" in msg
+            assert "未找到" in extract_message_text(msg)
 
     def test_confirmation_message(self) -> None:
         """参数合法 → 发送确认消息并保存 state。"""
@@ -231,12 +243,12 @@ class TestHandleAddtag:
             # 应只发送一条确认消息（不发送图片）
             matcher.send.assert_awaited_once()
             msg = matcher.send.await_args[0][0]
-            assert "当前 OCR 文本" in msg
-            assert "当前标签" in msg
-            assert "新增标签" in msg
-            assert "新增1" in msg
-            assert "新增2" in msg
-            assert "已有" in msg
+            assert "当前 OCR 文本" in extract_message_text(msg)
+            assert "当前标签" in extract_message_text(msg)
+            assert "新增标签" in extract_message_text(msg)
+            assert "新增1" in extract_message_text(msg)
+            assert "新增2" in extract_message_text(msg)
+            assert "已有" in extract_message_text(msg)
 
             assert matcher.state["entry_id"] == 3
             assert matcher.state["tags"] == ["新增1", "新增2"]
@@ -279,9 +291,9 @@ class TestGotConfirm:
             im.add_tags.assert_awaited_once_with(3, ["新增1", "新增2"])
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
-            assert "已添加" in msg
-            assert "新增1" in msg
-            assert "已有" in msg
+            assert "已添加" in extract_message_text(msg)
+            assert "新增1" in extract_message_text(msg)
+            assert "已有" in extract_message_text(msg)
 
     def test_confirm_yes_english(self) -> None:
         """用户回复 yes → 调用 add_tags。"""
@@ -323,7 +335,9 @@ class TestGotConfirm:
 
             asyncio.run(got_confirm(bot, event, matcher, _make_message(event.get_plaintext())))  # type: ignore[arg-type]
 
-            matcher.finish.assert_awaited_once_with("已取消")
+            matcher.finish.assert_awaited_once()
+            msg = matcher.finish.await_args[0][0]
+            assert extract_message_text(msg) == "已取消"
 
     def test_cancel_intercept(self) -> None:
         """等待确认时 /cancel → 旁路取消。"""

@@ -13,6 +13,7 @@ from nonebot.exception import FinishedException
 from nonebot.matcher import Matcher
 from nonebot.rule import to_me
 
+from bot import reply as reply_utils
 from bot.app_state import get_index_manager
 from bot.auth import is_authorized, log_unauthorized
 from bot.config import MEMES_DIR
@@ -52,12 +53,14 @@ async def handle_ai(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
             # 群聊拦截：/ai 仅限私聊使用
             if event.message_type != "private":
                 logger.info("用户 %s 在群聊中调用 /ai，已拒绝", user_id)
-                await matcher.finish("此命令仅限私聊使用")
+                await reply_utils.finish(event, matcher, "此命令仅限私聊使用")
                 return
 
             # 会话激活
             if not session_manager.activate_chat(scope, "ai", matcher):
-                await matcher.finish("已有命令在处理中，请先 /cancel")
+                await reply_utils.finish(
+                    event, matcher, "已有命令在处理中，请先 /cancel"
+                )
                 return
 
             # 获取 IndexManager
@@ -66,7 +69,7 @@ async def handle_ai(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
             except RuntimeError:
                 logger.error("IndexManager 尚未初始化")
                 session_manager.deactivate_chat(scope)
-                await matcher.finish("服务未就绪，请稍后再试")
+                await reply_utils.finish(event, matcher, "服务未就绪，请稍后再试")
                 return
 
             # 提取描述
@@ -74,7 +77,7 @@ async def handle_ai(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
             description = raw_text.removeprefix("/ai").removeprefix("ai").strip()
             if not description:
                 session_manager.deactivate_chat(scope)
-                await matcher.finish("/ai <自然语言描述>")
+                await reply_utils.finish(event, matcher, "/ai <自然语言描述>")
                 return
 
             logger.debug("/ai 描述: %r", description)
@@ -82,28 +85,30 @@ async def handle_ai(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
             # 并发：发送进度提示 + 执行 AI 匹配
             try:
                 _, match_result = await asyncio.gather(
-                    matcher.send("正在根据你的描述搜索表情包，请稍候..."),
+                    reply_utils.send(
+                        event, matcher, "正在根据你的描述搜索表情包，请稍候..."
+                    ),
                     index_manager.ai_match(description),
                 )
             except asyncio.TimeoutError:
                 logger.info("用户 %s 的 /ai 等待读锁超时", user_id)
                 session_manager.deactivate_chat(scope)
-                await matcher.finish("索引更新较慢，请稍后再试")
+                await reply_utils.finish(event, matcher, "索引更新较慢，请稍后再试")
                 return
             except ValueError:
                 logger.warning("AI 匹配 embedding 异常: description=%r", description)
                 session_manager.deactivate_chat(scope)
-                await matcher.finish("AI 服务暂时不可用，稍后重试")
+                await reply_utils.finish(event, matcher, "AI 服务暂时不可用，稍后重试")
                 return
             except Exception:
                 logger.exception("AI 匹配异常: description=%r", description)
                 session_manager.deactivate_chat(scope)
-                await matcher.finish("AI 服务暂时不可用，稍后重试")
+                await reply_utils.finish(event, matcher, "AI 服务暂时不可用，稍后重试")
                 return
 
             if match_result is None:
                 session_manager.deactivate_chat(scope)
-                await matcher.finish("没有找到匹配的表情包 🙁")
+                await reply_utils.finish(event, matcher, "没有找到匹配的表情包 🙁")
                 return
 
             logger.info("/ai 命中 entry_id=%s", match_result.entry_id)
@@ -114,12 +119,14 @@ async def handle_ai(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
             await matcher.send(
                 MessageSegment.image("file://" + str(image_path.resolve()))
             )
-            await matcher.finish(
+            await reply_utils.finish(
+                event,
+                matcher,
                 format_metadata_line(
                     match_result.entry_id,
                     match_result.speaker,
                     match_result.tags,
-                )
+                ),
             )
         except asyncio.CancelledError:
             session_manager.deactivate_chat(scope)

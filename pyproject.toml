@@ -39,3 +39,6 @@ testpaths = ["tests"]
 venvPath = "."
 venv = ".venv"
 pythonVersion = "3.12"
+
+[tool.ty.src]
+include = ["bot", "tests"]

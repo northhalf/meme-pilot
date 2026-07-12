@@ -4,6 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from tests.conftest import _assert_has_reply, _assert_no_reply, extract_message_text
+
 
 # ---------------------------------------------------------------------------
 # 在导入插件前 mock nonebot.on_message，
@@ -24,12 +26,16 @@ with patch("nonebot.on_message", return_value=_mock_message):
 # ---------------------------------------------------------------------------
 
 
-def _make_event(user_id: str = "12345", text: str = "") -> MagicMock:
+def _make_event(
+    user_id: str = "12345", text: str = "", message_type: str = "private"
+) -> MagicMock:
     """创建模拟的 MessageEvent。"""
     event = MagicMock()
     event.get_user_id.return_value = user_id
     event.get_plaintext.return_value = text
-    event.message_type = "private"
+    event.message_type = message_type
+    if message_type == "group":
+        event.message_id = 123456
     return event
 
 
@@ -79,8 +85,10 @@ class TestHandleUnknownSlashCommand:
 
         matcher.finish.assert_awaited_once()
         call_args = matcher.finish.call_args[0][0]
-        assert "未知命令" in call_args
-        assert "/help" in call_args
+        text = extract_message_text(call_args)
+        assert "未知命令" in text
+        assert "/help" in text
+        _assert_no_reply(call_args)
 
     @pytest.mark.asyncio
     @patch.object(meme_plain_text, "is_authorized", return_value=False)
@@ -97,6 +105,24 @@ class TestHandleUnknownSlashCommand:
 
         _mock_message.finish.assert_not_called()
         bot.send.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch.object(meme_plain_text, "is_authorized", return_value=True)
+    async def test_unknown_slash_command_group_reply(
+        self, mock_auth: MagicMock
+    ) -> None:
+        """群聊中未知斜杠命令应带 reply。"""
+        _reset_mocks()
+        matcher = _make_matcher()
+
+        await handle_plain_text(
+            _make_bot(), _make_event("111", "/foo", message_type="group"), matcher
+        )
+
+        matcher.finish.assert_awaited_once()
+        reply = matcher.finish.call_args[0][0]
+        _assert_has_reply(reply)
+        assert "未知命令" in extract_message_text(reply)
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +174,34 @@ class TestHandlePlainTextAsSearch:
         )
 
         matcher.finish.assert_awaited_once()
-        assert "已有命令在处理中" in matcher.finish.call_args[0][0]
+        msg = matcher.finish.call_args[0][0]
+        text = extract_message_text(msg)
+        assert "已有命令在处理中" in text
+        _assert_no_reply(msg)
+        mock_exec.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch.object(meme_plain_text, "execute_search", new_callable=AsyncMock)
+    @patch.object(meme_plain_text.session_manager, "activate_chat", return_value=False)
+    @patch.object(meme_plain_text, "is_authorized", return_value=True)
+    async def test_plain_text_with_session_busy_group_reply(
+        self,
+        mock_auth: MagicMock,
+        mock_activate: MagicMock,
+        mock_exec: MagicMock,
+    ) -> None:
+        """群聊中有活跃会话时应带 reply 提示。"""
+        _reset_mocks()
+        matcher = _make_matcher()
+
+        await handle_plain_text(
+            _make_bot(), _make_event("111", "加班", message_type="group"), matcher
+        )
+
+        matcher.finish.assert_awaited_once()
+        reply = matcher.finish.call_args[0][0]
+        _assert_has_reply(reply)
+        assert "已有命令在处理中" in extract_message_text(reply)
         mock_exec.assert_not_awaited()
 
     @pytest.mark.asyncio

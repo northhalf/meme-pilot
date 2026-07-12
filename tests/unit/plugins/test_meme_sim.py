@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from bot.engine.types import SearchResult
+from tests.conftest import _assert_has_reply, _assert_no_reply, extract_message_text
 
 _mock_cmd = MagicMock()
 _mock_cmd.handle.return_value = lambda fn: fn
@@ -15,11 +16,17 @@ with patch("nonebot.on_command", return_value=_mock_cmd):
     from bot.plugins.meme_sim import handle_sim
 
 
-def _make_event(user_id: str = "12345", text: str = "/sim 心累的加班") -> MagicMock:
+def _make_event(
+    user_id: str = "12345",
+    text: str = "/sim 心累的加班",
+    message_type: str = "private",
+) -> MagicMock:
     event = MagicMock()
-    event.message_type = "private"
+    event.message_type = message_type
     event.get_user_id.return_value = user_id
     event.get_plaintext.return_value = text
+    if message_type == "group":
+        event.message_id = 123456
     return event
 
 
@@ -100,7 +107,31 @@ class TestHandleSimDelegation:
         matcher = _make_matcher()
         await handle_sim(_make_bot(), _make_event(text="/sim"), matcher)
 
-        matcher.finish.assert_awaited_once_with("/sim <描述文本>")
+        matcher.finish.assert_awaited_once()
+        msg = matcher.finish.call_args[0][0]
+        assert extract_message_text(msg) == "/sim <描述文本>"
+        _assert_no_reply(msg)
+
+    @pytest.mark.asyncio
+    @patch.object(meme_sim.session_manager, "activate_chat", return_value=True)
+    @patch.object(meme_sim.session_manager, "deactivate_chat")
+    @patch.object(meme_sim, "is_authorized", return_value=True)
+    async def test_empty_description_replies_usage_group_reply(
+        self,
+        mock_auth: MagicMock,
+        mock_deactivate: MagicMock,
+        mock_activate: MagicMock,
+    ) -> None:
+        """群聊中缺少描述时应带 reply 返回用法。"""
+        matcher = _make_matcher()
+        await handle_sim(
+            _make_bot(), _make_event(text="/sim", message_type="group"), matcher
+        )
+
+        matcher.finish.assert_awaited_once()
+        reply = matcher.finish.call_args[0][0]
+        _assert_has_reply(reply)
+        assert extract_message_text(reply) == "/sim <描述文本>"
 
 
 class TestHandleSimEmptyResults:
@@ -120,7 +151,34 @@ class TestHandleSimEmptyResults:
 
             await handle_sim(_make_bot(), _make_event(), matcher)
 
-            matcher.finish.assert_awaited_once_with("没有找到匹配的表情包 🙁")
+            matcher.finish.assert_awaited_once()
+            msg = matcher.finish.call_args[0][0]
+            assert "没有找到匹配" in extract_message_text(msg)
+            _assert_no_reply(msg)
+
+    @pytest.mark.asyncio
+    @patch.object(meme_sim.session_manager, "activate_chat", return_value=True)
+    @patch.object(meme_sim.session_manager, "deactivate_chat")
+    @patch.object(meme_sim, "is_authorized", return_value=True)
+    async def test_no_results_replies_not_found_group_reply(
+        self,
+        mock_auth: MagicMock,
+        mock_deactivate: MagicMock,
+        mock_activate: MagicMock,
+    ) -> None:
+        """群聊中无结果时应带 reply 提示。"""
+        with patch.object(meme_sim, "get_index_manager") as mock_get_im:
+            mock_get_im.return_value.semantic_search = AsyncMock(return_value=[])
+            matcher = _make_matcher()
+
+            await handle_sim(
+                _make_bot(), _make_event(message_type="group"), matcher
+            )
+
+            matcher.finish.assert_awaited_once()
+            reply = matcher.finish.call_args[0][0]
+            _assert_has_reply(reply)
+            assert "没有找到匹配" in extract_message_text(reply)
 
 
 class TestHandleSimErrors:
@@ -143,7 +201,37 @@ class TestHandleSimErrors:
             await handle_sim(_make_bot(), _make_event(), matcher)
 
             matcher.finish.assert_awaited_once()
-            assert "索引更新较慢" in matcher.finish.call_args[0][0]
+            msg = matcher.finish.call_args[0][0]
+            assert "索引更新较慢" in extract_message_text(msg)
+            _assert_no_reply(msg)
+
+    @pytest.mark.asyncio
+    @patch.object(meme_sim.session_manager, "activate_chat", return_value=True)
+    @patch.object(meme_sim.session_manager, "deactivate_chat")
+    @patch.object(meme_sim, "is_authorized", return_value=True)
+    async def test_timeout_replies_slow_group_reply(
+        self,
+        mock_auth: MagicMock,
+        mock_deactivate: MagicMock,
+        mock_activate: MagicMock,
+    ) -> None:
+        """群聊中超时时应带 reply 提示。"""
+        import asyncio
+
+        with patch.object(meme_sim, "get_index_manager") as mock_get_im:
+            mock_get_im.return_value.semantic_search = AsyncMock(
+                side_effect=asyncio.TimeoutError()
+            )
+            matcher = _make_matcher()
+
+            await handle_sim(
+                _make_bot(), _make_event(message_type="group"), matcher
+            )
+
+            matcher.finish.assert_awaited_once()
+            reply = matcher.finish.call_args[0][0]
+            _assert_has_reply(reply)
+            assert "索引更新较慢" in extract_message_text(reply)
 
     @pytest.mark.asyncio
     @patch.object(meme_sim.session_manager, "activate_chat", return_value=True)
@@ -161,7 +249,36 @@ class TestHandleSimErrors:
 
             await handle_sim(_make_bot(), _make_event(), matcher)
 
-            matcher.finish.assert_awaited_once_with("AI 服务暂时不可用，稍后重试")
+            matcher.finish.assert_awaited_once()
+            msg = matcher.finish.call_args[0][0]
+            assert extract_message_text(msg) == "AI 服务暂时不可用，稍后重试"
+            _assert_no_reply(msg)
+
+    @pytest.mark.asyncio
+    @patch.object(meme_sim.session_manager, "activate_chat", return_value=True)
+    @patch.object(meme_sim.session_manager, "deactivate_chat")
+    @patch.object(meme_sim, "is_authorized", return_value=True)
+    async def test_embedding_error_replies_unavailable_group_reply(
+        self,
+        mock_auth: MagicMock,
+        mock_deactivate: MagicMock,
+        mock_activate: MagicMock,
+    ) -> None:
+        """群聊中 AI 异常时应带 reply 提示。"""
+        with patch.object(meme_sim, "get_index_manager") as mock_get_im:
+            mock_get_im.return_value.semantic_search = AsyncMock(
+                side_effect=ValueError("零向量")
+            )
+            matcher = _make_matcher()
+
+            await handle_sim(
+                _make_bot(), _make_event(message_type="group"), matcher
+            )
+
+            matcher.finish.assert_awaited_once()
+            reply = matcher.finish.call_args[0][0]
+            _assert_has_reply(reply)
+            assert extract_message_text(reply) == "AI 服务暂时不可用，稍后重试"
 
 
 class TestHandleSimOptions:

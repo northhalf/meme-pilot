@@ -11,6 +11,9 @@ from bot.engine.types import SearchResult
 from bot.session import ChatScope
 
 
+from tests.conftest import extract_message_text
+
+
 def _make_search_result(
     entry_id: int = 1,
     image_path: str = "test.jpg",
@@ -120,7 +123,7 @@ class TestResolveSelection:
 
 
 def _make_index_manager(
-    *, results: list | None = None, search_side_effect: Exception | None = None
+    *, results: list[SearchResult] | None = None, search_side_effect: Exception | None = None
 ) -> MagicMock:
     im = MagicMock()
     if search_side_effect is not None:
@@ -157,7 +160,7 @@ class TestPresentCandidates:
 
         assert "candidates" in cmd.state
         assert "selection_id" in cmd.state
-        sent_text = cmd.send.call_args[0][0]
+        sent_text = extract_message_text(cmd.send.call_args[0][0])
         assert "1. 甲 -- 1, 小明, 吐槽" in sent_text
         assert "2. 乙 -- 2, 无, 搞笑" in sent_text
         _mock_create_selection.assert_called_once()
@@ -184,7 +187,7 @@ class TestPresentCandidates:
             prompt_suffix="回复 0 换一批",
         )
 
-        sent_text = cmd.send.call_args[0][0]
+        sent_text = extract_message_text(cmd.send.call_args[0][0])
         assert "回复 0 换一批" in sent_text
 
     @pytest.mark.asyncio
@@ -207,7 +210,7 @@ class TestPresentCandidates:
             _make_bot(), _make_event("111"), cmd, candidates, options=opts
         )
 
-        sent_text = cmd.send.call_args[0][0]
+        sent_text = extract_message_text(cmd.send.call_args[0][0])
         assert "1. 甲 -- 1, 无, 82%" in sent_text
 
     @pytest.mark.asyncio
@@ -230,7 +233,7 @@ class TestPresentCandidates:
             _make_bot(), _make_event("111"), cmd, candidates, options=opts
         )
 
-        assert "82%" in cmd.send.call_args[0][0]
+        assert "82%" in extract_message_text(cmd.send.call_args[0][0])
 
     @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.session_manager.create_selection")
@@ -255,7 +258,7 @@ class TestPresentCandidates:
             has_next_page=True,
         )
 
-        assert "回复 n 看下一页" in cmd.send.call_args[0][0]
+        assert "回复 n 看下一页" in extract_message_text(cmd.send.call_args[0][0])
 
     @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.session_manager.create_selection")
@@ -280,7 +283,7 @@ class TestPresentCandidates:
             has_next_page=False,
         )
 
-        assert "回复 n 看下一页" not in cmd.send.call_args[0][0]
+        assert "回复 n 看下一页" not in extract_message_text(cmd.send.call_args[0][0])
 
     @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.session_manager.create_selection")
@@ -303,7 +306,7 @@ class TestPresentCandidates:
             prompt_suffix="回复 0 换一批",
         )
 
-        sent_text = cmd.send.call_args[0][0]
+        sent_text = extract_message_text(cmd.send.call_args[0][0])
         assert "%" not in sent_text
         assert "回复 n 看下一页" not in sent_text
         assert "回复 0 换一批" in sent_text
@@ -381,7 +384,7 @@ class TestPresentCandidates:
         assert isinstance(sent, Message)
         assert sent[0].type == "reply"
         assert sent[0].data["id"] == "42"
-        assert "找到多个匹配的表情包" in sent[1].data["text"]
+        assert "找到多个匹配的表情包" in extract_message_text(sent)
 
 
 class TestDispatchSearchResults:
@@ -401,7 +404,7 @@ class TestDispatchSearchResults:
             await dispatch_search_results(_make_bot(), event, cmd, [])
 
             cmd.finish.assert_awaited_once()
-            assert "没有匹配到" in cmd.finish.call_args[0][0]
+            assert "没有匹配到" in extract_message_text(cmd.finish.call_args[0][0])
             mock_deactivate.assert_called_once_with(ChatScope.from_event(event))
 
     @pytest.mark.asyncio
@@ -462,7 +465,6 @@ class TestDispatchSearchResults:
         assert kwargs["options"] is opts
         assert kwargs["has_next_page"] is False
         assert kwargs["prompt_suffix"] == "回复 0 换一批"
-        assert kwargs["options"].reply_in_group is True
         # 第 1 页切片
         assert mock_present.call_args.args[3] == results[0:10]
         # 分页状态
@@ -518,7 +520,7 @@ class TestExecuteSearch:
         await execute_search(_make_bot(), event, _cmd, "加班")
 
         _cmd.finish.assert_awaited_once()
-        assert "索引更新较慢" in _cmd.finish.call_args[0][0]
+        assert "索引更新较慢" in extract_message_text(_cmd.finish.call_args[0][0])
 
     @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.session_manager.deactivate_chat")
@@ -537,7 +539,7 @@ class TestExecuteSearch:
         await execute_search(_make_bot(), event, _cmd, "xyz")
 
         _cmd.finish.assert_awaited_once()
-        assert "没有匹配到" in _cmd.finish.call_args[0][0]
+        assert "没有匹配到" in extract_message_text(_cmd.finish.call_args[0][0])
         mock_deactivate.assert_called_once_with(ChatScope.from_event(event))
 
     @pytest.mark.asyncio
@@ -569,7 +571,7 @@ class TestExecuteSearch:
 
         _cmd.send.assert_awaited_once()
         _cmd.finish.assert_awaited_once()
-        finished_text = _cmd.finish.call_args[0][0]
+        finished_text = extract_message_text(_cmd.finish.call_args[0][0])
         assert "7" in finished_text
         assert "小明" in finished_text
         mock_deactivate.assert_called_once_with(ChatScope.from_event(event))
@@ -621,7 +623,7 @@ class TestExecuteSearch:
         await execute_search(_make_bot(), event, _cmd, "加班")
 
         _cmd.finish.assert_awaited_once()
-        assert "搜索服务暂时不可用" in _cmd.finish.call_args[0][0]
+        assert "搜索服务暂时不可用" in extract_message_text(_cmd.finish.call_args[0][0])
 
     @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.get_index_manager")
@@ -713,7 +715,7 @@ class TestGotInterceptBypass:
     """got_intercept_bypass 测试。"""
 
     @pytest.mark.asyncio
-    async def test_normal_text_returns_false(self):
+    async def test_normal_text_returns_false(self) -> None:
         """普通文本返回 False。"""
         from bot.plugins._search_utils import got_intercept_bypass
 
@@ -723,7 +725,7 @@ class TestGotInterceptBypass:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_help_returns_true(self):
+    async def test_help_returns_true(self) -> None:
         """/help 拦截后抛出 RejectedException。"""
         from bot.plugins._search_utils import got_intercept_bypass
 
@@ -735,7 +737,7 @@ class TestGotInterceptBypass:
         matcher.reject.assert_called_once_with("帮助文本")
 
     @pytest.mark.asyncio
-    async def test_cancel_returns_true(self):
+    async def test_cancel_returns_true(self) -> None:
         """/cancel 拦截后返回 True。"""
         from bot.plugins._search_utils import got_intercept_bypass
         from bot.session import session_manager
@@ -748,7 +750,7 @@ class TestGotInterceptBypass:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_help_with_args_matches(self):
+    async def test_help_with_args_matches(self) -> None:
         """/help xxx（带参数）也匹配帮助，抛出 RejectedException。"""
         from bot.plugins._search_utils import got_intercept_bypass
 
@@ -760,7 +762,7 @@ class TestGotInterceptBypass:
         matcher.reject.assert_called_once_with("帮助文本")
 
     @pytest.mark.asyncio
-    async def test_cancel_with_args_matches(self):
+    async def test_cancel_with_args_matches(self) -> None:
         """/cancel xxx（带参数）也匹配取消。"""
         from bot.plugins._search_utils import got_intercept_bypass
         from bot.session import session_manager
@@ -895,7 +897,6 @@ class TestHandleGotSelectionPagination:
         assert matcher.state["page_index"] == 1
         mock_present.assert_awaited_once()
         assert mock_present.call_args.kwargs["has_next_page"] is True
-        assert mock_present.call_args.kwargs["options"].reply_in_group is True
         assert len(mock_present.call_args.args[3]) == 10  # 第 2 页 10 条
         # 翻页在 got 内，必须用 reject 重新等待，否则 matcher 结束
         assert mock_present.call_args.kwargs["use_reject"] is True
@@ -903,16 +904,14 @@ class TestHandleGotSelectionPagination:
     @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.session_manager.handler_context")
     @patch("bot.plugins._search_utils.session_manager.get_selection")
-    @patch("bot.plugins._search_utils.reject_with_reply", new_callable=AsyncMock)
     @patch("bot.plugins._search_utils.got_intercept_bypass", new_callable=AsyncMock)
     async def test_next_trigger_on_last_page_rejects(
         self,
         mock_bypass: AsyncMock,
-        mock_reject_with_reply: AsyncMock,
         mock_get_selection: MagicMock,
         mock_ctx: MagicMock,
     ) -> None:
-        """末页回复 n 时 reject"没有更多结果了"，page_index 不变。"""
+        """末页回复 n 时在群聊中以 reply 形式 reject，page_index 不变。"""
         from contextlib import contextmanager
 
         from bot.plugins._search_utils import handle_got_selection, PresentOptions
@@ -929,9 +928,10 @@ class TestHandleGotSelectionPagination:
             "total_pages": 1,
             "candidates": all_results,
         }
-        event = _make_event("111")
+        event = _make_event(
+            "111", message_id=42, message_type="group", group_id=67890
+        )
         event.get_plaintext.return_value = "n"
-        event.message_id = 42
         msg = MagicMock()
         msg.extract_plain_text.return_value = "n"
         opts = PresentOptions(next_trigger="n")
@@ -946,9 +946,12 @@ class TestHandleGotSelectionPagination:
             _make_bot(), event, matcher, msg, "搜索", options=opts
         )
 
-        mock_reject_with_reply.assert_awaited_once_with(
-            matcher, event, "没有更多结果了"
-        )
+        matcher.reject.assert_awaited_once()
+        rejected = matcher.reject.call_args[0][0]
+        assert isinstance(rejected, Message)
+        assert rejected[0].type == "reply"
+        assert rejected[0].data["id"] == "42"
+        assert "没有更多结果了" in extract_message_text(rejected)
         assert matcher.state["page_index"] == 0
 
     @pytest.mark.asyncio
@@ -997,7 +1000,7 @@ class TestHandleGotSelectionPagination:
 
         matcher.send.assert_awaited_once()
         matcher.finish.assert_awaited_once()
-        finished_text = matcher.finish.call_args[0][0]
+        finished_text = extract_message_text(matcher.finish.call_args[0][0])
         assert "7, 小明" in finished_text
         assert "%" not in finished_text
 
@@ -1057,7 +1060,7 @@ class TestExecuteCombinedSearch:
         )
 
         matcher.finish.assert_awaited_once()
-        assert "索引更新较慢" in matcher.finish.call_args[0][0]
+        assert "索引更新较慢" in extract_message_text(matcher.finish.call_args[0][0])
 
     @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.get_index_manager", side_effect=RuntimeError())

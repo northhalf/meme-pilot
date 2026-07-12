@@ -20,6 +20,7 @@ from nonebot.matcher import Matcher
 from nonebot.params import Arg, CommandArg
 from nonebot.rule import to_me
 
+from bot import reply as reply_utils
 from bot.auth import is_authorized, log_unauthorized
 from bot.log_context import generate_request_id, set_request_id
 from bot.plugins._search_utils import (
@@ -104,7 +105,9 @@ async def handle_query(
                 return
 
             if not session_manager.activate_chat(scope, "query", matcher):
-                await matcher.finish("已有命令在处理中，请先 /cancel")
+                await reply_utils.finish(
+                    event, matcher, "已有命令在处理中，请先 /cancel"
+                )
                 return
 
             text = args.extract_plain_text().strip()
@@ -113,7 +116,7 @@ async def handle_query(
             if not keyword and not speakers and not tags:
                 session_manager.deactivate_chat(scope)
                 logger.info("用户 %s 的 /query 缺少参数", user_id)
-                await matcher.finish(QUERY_USAGE)
+                await reply_utils.finish(event, matcher, QUERY_USAGE)
                 return
 
             logger.debug(

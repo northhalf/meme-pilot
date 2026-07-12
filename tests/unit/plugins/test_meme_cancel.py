@@ -4,8 +4,10 @@ from typing import Any, Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from nonebot.adapters.onebot.v11 import Message
 
 from bot.session import ChatScope, session_manager
+from tests.conftest import extract_message_text
 
 
 # ---------------------------------------------------------------------------
@@ -72,8 +74,25 @@ class TestCancelCommand:
             await handle_cancel(bot, event, matcher)
 
         # 应调用 matcher.finish 且内容包含"没有活跃"
-        finish_text = matcher.finish.call_args[0][0]
-        assert "没有活跃" in finish_text
+        msg = matcher.finish.await_args[0][0]
+        assert "没有活跃" in extract_message_text(msg)
+
+    @pytest.mark.asyncio
+    async def test_cancel_without_active_session_in_group(self) -> None:
+        """群聊中无活跃会话时提示应包含 reply segment。"""
+        matcher = AsyncMock()
+        bot = AsyncMock()
+        event = _make_event("1001")
+        event.message_type = "group"
+        event.message_id = 123456
+
+        with patch("bot.plugins.meme_cancel.is_authorized", return_value=True):
+            await handle_cancel(bot, event, matcher)
+
+        msg = matcher.finish.await_args[0][0]
+        assert "没有活跃" in extract_message_text(msg)
+        if isinstance(msg, Message):
+            assert msg[0].type == "reply"
 
     @pytest.mark.asyncio
     async def test_unauthorized(self) -> None:

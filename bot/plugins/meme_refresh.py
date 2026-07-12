@@ -13,6 +13,7 @@ from nonebot.exception import FinishedException
 from nonebot.matcher import Matcher
 from nonebot.rule import to_me
 
+from bot import reply as reply_utils
 from bot.app_state import get_index_manager
 from bot.auth import is_authorized, log_unauthorized
 from bot.engine.index_manager import RefreshInProgressError
@@ -51,12 +52,14 @@ async def handle_refresh(bot: Bot, event: MessageEvent, matcher: Matcher) -> Non
             # 群聊拦截：/refresh 仅限私聊使用
             if event.message_type != "private":
                 logger.info("用户 %s 在群聊中调用 /refresh，已拒绝", user_id)
-                await matcher.finish("此命令仅限私聊使用")
+                await reply_utils.finish(event, matcher, "此命令仅限私聊使用")
                 return
 
             # 会话激活
             if not session_manager.activate_chat(scope, "refresh", matcher):
-                await matcher.finish("已有命令在处理中，请先 /cancel")
+                await reply_utils.finish(
+                    event, matcher, "已有命令在处理中，请先 /cancel"
+                )
                 return
 
             # 获取 IndexManager
@@ -65,11 +68,11 @@ async def handle_refresh(bot: Bot, event: MessageEvent, matcher: Matcher) -> Non
             except RuntimeError:
                 logger.error("IndexManager 尚未初始化")
                 session_manager.deactivate_chat(scope)
-                await matcher.finish("服务未就绪，请稍后再试")
+                await reply_utils.finish(event, matcher, "服务未就绪，请稍后再试")
                 return
 
             try:
-                await bot.send(event, "正在刷新索引，请稍候...")
+                await reply_utils.bot_send(event, bot, "正在刷新索引，请稍候...")
                 result = await index_manager.refresh()
                 logger.info("用户 %s 的 /refresh 完成", user_id)
                 logger.info(
@@ -83,18 +86,22 @@ async def handle_refresh(bot: Bot, event: MessageEvent, matcher: Matcher) -> Non
             except RefreshInProgressError:
                 logger.info("用户 %s 触发刷新但已有任务在运行", user_id)
                 session_manager.deactivate_chat(scope)
-                await matcher.finish("已有刷新任务在进行中，请稍后再试")
+                await reply_utils.finish(
+                    event, matcher, "已有刷新任务在进行中，请稍后再试"
+                )
                 return
             except Exception:
                 logger.exception("索引刷新失败")
                 session_manager.deactivate_chat(scope)
-                await matcher.finish("索引刷新失败，请查看日志")
+                await reply_utils.finish(event, matcher, "索引刷新失败，请查看日志")
                 return
 
             # 无任何条目且无新增 → 可能 memes/ 为空
             if index_manager.entry_count == 0 and result.added == 0:
                 session_manager.deactivate_chat(scope)
-                await matcher.finish("表情包目录为空，请先添加图片并执行 /refresh")
+                await reply_utils.finish(
+                    event, matcher, "表情包目录为空，请先添加图片并执行 /refresh"
+                )
                 return
 
             # 格式化摘要
@@ -110,7 +117,7 @@ async def handle_refresh(bot: Bot, event: MessageEvent, matcher: Matcher) -> Non
                 lines.append(f"失败文件: {', '.join(shown)}")
 
             session_manager.deactivate_chat(scope)
-            await matcher.finish("\n".join(lines))
+            await reply_utils.finish(event, matcher, "\n".join(lines))
         except asyncio.CancelledError:
             session_manager.deactivate_chat(scope)
             raise FinishedException

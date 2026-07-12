@@ -20,6 +20,7 @@ from nonebot.matcher import Matcher
 from nonebot.params import Arg
 from nonebot.rule import to_me
 
+from bot import reply as reply_utils
 from bot.app_state import get_index_manager
 from bot.auth import is_authorized, log_unauthorized
 from bot.config import MEMES_DIR
@@ -30,7 +31,6 @@ from bot.plugins._search_utils import (
     format_metadata_line,
     got_intercept_bypass,
     present_candidates,
-    reject_with_reply,
     resolve_selection,
 )
 from bot.session import ChatScope, session_manager
@@ -67,7 +67,9 @@ async def handle_rand(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
 
             # 会话互斥：拒绝而非覆盖
             if not session_manager.activate_chat(scope, "rand", matcher):
-                await matcher.finish("已有命令在处理中，请先 /cancel")
+                await reply_utils.finish(
+                    event, matcher, "已有命令在处理中，请先 /cancel"
+                )
                 return
 
             # 提取关键词
@@ -83,7 +85,7 @@ async def handle_rand(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
             except RuntimeError:
                 logger.error("IndexManager 尚未初始化")
                 session_manager.deactivate_chat(scope)
-                await matcher.finish("服务未就绪，请稍后再试")
+                await reply_utils.finish(event, matcher, "服务未就绪，请稍后再试")
                 return
 
             # 执行随机搜索
@@ -92,21 +94,23 @@ async def handle_rand(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
             except asyncio.TimeoutError:
                 logger.info("用户 %s 的 /rand 等待读锁超时", user_id)
                 session_manager.deactivate_chat(scope)
-                await matcher.finish("索引更新较慢，请稍后再试")
+                await reply_utils.finish(event, matcher, "索引更新较慢，请稍后再试")
                 return
             except Exception:
                 logger.exception("随机搜索异常: keyword=%r", keyword)
                 session_manager.deactivate_chat(scope)
-                await matcher.finish("搜索服务暂时不可用，稍后重试")
+                await reply_utils.finish(event, matcher, "搜索服务暂时不可用，稍后重试")
                 return
 
             # 空结果分支
             if not results:
                 session_manager.deactivate_chat(scope)
                 if keyword:
-                    await matcher.finish("没有匹配到任何表情包 🙁")
+                    await reply_utils.finish(event, matcher, "没有匹配到任何表情包 🙁")
                 else:
-                    await matcher.finish("表情包目录为空，请先添加图片并执行 /refresh")
+                    await reply_utils.finish(
+                        event, matcher, "表情包目录为空，请先添加图片并执行 /refresh"
+                    )
                 return
 
             # 保存关键词，供换一批复用
@@ -150,7 +154,7 @@ async def got_rand_selection(
                 ss = session_manager.get_selection(scope)
                 if ss is None:
                     session_manager.deactivate_chat(scope)
-                    await matcher.finish("选择已过期，请重新搜索")
+                    await reply_utils.finish(event, matcher, "选择已过期，请重新搜索")
                     return
 
                 selection_text = selection_msg.extract_plain_text().strip()
@@ -162,21 +166,23 @@ async def got_rand_selection(
                         index_manager = get_index_manager()
                         new_results = await index_manager.random_search(keyword)
                     except asyncio.TimeoutError:
-                        await reject_with_reply(
-                            matcher, event, "索引更新较慢，请稍后再试"
+                        await reply_utils.reject(
+                            event, matcher, "索引更新较慢，请稍后再试"
                         )
                         return
                     except Exception:
                         logger.exception("用户 %s 的 /rand 换一批异常", user_id)
-                        await reject_with_reply(
-                            matcher, event, "搜索服务暂时不可用，稍后重试"
+                        await reply_utils.reject(
+                            event, matcher, "搜索服务暂时不可用，稍后重试"
                         )
                         return
 
                     if not new_results:
                         session_manager.remove_selection(scope)
                         session_manager.deactivate_chat(scope)
-                        await matcher.finish("出现错误，无法搜索到任何结果")
+                        await reply_utils.finish(
+                            event, matcher, "出现错误，无法搜索到任何结果"
+                        )
                         return
 
                     session_manager.remove_selection(scope)
@@ -194,7 +200,7 @@ async def got_rand_selection(
                 candidates = matcher.state.get("candidates", [])
                 result = resolve_selection(candidates, selection_text)
                 if isinstance(result, str):
-                    await reject_with_reply(matcher, event, result + "\n回复 0 换一批")
+                    await reply_utils.reject(event, matcher, result + "\n回复 0 换一批")
                     return
 
                 session_manager.remove_selection(scope)
@@ -202,8 +208,10 @@ async def got_rand_selection(
                 await matcher.send(
                     MessageSegment.image("file://" + str(image_path.resolve()))
                 )
-                await matcher.finish(
-                    format_metadata_line(result.entry_id, result.speaker, result.tags)
+                await reply_utils.finish(
+                    event,
+                    matcher,
+                    format_metadata_line(result.entry_id, result.speaker, result.tags),
                 )
             except RejectedException:
                 raise

@@ -6,6 +6,7 @@ import pytest
 
 from bot.engine.types import SearchResult
 from bot.session import ChatScope
+from tests.conftest import _assert_has_reply, _assert_no_reply, extract_message_text
 
 
 # ---------------------------------------------------------------------------
@@ -27,11 +28,13 @@ with patch("nonebot.on_command", return_value=_mock_cmd):
 # ---------------------------------------------------------------------------
 
 
-def _make_event(user_id: str = "12345", text: str = "/rand 加班") -> MagicMock:
+def _make_event(
+    user_id: str = "12345", text: str = "/rand 加班", message_type: str = "private"
+) -> MagicMock:
     """创建模拟的 MessageEvent。"""
     event = MagicMock()
-    event.message_type = "private"
-    event.message_id = 1
+    event.message_type = message_type
+    event.message_id = 123456 if message_type == "group" else 1
     event.get_user_id.return_value = user_id
     event.get_plaintext.return_value = text
     return event
@@ -158,7 +161,33 @@ class TestHandleRandEmptyResults:
             await handle_rand(_make_bot(), _make_event(text="/rand 火星文"), matcher)
 
             matcher.finish.assert_awaited_once()
-            assert "没有匹配到" in matcher.finish.call_args[0][0]
+            msg = matcher.finish.call_args[0][0]
+            assert "没有匹配到" in extract_message_text(msg)
+            _assert_no_reply(msg)
+
+    @pytest.mark.asyncio
+    @patch.object(meme_rand.session_manager, "activate_chat", return_value=True)
+    @patch.object(meme_rand.session_manager, "deactivate_chat")
+    @patch.object(meme_rand, "is_authorized", return_value=True)
+    async def test_keyword_no_match_replies_no_results_group_reply(
+        self,
+        mock_auth: MagicMock,
+        mock_deactivate: MagicMock,
+        mock_activate: MagicMock,
+    ) -> None:
+        """群聊中关键词无匹配时应带 reply。"""
+        with patch.object(meme_rand, "get_index_manager") as mock_get_im:
+            mock_get_im.return_value.random_search = AsyncMock(return_value=[])
+            matcher = _make_matcher()
+
+            await handle_rand(
+                _make_bot(), _make_event(text="/rand 火星文", message_type="group"), matcher
+            )
+
+            matcher.finish.assert_awaited_once()
+            reply = matcher.finish.call_args[0][0]
+            _assert_has_reply(reply)
+            assert "没有匹配到" in extract_message_text(reply)
 
     @pytest.mark.asyncio
     @patch.object(meme_rand.session_manager, "activate_chat", return_value=True)
@@ -178,7 +207,33 @@ class TestHandleRandEmptyResults:
             await handle_rand(_make_bot(), _make_event(text="/rand"), matcher)
 
             matcher.finish.assert_awaited_once()
-            assert "表情包目录为空" in matcher.finish.call_args[0][0]
+            msg = matcher.finish.call_args[0][0]
+            assert "表情包目录为空" in extract_message_text(msg)
+            _assert_no_reply(msg)
+
+    @pytest.mark.asyncio
+    @patch.object(meme_rand.session_manager, "activate_chat", return_value=True)
+    @patch.object(meme_rand.session_manager, "deactivate_chat")
+    @patch.object(meme_rand, "is_authorized", return_value=True)
+    async def test_empty_index_replies_empty_dir_group_reply(
+        self,
+        mock_auth: MagicMock,
+        mock_deactivate: MagicMock,
+        mock_activate: MagicMock,
+    ) -> None:
+        """群聊中全库随机但目录为空时应带 reply。"""
+        with patch.object(meme_rand, "get_index_manager") as mock_get_im:
+            mock_get_im.return_value.random_search = AsyncMock(return_value=[])
+            matcher = _make_matcher()
+
+            await handle_rand(
+                _make_bot(), _make_event(text="/rand", message_type="group"), matcher
+            )
+
+            matcher.finish.assert_awaited_once()
+            reply = matcher.finish.call_args[0][0]
+            _assert_has_reply(reply)
+            assert "表情包目录为空" in extract_message_text(reply)
 
 
 # ===========================================================================
@@ -251,6 +306,33 @@ class TestGotRandSelection:
             mock_remove_sel.assert_called_once_with(_make_scope("12345"))
             matcher.send.assert_awaited_once()
             matcher.finish.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @patch("bot.plugins._search_utils.resolve_selection")
+    @patch("bot.plugins._search_utils.session_manager.remove_selection")
+    @patch("bot.plugins._search_utils.session_manager.activate_chat")
+    @patch("bot.plugins._search_utils.session_manager.get_selection")
+    @patch("bot.plugins._search_utils.got_intercept_bypass", return_value=False)
+    async def test_selection_expired_group_reply(
+        self,
+        mock_bypass: MagicMock,
+        mock_get_sel: MagicMock,
+        mock_activate: MagicMock,
+        mock_remove_sel: MagicMock,
+        mock_resolve: MagicMock,
+    ) -> None:
+        """群聊中选择过期时应带 reply 提示。"""
+        mock_get_sel.return_value = None
+        matcher = _make_matcher(state={"candidates": []})
+
+        await got_rand_selection(
+            _make_bot(), _make_event(text="1", message_type="group"), matcher, _make_message("1")
+        )
+
+        matcher.finish.assert_awaited_once()
+        reply = matcher.finish.call_args[0][0]
+        _assert_has_reply(reply)
+        assert "选择已过期" in extract_message_text(reply)
 
 
 # ===========================================================================

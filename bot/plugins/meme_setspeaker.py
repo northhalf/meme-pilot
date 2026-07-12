@@ -16,6 +16,7 @@ from nonebot.matcher import Matcher
 from nonebot.params import Arg, CommandArg
 from nonebot.rule import to_me
 
+from bot import reply as reply_utils
 from bot.app_state import get_index_manager, get_metadata_store
 from bot.auth import is_authorized, log_unauthorized
 from bot.config import MEMES_DIR
@@ -62,12 +63,14 @@ async def handle_setspeaker(
 
             # 仅限私聊
             if event.message_type != "private":
-                await matcher.finish("此命令仅限私聊使用")
+                await reply_utils.finish(event, matcher, "此命令仅限私聊使用")
                 return
 
             # 会话检查
             if not session_manager.activate_chat(scope, "setspeaker", matcher):
-                await matcher.finish("已有命令在处理中，请先 /cancel")
+                await reply_utils.finish(
+                    event, matcher, "已有命令在处理中，请先 /cancel"
+                )
                 return
 
             # 解析参数
@@ -75,14 +78,16 @@ async def handle_setspeaker(
             parts = text_part.split(maxsplit=1)
             if len(parts) < 1:
                 session_manager.deactivate_chat(scope)
-                await matcher.finish("用法：/setspeaker <entry_id> [说话人]")
+                await reply_utils.finish(
+                    event, matcher, "用法：/setspeaker <entry_id> [说话人]"
+                )
                 return
 
             try:
                 entry_id = int(parts[0])
             except ValueError:
                 session_manager.deactivate_chat(scope)
-                await matcher.finish("entry_id 必须为数字")
+                await reply_utils.finish(event, matcher, "entry_id 必须为数字")
                 return
 
             speaker: str | None = parts[1].strip() if len(parts) > 1 else None
@@ -96,7 +101,9 @@ async def handle_setspeaker(
             entry = store.get_entry(entry_id)
             if entry is None:
                 session_manager.deactivate_chat(scope)
-                await matcher.finish(f"未找到 id 为 {entry_id} 的表情包")
+                await reply_utils.finish(
+                    event, matcher, f"未找到 id 为 {entry_id} 的表情包"
+                )
                 return
 
             # 发送图片
@@ -109,7 +116,9 @@ async def handle_setspeaker(
             # 确认消息
             old_speaker_text = entry.speaker if entry.speaker else "(无)"
             new_speaker_text = speaker if speaker else "(无)"
-            await matcher.send(
+            await reply_utils.send(
+                event,
+                matcher,
                 f"当前说话人：{old_speaker_text}\n"
                 f"新说话人：{new_speaker_text}\n"
                 "回复「确认」或「yes」确认修改，回复其他内容取消",
@@ -175,13 +184,21 @@ async def got_confirm(
                             timeout=get_index_manager().add_user_timeout,
                         )
                     except asyncio.TimeoutError:
-                        await matcher.finish("修改处理超时，请稍后再试")
+                        await reply_utils.finish(
+                            event, matcher, "修改处理超时，请稍后再试"
+                        )
                     except IndexAddCancelledError:
-                        await matcher.finish("服务正在关闭，请稍后再试")
+                        await reply_utils.finish(
+                            event, matcher, "服务正在关闭，请稍后再试"
+                        )
                     except RefreshInProgressError:
-                        await matcher.finish("索引正在刷新，请稍后再试")
+                        await reply_utils.finish(
+                            event, matcher, "索引正在刷新，请稍后再试"
+                        )
                     except ValueError:
-                        await matcher.finish(f"未找到 id 为 {entry_id} 的表情包")
+                        await reply_utils.finish(
+                            event, matcher, f"未找到 id 为 {entry_id} 的表情包"
+                        )
                     else:
                         session_manager.deactivate_chat(scope)
                         logger.info(
@@ -191,14 +208,16 @@ async def got_confirm(
                         )
                         old_text = result.old_speaker if result.old_speaker else "无"
                         new_text = result.new_speaker if result.new_speaker else "无"
-                        await matcher.finish(
+                        await reply_utils.finish(
+                            event,
+                            matcher,
                             f"说话人已设置 ✅\n旧：{old_text}\n新：{new_text}",
                         )
                         return
                 else:
                     session_manager.deactivate_chat(scope)
                     logger.info("用户 %s 取消 /setspeaker", user_id)
-                    await matcher.finish("已取消")
+                    await reply_utils.finish(event, matcher, "已取消")
 
                 # 异常统一清理
                 session_manager.deactivate_chat(scope)

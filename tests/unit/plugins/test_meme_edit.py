@@ -4,8 +4,10 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from nonebot.adapters.onebot.v11 import Message
 
 from bot.engine.index_manager import EditTextResult
+from tests.conftest import extract_message_text
 
 # 在导入插件前 mock nonebot.on_command，避免 NoneBot2 完整初始化
 _mock_cmd = MagicMock()
@@ -99,11 +101,16 @@ class TestHandleEdit:
             bot = _make_bot()
             event = _make_event()
             event.message_type = "group"
+            event.message_id = 123456
             matcher = _make_matcher()
 
             asyncio.run(handle_edit(bot, event, matcher, args=_make_message("")))  # type: ignore[arg-type]
 
-            matcher.finish.assert_awaited_once_with("此命令仅限私聊使用")
+            matcher.finish.assert_awaited_once()
+            msg = matcher.finish.await_args[0][0]
+            assert extract_message_text(msg) == "此命令仅限私聊使用"
+            if isinstance(msg, Message):
+                assert msg[0].type == "reply"
 
     def test_invalid_args_no_text(self) -> None:
         """参数不足 → 用法提示。"""
@@ -121,7 +128,7 @@ class TestHandleEdit:
 
             matcher.finish.assert_awaited_once()
             args, _ = matcher.finish.await_args
-            assert "用法" in args[0]
+            assert "用法" in extract_message_text(args[0])
 
     def test_invalid_args_not_number(self) -> None:
         """entry_id 非数字 → 用法提示。"""
@@ -137,7 +144,9 @@ class TestHandleEdit:
 
             asyncio.run(handle_edit(bot, event, matcher, args=_make_message("abc 新文本")))  # type: ignore[arg-type]
 
-            matcher.finish.assert_awaited_once_with("entry_id 必须为数字")
+            matcher.finish.assert_awaited_once()
+            msg = matcher.finish.await_args[0][0]
+            assert extract_message_text(msg) == "entry_id 必须为数字"
 
     def test_entry_not_found(self) -> None:
         """entry_id 不存在 → 错误消息。"""
@@ -160,7 +169,7 @@ class TestHandleEdit:
 
             matcher.finish.assert_awaited_once()
             args, _ = matcher.finish.await_args
-            assert "未找到" in args[0]
+            assert "未找到" in extract_message_text(args[0])
 
     def test_active_session_conflict(self) -> None:
         """已有活跃会话 → 提示 /cancel。"""
@@ -177,7 +186,9 @@ class TestHandleEdit:
 
             asyncio.run(handle_edit(bot, event, matcher, args=_make_message("5 新文本")))  # type: ignore[arg-type]
 
-            matcher.finish.assert_awaited_once_with("已有命令在处理中，请先 /cancel")
+            matcher.finish.assert_awaited_once()
+            msg = matcher.finish.await_args[0][0]
+            assert extract_message_text(msg) == "已有命令在处理中，请先 /cancel"
 
     def test_short_command_extracts_id_and_text(self) -> None:
         """短命令 /e 的参数经 CommandArg 提取后应与 /edittext 一致。"""
@@ -225,7 +236,7 @@ class TestGotConfirm:
             }
         )
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_confirm_flow(self) -> None:
         """用户回复「确认」→ edit_text 被调用。"""
         with (
@@ -254,9 +265,9 @@ class TestGotConfirm:
             im.edit_text.assert_awaited_once_with(5, "加班到崩溃")
             matcher.finish.assert_awaited_once()
             args, _ = matcher.finish.await_args
-            assert "OCR 文本已修改" in args[0]
+            assert "OCR 文本已修改" in extract_message_text(args[0])
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_cancel_flow(self) -> None:
         """用户回复其他内容 → 回复已取消。"""
         with (
@@ -272,9 +283,11 @@ class TestGotConfirm:
 
             await got_confirm(bot, event, matcher, _make_message("不要"))
 
-            matcher.finish.assert_awaited_once_with("已取消修改")
+            matcher.finish.assert_awaited_once()
+            msg = matcher.finish.await_args[0][0]
+            assert extract_message_text(msg) == "已取消修改"
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_help_bypass(self) -> None:
         """等待确认时 /help → 旁路，不取消。"""
         with (
@@ -304,7 +317,7 @@ class TestGotConfirm:
             # bypass intercepted /help, so finish should not be called
             assert matcher.finish.call_count == 0
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_cancel_bypass(self) -> None:
         """等待确认时 /cancel → 取消，不执行修改。"""
         with (
@@ -333,7 +346,7 @@ class TestGotConfirm:
 
             assert matcher.finish.call_count == 0
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_timeout_handling(self) -> None:
         """edit_text 超时 → 回复超时消息。"""
         with (
@@ -362,4 +375,6 @@ class TestGotConfirm:
 
             await got_confirm(bot, event, matcher, _make_message("确认"))
 
-            matcher.finish.assert_awaited_once_with("修改处理超时，请稍后再试")
+            matcher.finish.assert_awaited_once()
+            msg = matcher.finish.await_args[0][0]
+            assert extract_message_text(msg) == "修改处理超时，请稍后再试"

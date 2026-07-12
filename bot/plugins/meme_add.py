@@ -20,6 +20,7 @@ from nonebot.matcher import Matcher
 from nonebot.params import Arg, CommandArg
 from nonebot.rule import to_me
 
+from bot import reply as reply_utils
 from bot.app_state import get_index_manager
 from bot.auth import is_authorized, log_unauthorized
 from bot.config import MEMES_DIR, read_session_timeout
@@ -75,12 +76,14 @@ async def handle_add(
             # 群聊拦截：/add 仅限私聊使用
             if event.message_type != "private":
                 logger.info("用户 %s 在群聊中调用 /add，已拒绝", user_id)
-                await matcher.finish("此命令仅限私聊使用")
+                await reply_utils.finish(event, matcher, "此命令仅限私聊使用")
                 return
 
             # 会话检查：拒绝而非覆盖
             if not session_manager.activate_chat(scope, "add", matcher):
-                await matcher.finish("已有命令在处理中，请先 /cancel")
+                await reply_utils.finish(
+                    event, matcher, "已有命令在处理中，请先 /cancel"
+                )
                 return
 
             # 解析 speaker 和 tags
@@ -141,7 +144,7 @@ async def got_image(
                     session_manager.deactivate_chat(scope)
                     raise
                 if not urls:
-                    await matcher.reject("请发送一张图片")
+                    await reply_utils.reject(event, matcher, "请发送一张图片")
                     return
                 # 成功发送图片
                 session_manager.remove_selection(scope)
@@ -152,7 +155,7 @@ async def got_image(
                 except RuntimeError:
                     logger.error("IndexManager 尚未初始化")
                     session_manager.deactivate_chat(scope)
-                    await matcher.finish("服务未就绪，请稍后再试")
+                    await reply_utils.finish(event, matcher, "服务未就绪，请稍后再试")
                     return
 
                 # ── 阶段 2：处理流程 ──
@@ -171,14 +174,16 @@ async def got_image(
                 except Exception as exc:
                     logger.error("图片下载失败: %s", exc)
                     session_manager.deactivate_chat(scope)
-                    await matcher.finish("图片下载失败")
+                    await reply_utils.finish(event, matcher, "图片下载失败")
                     return
 
                 # 确定扩展名
                 ext = _get_extension(image_url, response)
                 if ext is None or ext.lower() not in SUPPORTED_EXTENSIONS:
                     session_manager.deactivate_chat(scope)
-                    await matcher.finish(f"不支持的图片格式: {ext or '未知'}")
+                    await reply_utils.finish(
+                        event, matcher, f"不支持的图片格式: {ext or '未知'}"
+                    )
                     return
 
                 # 文件名处理
@@ -193,7 +198,7 @@ async def got_image(
                 except OSError as exc:
                     logger.error("保存图片失败: %s", exc)
                     session_manager.deactivate_chat(scope)
-                    await matcher.finish("图片保存失败")
+                    await reply_utils.finish(event, matcher, "图片保存失败")
                     return
 
                 logger.info("图片已保存: %s", filename)
@@ -233,37 +238,43 @@ async def got_image(
                     )
                     session_manager.deactivate_chat(scope)
                     if result.reason == "no_text":
-                        await matcher.finish("未识别到文字，已移至 meme_no_text/")
+                        await reply_utils.finish(
+                            event, matcher, "未识别到文字，已移至 meme_no_text/"
+                        )
                     elif result.reason == "replaced":
                         ocr_display = _format_ocr_text(result.text)
-                        await matcher.finish(
+                        await reply_utils.finish(
+                            event,
+                            matcher,
                             f"替换旧图✅，id：{result.entry_id}，识别到的文字为：\n「{ocr_display}」\n"
                             f"{
                                 format_metadata_line(
-                                    entry_id=result.entry_id,  # pyright: ignore[reportArgumentType]
+                                    entry_id=result.entry_id,  # pyright: ignore[reportArgumentType]  # ty:ignore[invalid-argument-type]
                                     speaker=result.speaker,
                                     tags=result.tags,
                                 )
-                            }"
+                            }",
                         )
                     else:
                         ocr_display = _format_ocr_text(result.text)
-                        await matcher.finish(
+                        await reply_utils.finish(
+                            event,
+                            matcher,
                             f"新增表情包✅，id：{result.entry_id}，识别到的文字为：\n「{ocr_display}」\n"
                             f"{
                                 format_metadata_line(
-                                    entry_id=result.entry_id,  # pyright: ignore[reportArgumentType]
+                                    entry_id=result.entry_id,  # pyright: ignore[reportArgumentType]  # ty:ignore[invalid-argument-type]
                                     speaker=result.speaker,
                                     tags=result.tags,
                                 )
-                            }"
+                            }",
                         )
                     return
 
                 # 统一错误处理：删除已保存的图片 + 清理会话
                 filepath.unlink(missing_ok=True)
                 session_manager.deactivate_chat(scope)
-                await matcher.finish(msg)
+                await reply_utils.finish(event, matcher, msg)
 
             except FinishedException:
                 session_manager.deactivate_chat(scope)

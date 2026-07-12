@@ -16,6 +16,7 @@ from nonebot.matcher import Matcher
 from nonebot.params import Arg, CommandArg
 from nonebot.rule import to_me
 
+from bot import reply as reply_utils
 from bot.app_state import get_index_manager, get_metadata_store
 from bot.auth import is_authorized, log_unauthorized
 from bot.engine.index_manager import (
@@ -59,12 +60,14 @@ async def handle_addtag(
 
             # 仅限私聊
             if event.message_type != "private":
-                await matcher.finish("此命令仅限私聊使用")
+                await reply_utils.finish(event, matcher, "此命令仅限私聊使用")
                 return
 
             # 会话检查
             if not session_manager.activate_chat(scope, "addtag", matcher):
-                await matcher.finish("已有命令在处理中，请先 /cancel")
+                await reply_utils.finish(
+                    event, matcher, "已有命令在处理中，请先 /cancel"
+                )
                 return
 
             # 解析参数
@@ -72,14 +75,16 @@ async def handle_addtag(
             parts = text_part.split(maxsplit=1)
             if len(parts) < 2:
                 session_manager.deactivate_chat(scope)
-                await matcher.finish("用法：/addtag <entry_id> <tag> [<tag>...]")
+                await reply_utils.finish(
+                    event, matcher, "用法：/addtag <entry_id> <tag> [<tag>...]"
+                )
                 return
 
             try:
                 entry_id = int(parts[0])
             except ValueError:
                 session_manager.deactivate_chat(scope)
-                await matcher.finish("entry_id 必须为数字")
+                await reply_utils.finish(event, matcher, "entry_id 必须为数字")
                 return
 
             # 解析标签，过滤空串
@@ -92,7 +97,9 @@ async def handle_addtag(
             entry = store.get_entry(entry_id)
             if entry is None:
                 session_manager.deactivate_chat(scope)
-                await matcher.finish(f"未找到 id 为 {entry_id} 的表情包")
+                await reply_utils.finish(
+                    event, matcher, f"未找到 id 为 {entry_id} 的表情包"
+                )
                 return
 
             # 确认消息（纯文本，不发送原图）
@@ -101,7 +108,9 @@ async def handle_addtag(
             new_tags_text = ", ".join(
                 [tag for tag in tags if tag not in current_tags_set]
             )
-            await matcher.send(
+            await reply_utils.send(
+                event,
+                matcher,
                 f"当前 OCR 文本：{entry.text}\n"
                 f"当前标签：{current_tags_text}\n"
                 f"新增标签：{new_tags_text}\n"
@@ -168,13 +177,21 @@ async def got_confirm(
                             timeout=get_index_manager().add_user_timeout,
                         )
                     except asyncio.TimeoutError:
-                        await matcher.finish("添加处理超时，请稍后再试")
+                        await reply_utils.finish(
+                            event, matcher, "添加处理超时，请稍后再试"
+                        )
                     except IndexAddCancelledError:
-                        await matcher.finish("服务正在关闭，请稍后再试")
+                        await reply_utils.finish(
+                            event, matcher, "服务正在关闭，请稍后再试"
+                        )
                     except RefreshInProgressError:
-                        await matcher.finish("索引正在刷新，请稍后再试")
+                        await reply_utils.finish(
+                            event, matcher, "索引正在刷新，请稍后再试"
+                        )
                     except ValueError:
-                        await matcher.finish(f"未找到 id 为 {entry_id} 的表情包")
+                        await reply_utils.finish(
+                            event, matcher, f"未找到 id 为 {entry_id} 的表情包"
+                        )
                     else:
                         session_manager.deactivate_chat(scope)
                         logger.info(
@@ -186,7 +203,9 @@ async def got_confirm(
                         all_text = (
                             ", ".join(result.all_tags) if result.all_tags else "无"
                         )
-                        await matcher.finish(
+                        await reply_utils.finish(
+                            event,
+                            matcher,
                             f"标签已添加 ✅\n"
                             f"本次新增：{added_text}\n"
                             f"全部标签：{all_text}",
@@ -195,7 +214,7 @@ async def got_confirm(
                 else:
                     session_manager.deactivate_chat(scope)
                     logger.info("用户 %s 取消 /addtag", user_id)
-                    await matcher.finish("已取消")
+                    await reply_utils.finish(event, matcher, "已取消")
 
             except FinishedException:
                 session_manager.deactivate_chat(scope)

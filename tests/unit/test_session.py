@@ -6,6 +6,7 @@ from typing import Any, Generator
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from nonebot.adapters.onebot.v11 import Message
 
 from bot.session import (
     ChatScope,
@@ -24,8 +25,29 @@ def _group_scope(user_id: int = 1001, group_id: int = 2001) -> ChatScope:
     return ChatScope(user_id=user_id, chat_type="group", chat_id=group_id)
 
 
+def _private_event(user_id: str = "1001") -> MagicMock:
+    """构造私聊事件。"""
+    event = MagicMock()
+    event.get_user_id.return_value = user_id
+    event.message_type = "private"
+    event.message_id = None
+    return event
+
+
+def _group_event(
+    user_id: str = "1001", group_id: str = "2001", message_id: int = 12345
+) -> MagicMock:
+    """构造群聊事件。"""
+    event = MagicMock()
+    event.get_user_id.return_value = user_id
+    event.message_type = "group"
+    event.group_id = group_id
+    event.message_id = message_id
+    return event
+
+
 @pytest.fixture(autouse=True)
-def _clear_sessions() -> Generator[None, Any, None]:  # type: ignore[reportUnusedFunction]
+def _clear_sessions() -> Generator[None, Any, None]:
     """每个测试前清空会话字典。"""
     session_manager._chat_sessions.clear()
     session_manager._selection_sessions.clear()
@@ -194,17 +216,19 @@ class TestExecuteCancel:
     @pytest.mark.asyncio
     async def test_no_active_session(self):
         """无活跃会话时返回 False。"""
-        result = await session_manager.execute_cancel(_private_scope())
+        result = await session_manager.execute_cancel(_private_scope(), _private_event())
         assert result is False
 
     @pytest.mark.asyncio
     async def test_cancel_active_chat(self):
-        """取消活跃会话返回 True。"""
+        """取消活跃会话返回 True，私聊下发送纯文本。"""
         scope = _private_scope()
+        event = _private_event()
         matcher = AsyncMock()
         session_manager.activate_chat(scope, "add", matcher)
-        result = await session_manager.execute_cancel(scope)
+        result = await session_manager.execute_cancel(scope, event)
         assert result is True
+        matcher.finish.assert_awaited_once_with("当前会话已取消")
         chat = session_manager.get_or_create_chat(scope)
         assert chat.active is False
 
@@ -214,16 +238,18 @@ class TestExecuteCancel:
         loop = asyncio.get_running_loop()
         task = loop.create_task(asyncio.sleep(999))
         scope = _private_scope()
+        event = _private_event()
         matcher = AsyncMock()
         session_manager.activate_chat(scope, "search", matcher)
         session_manager.create_selection(scope, "sel_001", task)
-        await session_manager.execute_cancel(scope)
+        await session_manager.execute_cancel(scope, event)
         assert session_manager.get_selection(scope) is None
 
     @pytest.mark.asyncio
     async def test_cancel_cancels_other_task(self):
         """execute_cancel 会取消当前正在运行的 current_task。"""
         scope = _private_scope()
+        event = _private_event()
         matcher = AsyncMock()
 
         async def long_running() -> None:
@@ -233,11 +259,35 @@ class TestExecuteCancel:
         session_manager.activate_chat(scope, "add", matcher)
         session_manager.set_current_task(scope, other_task)
 
-        result = await session_manager.execute_cancel(scope)
+        result = await session_manager.execute_cancel(scope, event)
         assert result is True
         await asyncio.sleep(0)  # 让取消传播
         assert other_task.cancelled()
 
+        chat = session_manager.get_or_create_chat(scope)
+        assert chat.active is False
+
+    @pytest.mark.asyncio
+    async def test_cancel_group_sends_reply_message(self):
+        """群聊取消时 matcher.finish 收到带 reply 的 Message。"""
+        scope = _group_scope()
+        event = _group_event(message_id=12345)
+        matcher = AsyncMock()
+        session_manager.activate_chat(scope, "search", matcher)
+
+        result = await session_manager.execute_cancel(scope, event)
+
+        assert result is True
+        matcher.finish.assert_awaited_once()
+        call_args = matcher.finish.await_args
+        assert call_args is not None
+        sent_message = call_args.args[0]
+        assert isinstance(sent_message, Message)
+        assert len(sent_message) == 2
+        assert sent_message[0].type == "reply"
+        assert sent_message[0].data["id"] == str(event.message_id)
+        assert sent_message[1].type == "text"
+        assert sent_message[1].data["text"] == "当前会话已取消"
         chat = session_manager.get_or_create_chat(scope)
         assert chat.active is False
 
@@ -331,11 +381,11 @@ class TestTimeoutSession:
 
     @pytest.mark.asyncio
     async def test_timeout_session_cleans_up_on_match(self):
-        """超时匹配后清理选择会话与聊天会话。"""
+        """私聊超时匹配后清理选择会话与聊天会话，并发送纯文本。"""
         import bot.session as session_module
 
         bot = AsyncMock()
-        event = MagicMock()
+        event = _private_event()
         scope = _private_scope()
 
         loop = asyncio.get_running_loop()
@@ -352,3 +402,37 @@ class TestTimeoutSession:
         chat = session_manager.get_or_create_chat(scope)
         assert chat.active is False
         bot.send.assert_awaited_once_with(event, "超时")
+
+    @pytest.mark.asyncio
+    async def test_timeout_session_group_sends_reply_message(self):
+        """群聊超时匹配后发送带 reply 的 Message。"""
+        import bot.session as session_module
+
+        bot = AsyncMock()
+        event = _group_event(message_id=12345)
+        scope = _group_scope()
+
+        loop = asyncio.get_running_loop()
+        dummy_task = loop.create_task(asyncio.sleep(999))
+        matcher = MagicMock()
+        session_manager.activate_chat(scope, "search", matcher)
+        session_manager.create_selection(scope, "sel_timeout", dummy_task)
+
+        await session_module.timeout_session(
+            bot, event, scope, "sel_timeout", "超时", timeout=0
+        )
+
+        assert session_manager.get_selection(scope) is None
+        chat = session_manager.get_or_create_chat(scope)
+        assert chat.active is False
+        bot.send.assert_awaited_once()
+        call_args = bot.send.await_args
+        assert call_args is not None
+        sent_event, sent_message = call_args.args
+        assert sent_event is event
+        assert isinstance(sent_message, Message)
+        assert len(sent_message) == 2
+        assert sent_message[0].type == "reply"
+        assert sent_message[0].data["id"] == str(event.message_id)
+        assert sent_message[1].type == "text"
+        assert sent_message[1].data["text"] == "超时"

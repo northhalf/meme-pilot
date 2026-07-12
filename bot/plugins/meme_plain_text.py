@@ -19,6 +19,7 @@ from nonebot.matcher import Matcher
 from nonebot.params import Arg
 from nonebot.rule import to_me
 
+from bot import reply as reply_utils
 from bot.auth import is_authorized, log_unauthorized
 from bot.log_context import generate_request_id, set_request_id
 from bot.plugins._help_text import HELP_TEXT
@@ -69,14 +70,16 @@ async def handle_plain_text(bot: Bot, event: MessageEvent, matcher: Matcher) -> 
             if text.startswith("/"):
                 logger.debug("普通文本命中帮助旁路")
                 logger.info("用户 %s 发送未知命令: %r", user_id, text)
-                await matcher.finish(f"未知命令\n\n{HELP_TEXT}")
+                await reply_utils.finish(event, matcher, f"未知命令\n\n{HELP_TEXT}")
                 return
 
             # 普通文本按关键词兜底搜索
             logger.info("用户 %s 的普通文本执行关键词搜索: %r", user_id, text)
             # 会话检查：拒绝而非覆盖
             if not session_manager.activate_chat(scope, "search", matcher):
-                await matcher.finish("已有命令在处理中，请先 /cancel")
+                await reply_utils.finish(
+                    event, matcher, "已有命令在处理中，请先 /cancel"
+                )
                 return
 
             await execute_search(bot, event, matcher, text, options=SEARCH_OPTIONS)

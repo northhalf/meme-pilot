@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from nonebot.adapters.onebot.v11 import Message
 
 from bot.engine.index_manager import (
     AddResult,
@@ -16,6 +17,7 @@ from bot.engine.index_manager import (
     RefreshInProgressError,
 )
 from bot.session import ChatScope
+from tests.conftest import extract_message_text
 
 # ---------------------------------------------------------------------------
 # 在导入插件前 mock nonebot.on_command，避免 NoneBot2 完整初始化。
@@ -411,13 +413,16 @@ class TestHandleAdd:
         event.get_user_id.return_value = "111"
         event.get_plaintext.return_value = "/add 测试"
         event.message_type = "group"
+        event.message_id = 123456
 
         matcher = _make_matcher()
         await handle_add(_make_bot(), event, matcher, args=_make_message("测试"))
 
         matcher.finish.assert_awaited_once()
-        call_args = matcher.finish.call_args[0][0]
-        assert "仅限私聊" in call_args
+        msg = matcher.finish.await_args[0][0]
+        assert "仅限私聊" in extract_message_text(msg)
+        if isinstance(msg, Message):
+            assert msg[0].type == "reply"
         mock_get_im.assert_not_called()
 
     @pytest.mark.asyncio
@@ -458,7 +463,8 @@ class TestHandleAdd:
         )
 
         matcher.finish.assert_awaited_once()
-        assert "已有命令在处理中" in matcher.finish.call_args[0][0]
+        msg = matcher.finish.await_args[0][0]
+        assert "已有命令在处理中" in extract_message_text(msg)
 
 
 # ===========================================================================
@@ -515,7 +521,8 @@ class TestGotImage:
         await got_image(_make_bot(), _make_event(), matcher, image_msg)
 
         matcher.reject.assert_awaited_once()
-        assert "图片" in matcher.reject.call_args[0][0]
+        msg = matcher.reject.await_args[0][0]
+        assert "图片" in extract_message_text(msg)
         mock_sm.deactivate_chat.assert_not_called()  # reject 后不反激活
 
     @pytest.mark.asyncio
@@ -535,7 +542,8 @@ class TestGotImage:
         await got_image(_make_bot(), _make_event("111"), matcher, MagicMock())
 
         matcher.finish.assert_awaited_once()
-        assert "未就绪" in matcher.finish.call_args[0][0]
+        msg = matcher.finish.await_args[0][0]
+        assert "未就绪" in extract_message_text(msg)
         mock_sm.deactivate_chat.assert_called_once_with(_make_scope("111"))
 
     @pytest.mark.asyncio
@@ -578,9 +586,10 @@ class TestGotImage:
         await got_image(bot, _make_event(), matcher, MagicMock())
 
         matcher.finish.assert_awaited_once()
-        assert "新增表情包" in matcher.finish.call_args[0][0]
+        msg = matcher.finish.await_args[0][0]
+        assert "新增表情包" in extract_message_text(msg)
         im.add.assert_awaited_once_with("a.jpg", speaker=None, tags=[])
-        assert "id：1" in matcher.finish.call_args[0][0]
+        assert "id：1" in extract_message_text(msg)
 
     @pytest.mark.asyncio
     @patch.object(meme_add, "session_manager")
@@ -622,9 +631,10 @@ class TestGotImage:
         await got_image(bot, _make_event(), matcher, MagicMock())
 
         matcher.finish.assert_awaited_once()
-        assert "新增表情包" in matcher.finish.call_args[0][0]
+        msg = matcher.finish.await_args[0][0]
+        assert "新增表情包" in extract_message_text(msg)
         im.add.assert_awaited_once_with("meme.jpg", speaker="小明", tags=["吐槽"])
-        assert "id：1" in matcher.finish.call_args[0][0]
+        assert "id：1" in extract_message_text(msg)
 
     @pytest.mark.asyncio
     @patch.object(meme_add, "session_manager")
@@ -647,7 +657,8 @@ class TestGotImage:
         await got_image(_make_bot(), _make_event(), matcher, MagicMock())
 
         matcher.finish.assert_awaited_once()
-        assert "下载失败" in matcher.finish.call_args[0][0]
+        msg = matcher.finish.await_args[0][0]
+        assert "下载失败" in extract_message_text(msg)
         mock_sm.deactivate_chat.assert_called_once_with(_make_scope("12345"))
 
     @pytest.mark.asyncio
@@ -680,7 +691,8 @@ class TestGotImage:
         await got_image(_make_bot(), _make_event(), matcher, MagicMock())
 
         matcher.finish.assert_awaited_once()
-        assert "不支持的图片格式" in matcher.finish.call_args[0][0]
+        msg = matcher.finish.await_args[0][0]
+        assert "不支持的图片格式" in extract_message_text(msg)
         mock_sm.deactivate_chat.assert_called_once_with(_make_scope("12345"))
 
     @pytest.mark.asyncio
@@ -720,7 +732,8 @@ class TestGotImage:
         await got_image(_make_bot(), _make_event(), matcher, MagicMock())
 
         matcher.finish.assert_awaited_once()
-        assert "压缩失败" in matcher.finish.call_args[0][0]
+        msg = matcher.finish.await_args[0][0]
+        assert "压缩失败" in extract_message_text(msg)
         mock_sm.deactivate_chat.assert_called_once_with(_make_scope("12345"))
 
     @pytest.mark.asyncio
@@ -760,7 +773,8 @@ class TestGotImage:
         await got_image(_make_bot(), _make_event(), matcher, MagicMock())
 
         matcher.finish.assert_awaited_once()
-        assert "OCR" in matcher.finish.call_args[0][0]
+        msg = matcher.finish.await_args[0][0]
+        assert "OCR" in extract_message_text(msg)
         mock_sm.deactivate_chat.assert_called_once_with(_make_scope("12345"))
 
     @pytest.mark.asyncio
@@ -800,7 +814,8 @@ class TestGotImage:
         await got_image(_make_bot(), _make_event(), matcher, MagicMock())
 
         matcher.finish.assert_awaited_once()
-        assert "Embedding" in matcher.finish.call_args[0][0]
+        msg = matcher.finish.await_args[0][0]
+        assert "Embedding" in extract_message_text(msg)
         mock_sm.deactivate_chat.assert_called_once_with(_make_scope("12345"))
 
     @pytest.mark.asyncio
@@ -839,7 +854,8 @@ class TestGotImage:
         await got_image(_make_bot(), _make_event(), matcher, MagicMock())
 
         matcher.finish.assert_awaited_once()
-        assert "添加失败" in matcher.finish.call_args[0][0]
+        msg = matcher.finish.await_args[0][0]
+        assert "添加失败" in extract_message_text(msg)
         mock_sm.deactivate_chat.assert_called_once_with(_make_scope("12345"))
 
     @pytest.mark.asyncio
@@ -877,7 +893,8 @@ class TestGotImage:
         await got_image(_make_bot(), _make_event(), matcher, MagicMock())
 
         matcher.finish.assert_awaited_once()
-        assert "索引正在刷新" in matcher.finish.call_args[0][0]
+        msg = matcher.finish.await_args[0][0]
+        assert "索引正在刷新" in extract_message_text(msg)
         mock_sm.deactivate_chat.assert_called_once_with(_make_scope("12345"))
 
     @pytest.mark.asyncio
@@ -915,7 +932,8 @@ class TestGotImage:
         await got_image(_make_bot(), _make_event(), matcher, MagicMock())
 
         matcher.finish.assert_awaited_once()
-        assert "添加任务已取消" in matcher.finish.call_args[0][0]
+        msg = matcher.finish.await_args[0][0]
+        assert "添加任务已取消" in extract_message_text(msg)
         mock_sm.deactivate_chat.assert_called_once_with(_make_scope("12345"))
 
     @pytest.mark.asyncio
@@ -953,7 +971,8 @@ class TestGotImage:
         await got_image(_make_bot(), _make_event(), matcher, MagicMock())
 
         matcher.finish.assert_awaited_once()
-        assert "添加处理超时" in matcher.finish.call_args[0][0]
+        msg = matcher.finish.await_args[0][0]
+        assert "添加处理超时" in extract_message_text(msg)
         mock_sm.deactivate_chat.assert_called_once_with(_make_scope("12345"))
 
     @pytest.mark.asyncio

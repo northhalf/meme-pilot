@@ -4,6 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from tests.conftest import _assert_has_reply, _assert_no_reply, extract_message_text
+
 # ---------------------------------------------------------------------------
 # 在导入插件前 mock nonebot.on_command，
 # 避免需要 NoneBot2 完整初始化。
@@ -22,11 +24,13 @@ with patch("nonebot.on_command", return_value=_mock_cmd):
 # ---------------------------------------------------------------------------
 
 
-def _make_event(user_id: str = "12345") -> MagicMock:
+def _make_event(user_id: str = "12345", message_type: str = "private") -> MagicMock:
     """创建模拟的 MessageEvent。"""
     event = MagicMock()
     event.get_user_id.return_value = user_id
-    event.message_type = "private"
+    event.message_type = message_type
+    if message_type == "group":
+        event.message_id = 123456
     return event
 
 
@@ -35,6 +39,13 @@ def _make_bot() -> MagicMock:
     bot = MagicMock()
     bot.send = AsyncMock()
     return bot
+
+
+def _make_matcher() -> MagicMock:
+    """创建模拟的 Matcher。"""
+    matcher = MagicMock()
+    matcher.finish = AsyncMock()
+    return matcher
 
 
 def _reset_mocks() -> None:
@@ -57,16 +68,19 @@ class TestHandleHelp:
     ) -> None:
         """授权用户应收到帮助文本。"""
         _reset_mocks()
+        matcher = _make_matcher()
 
-        await handle_help(_make_bot(), _make_event("111"))
+        await handle_help(_make_bot(), _make_event("111"), matcher)
 
-        _mock_cmd.finish.assert_awaited_once()
-        call_args = _mock_cmd.finish.call_args[0][0]
-        assert "/help" in call_args
-        assert "/query" in call_args
-        assert "/ai" in call_args
-        assert "/add" in call_args
-        assert "/refresh" in call_args
+        matcher.finish.assert_awaited_once()
+        call_args = matcher.finish.call_args[0][0]
+        text = extract_message_text(call_args)
+        assert "/help" in text
+        assert "/query" in text
+        assert "/ai" in text
+        assert "/add" in text
+        assert "/refresh" in text
+        _assert_no_reply(call_args)
 
     @pytest.mark.asyncio
     @patch.object(meme_help, "is_authorized", return_value=False)
@@ -76,8 +90,27 @@ class TestHandleHelp:
         """非授权用户应被静默忽略。"""
         _reset_mocks()
         bot = _make_bot()
+        matcher = _make_matcher()
 
-        await handle_help(bot, _make_event("999"))
+        await handle_help(bot, _make_event("999"), matcher)
 
         _mock_cmd.finish.assert_not_called()
+        matcher.finish.assert_not_called()
         bot.send.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch.object(meme_help, "is_authorized", return_value=True)
+    async def test_group_chat_reply(
+        self, mock_auth: MagicMock
+    ) -> None:
+        """群聊中授权用户应收到带 reply 的帮助文本。"""
+        _reset_mocks()
+        matcher = _make_matcher()
+
+        await handle_help(_make_bot(), _make_event("111", message_type="group"), matcher)
+
+        matcher.finish.assert_awaited_once()
+        reply = matcher.finish.call_args[0][0]
+        _assert_has_reply(reply)
+        text = extract_message_text(reply)
+        assert "/help" in text

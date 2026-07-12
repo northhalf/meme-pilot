@@ -20,6 +20,7 @@ from nonebot.adapters.onebot.v11 import (
 from nonebot.exception import FinishedException, RejectedException
 from nonebot.matcher import Matcher
 
+from bot import reply as reply_utils
 from bot.app_state import get_index_manager
 from bot.config import MEMES_DIR
 from bot.engine.types import SearchResult
@@ -40,21 +41,19 @@ NEXT_PAGE_TRIGGER: str = "n"
 class PresentOptions:
     """候选展示选项。
 
-    控制列表行是否展示相似度、相似度量纲、是否支持翻页、是否在群聊中引用。
+    控制列表行是否展示相似度、相似度量纲、是否支持翻页。
 
     Attributes:
         show_similarity: 是否在列表行末尾展示相似度百分比。
         similarity_scale: 相似度量纲；ratio=0–1，score=0–100。
         next_trigger: 下一页触发词；None 表示不支持翻页（如 /rand）。
         page_size: 每页条数，默认 PAGE_SIZE。
-        reply_in_group: 群聊中是否通过 MessageSegment.reply 引用当前消息。
     """
 
     show_similarity: bool = False
     similarity_scale: Literal["ratio", "score"] = "score"
     next_trigger: str | None = None
     page_size: int = PAGE_SIZE
-    reply_in_group: bool = True
 
 
 def _similarity_percent(similarity: float, scale: Literal["ratio", "score"]) -> int:
@@ -118,33 +117,6 @@ def resolve_selection(
     return candidates[choice - 1]
 
 
-async def reject_with_reply(
-    matcher: Matcher,
-    event: MessageEvent,
-    text: str,
-) -> None:
-    """在群聊中尽可能以回复形式 reject，私聊或不支持回复时退化为纯文本。
-
-    Args:
-        matcher: 当前 got handler 的 Matcher。
-        event: 消息事件，用于推导作用域与引用消息 ID。
-        text: 要发送的文本内容。
-    """
-    scope = ChatScope.from_event(event)
-    reply_message_id = event.message_id
-    if scope.chat_type == "group":
-        await matcher.reject(
-            Message(
-                [
-                    MessageSegment.reply(reply_message_id),
-                    MessageSegment.text(text),
-                ]
-            )
-        )
-    else:
-        await matcher.reject(text)
-
-
 async def got_intercept_bypass(
     event: MessageEvent,
     matcher: Matcher,
@@ -154,8 +126,8 @@ async def got_intercept_bypass(
     """Got handler 入口统一拦截 /help 和 /cancel。
 
     /cancel 分支委托给 session_manager.execute_cancel。
-    /help 分支通过 reject(help_text) 发送帮助文本并继续等待。
-    将 FinishedException 和 RejectedException 抛出
+    /help 分支通过 reply_utils.reject 发送帮助文本并继续等待。
+    FinishedException 与 RejectedException 由 reply_utils.finish/reject 自然向上传播，本函数不捕获。
 
     Args:
         event: 消息事件，用于推导作用域。
@@ -169,12 +141,16 @@ async def got_intercept_bypass(
     """
     scope = ChatScope.from_event(event)
     if text.startswith("/cancel ") or text == "/cancel":
-        if not await session_manager.execute_cancel(scope):
-            await matcher.finish("当前没有活跃的会话")  # 抛 FinishedException
+        if not await session_manager.execute_cancel(scope, event):
+            await reply_utils.finish(
+                event, matcher, "当前没有活跃的会话"
+            )  # 抛 FinishedException
         return True
 
     if text.startswith("/help ") or text == "/help":
-        await matcher.reject(help_text)  # 抛 RejectedException，以下不可达
+        await reply_utils.reject(
+            event, matcher, help_text
+        )  # 抛 RejectedException，以下不可达
         return True
 
     return False
@@ -235,25 +211,11 @@ async def present_candidates(
     session_manager.reset_current_task(scope)
 
     content = "\n".join(lines)
-    message: Message | str
-    if (
-        options.reply_in_group
-        and scope.chat_type == "group"
-        and event.message_id is not None
-    ):
-        message = Message(
-            [
-                MessageSegment.reply(event.message_id),
-                MessageSegment.text(content),
-            ]
-        )
-    else:
-        message = content
 
     if use_reject:
-        await cmd_matcher.reject(message)  # 抛 RejectedException，以下不可达
+        await reply_utils.reject(event, cmd_matcher, content)
     else:
-        await cmd_matcher.send(message)
+        await reply_utils.send(event, cmd_matcher, content)
 
 
 async def dispatch_search_results(
@@ -279,7 +241,7 @@ async def dispatch_search_results(
 
     if not results:
         session_manager.deactivate_chat(scope)
-        await cmd_matcher.finish("没有匹配到任何表情包 🙁")
+        await reply_utils.finish(event, cmd_matcher, "没有匹配到任何表情包 🙁")
         return
 
     if len(results) == 1:
@@ -289,8 +251,10 @@ async def dispatch_search_results(
         await cmd_matcher.send(
             MessageSegment.image("file://" + str(image_path.resolve()))
         )
-        await cmd_matcher.finish(
-            format_metadata_line(result.entry_id, result.speaker, result.tags)
+        await reply_utils.finish(
+            event,
+            cmd_matcher,
+            format_metadata_line(result.entry_id, result.speaker, result.tags),
         )
         return
 
@@ -339,7 +303,7 @@ async def execute_search(
     except RuntimeError:
         logger.error("IndexManager 尚未初始化")
         session_manager.deactivate_chat(scope)
-        await cmd_matcher.finish("服务未就绪，请稍后再试")
+        await reply_utils.finish(event, cmd_matcher, "服务未就绪，请稍后再试")
         return
 
     # 执行搜索
@@ -349,12 +313,12 @@ async def execute_search(
     except asyncio.TimeoutError:
         logger.info("%s 的搜索等待读锁超时", scope)
         session_manager.deactivate_chat(scope)
-        await cmd_matcher.finish("索引更新较慢，请稍后再试")
+        await reply_utils.finish(event, cmd_matcher, "索引更新较慢，请稍后再试")
         return
     except Exception:
         logger.exception("关键词搜索异常: keyword=%r", keyword)
         session_manager.deactivate_chat(scope)
-        await cmd_matcher.finish("搜索服务暂时不可用，稍后重试")
+        await reply_utils.finish(event, cmd_matcher, "搜索服务暂时不可用，稍后重试")
         return
 
     await dispatch_search_results(bot, event, cmd_matcher, results, options=options)
@@ -391,7 +355,7 @@ async def execute_combined_search(
     except RuntimeError:
         logger.error("IndexManager 尚未初始化")
         session_manager.deactivate_chat(scope)
-        await cmd_matcher.finish("服务未就绪，请稍后再试")
+        await reply_utils.finish(event, cmd_matcher, "服务未就绪，请稍后再试")
         return
 
     try:
@@ -400,7 +364,7 @@ async def execute_combined_search(
     except asyncio.TimeoutError:
         logger.info("%s 的组合检索等待读锁超时", scope)
         session_manager.deactivate_chat(scope)
-        await cmd_matcher.finish("索引更新较慢，请稍后再试")
+        await reply_utils.finish(event, cmd_matcher, "索引更新较慢，请稍后再试")
         return
     except Exception:
         logger.exception(
@@ -410,7 +374,7 @@ async def execute_combined_search(
             tags,
         )
         session_manager.deactivate_chat(scope)
-        await cmd_matcher.finish("搜索服务暂时不可用，稍后重试")
+        await reply_utils.finish(event, cmd_matcher, "搜索服务暂时不可用，稍后重试")
         return
 
     await dispatch_search_results(bot, event, cmd_matcher, results, options=options)
@@ -450,7 +414,7 @@ async def handle_got_selection(
             ss = session_manager.get_selection(scope)
             if ss is None:
                 session_manager.deactivate_chat(scope)
-                await matcher.finish("选择已过期，请重新搜索")
+                await reply_utils.finish(event, matcher, "选择已过期，请重新搜索")
                 return
 
             selection_text = selection_msg.extract_plain_text().strip()
@@ -477,14 +441,14 @@ async def handle_got_selection(
                         use_reject=True,
                     )
                 else:
-                    await reject_with_reply(matcher, event, "没有更多结果了")
+                    await reply_utils.reject(event, matcher, "没有更多结果了")
                 return
 
             # 编号选择
             candidates = matcher.state.get("candidates", [])
             result = resolve_selection(candidates, selection_text)
             if isinstance(result, str):
-                await reject_with_reply(matcher, event, result)
+                await reply_utils.reject(event, matcher, result)
                 return
 
             # 有效选择：清除选择会话
@@ -493,8 +457,10 @@ async def handle_got_selection(
             await matcher.send(
                 MessageSegment.image("file://" + str(image_path.resolve()))
             )
-            await matcher.finish(
-                format_metadata_line(result.entry_id, result.speaker, result.tags)
+            await reply_utils.finish(
+                event,
+                matcher,
+                format_metadata_line(result.entry_id, result.speaker, result.tags),
             )
 
         except RejectedException:

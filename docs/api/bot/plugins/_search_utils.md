@@ -23,7 +23,7 @@
 | `next_trigger` | `str \| None` | `None` | 下一页触发词；`None` 表示不支持翻页（如 `/rand`） |
 | `page_size` | `int` | `PAGE_SIZE` | 每页条数 |
 
-各命令传参：`/sim` 用 `show_similarity=True, similarity_scale="ratio", next_trigger="n"`；`/search` 与兜底搜索用 `show_similarity=True, similarity_scale="score", next_trigger="n"`；`/rand` 用默认值（不展示相似度、不翻页）。
+群聊 reply 处理已统一收敛到 `bot.reply`（`reply_utils.send/reject/finish`），`PresentOptions` 不再包含 `reply_in_group` 字段。
 
 ### `_similarity_percent(similarity, scale) -> int`
 
@@ -61,9 +61,9 @@
 |--|------|
 | **返回** | `None`（通过 `cmd_matcher.finish()` 直接回复） |
 
-多结果分支中，create_selection 后调用 `session_manager.reset_current_task()` 清除已结束的 handle task 引用。
+多结果分支中，create_selection 后调用 `session_manager.reset_current_task()` 清除已结束的 handle task 引用。所有文本回复通过 `reply_utils.finish` 发送，群聊自动带 reply。
 
-### `present_candidates(bot, event, cmd_matcher, candidates, *, options=PresentOptions(), page_index=0, total_pages=1, prompt_suffix="") -> None`
+### `present_candidates(bot, event, cmd_matcher, candidates, *, options=PresentOptions(), has_next_page=False, prompt_suffix="", use_reject=False) -> None`
 
 展示候选列表并创建选择会话（仅处理多结果）。
 
@@ -71,18 +71,18 @@
 |------|------|------|
 | `bot` | `Bot` | OneBot V11 Bot 实例 |
 | `event` | `MessageEvent` | 消息事件 |
-| `cmd_matcher` | `Matcher` | 调用方的 Matcher（用于 send） |
+| `cmd_matcher` | `Matcher` | 调用方的 Matcher（用于 send/reject） |
 | `candidates` | `list[SearchResult]` | 当前页候选结果切片 |
 | `options` | `PresentOptions` | 展示选项（相似度与翻页） |
-| `page_index` | `int` | 当前页索引（从 0 开始），默认 0 |
-| `total_pages` | `int` | 总页数，默认 1 |
+| `has_next_page` | `bool` | 是否还有下一页；为 True 时追加翻页提示 |
 | `prompt_suffix` | `str` | 附加在提示末尾的可选文本（如 `"回复 0 换一批"`） |
+| `use_reject` | `bool` | `True` 时用 `matcher.reject` 发送列表并继续等待下一次输入；`False` 时用 `matcher.send`（首次展示） |
 
-流程：格式化候选列表（`format_metadata_line`，按 `options` 追加相似度百分比）-> 存储 `candidates` 与 `selection_id` 到 `matcher.state` -> send 列表（仅当 `page_index+1 < total_pages` 追加"回复 n 看下一页"）-> 创建 `timeout_session` 超时任务 -> `session_manager.create_selection` 注册选择会话 -> `reset_current_task` 清理已结束的 handle task。每次调用重置 `SESSION_EXPIRE_TIMEOUT`。
+流程：格式化候选列表（`format_metadata_line`，按 `options` 追加相似度百分比）-> 存储 `candidates` 与 `selection_id` 到 `matcher.state` -> 通过 `reply_utils.send` 或 `reply_utils.reject` 发送列表（群聊自动带 reply；仅当 `has_next_page=True` 追加"回复 n 看下一页"）-> 创建 `timeout_session` 超时任务 -> `session_manager.create_selection` 注册选择会话 -> `reset_current_task` 清理已结束的 handle task。每次调用重置 `SESSION_EXPIRE_TIMEOUT`。
 
 ### `dispatch_search_results(bot, event, cmd_matcher, results, *, options=PresentOptions(), prompt_suffix="") -> None`
 
-统一处理搜索结果：空结果 → 单结果 → 多结果。
+统一处理搜索结果：空结果 → 单结果 → 多结果。所有纯文本回复通过 `reply_utils.finish` 发送，群聊自动带 reply。
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
@@ -125,16 +125,23 @@
 |------|------|
 | `None` | 通过 `matcher.finish()` 直接回复 |
 
-逻辑：got 入口通过 `handler_context` 更新 current_task -> `/help`/`/cancel` 旁路拦截 -> 选择会话检查 -> `next_trigger` 命中则翻页（切下一页调 `present_candidates` 重置超时；末页 `reject("没有更多结果了")` 保持当前页）-> 否则 `resolve_selection` -> 发送图片 -> 发送 `format_metadata_line()` 元数据行 -> 清理会话。
+逻辑：got 入口通过 `handler_context` 更新 current_task -> `/help`/`/cancel` 旁路拦截 -> 选择会话检查 -> `next_trigger` 命中则翻页（切下一页调 `present_candidates` 重置超时；末页通过 `reply_utils.reject` 回复"没有更多结果了"）-> 否则 `resolve_selection` -> 发送图片 -> 通过 `reply_utils.finish` 发送 `format_metadata_line()` 元数据行（群聊自动带 reply）-> 清理会话。
 
-### `got_intercept_bypass(user_id, matcher, text, help_text) -> bool`
+### `got_intercept_bypass(event, matcher, text, help_text) -> bool`
 
-Got handler 入口统一拦截 `/help` 和 `/cancel`（从 `bot/session.py` 移入）。
+Got handler 入口统一拦截 `/help` 和 `/cancel`。
 
-- `/cancel` 分支委托给 `session_manager.execute_cancel()`
-- `/help` 分支通过 `matcher.reject(help_text)` 发送帮助文本并继续等待
+- `/cancel` 分支委托给 `session_manager.execute_cancel(scope, event, ...)`
+- `/help` 分支通过 `reply_utils.reject(event, matcher, help_text)` 发送帮助文本并继续等待
 - 匹配规则：`text.startswith("/cancel ") or text == "/cancel"`；`/help` 同理
 - 返回 `True` 表示已拦截（调用方应 return），`False` 表示正常流程继续
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `event` | `MessageEvent` | 当前消息事件，用于构造 reply 和作用域 |
+| `matcher` | `Matcher` | 当前 got handler 的 Matcher |
+| `text` | `str` | 用户消息纯文本 |
+| `help_text` | `str` | 帮助文本常量 |
 
 ## 依赖
 

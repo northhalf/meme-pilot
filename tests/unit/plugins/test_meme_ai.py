@@ -3,8 +3,10 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from nonebot.adapters.onebot.v11 import Message
 
 from bot.engine.ai_matcher import AIMatchResult
+from tests.conftest import extract_message_text
 
 # ---------------------------------------------------------------------------
 # 在导入插件前 mock nonebot.on_command，避免 NoneBot2 完整初始化。
@@ -126,12 +128,15 @@ class TestHandleAiAuth:
         event.get_user_id.return_value = "111"
         event.get_plaintext.return_value = "/ai 加班心累"
         event.message_type = "group"
+        event.message_id = 123456
 
         await handle_ai(_make_bot(), event, matcher)
 
         matcher.finish.assert_awaited_once()
-        call_args = matcher.finish.call_args[0][0]
-        assert "仅限私聊" in call_args
+        msg = matcher.finish.await_args[0][0]
+        assert "仅限私聊" in extract_message_text(msg)
+        if isinstance(msg, Message):
+            assert msg[0].type == "reply"
         mock_get_im.assert_not_called()
 
 
@@ -160,7 +165,8 @@ class TestHandleAiTimeout:
         await handle_ai(_make_bot(), _make_event(), matcher)
 
         matcher.finish.assert_awaited_once()
-        assert "索引更新较慢" in matcher.finish.call_args[0][0]
+        msg = matcher.finish.await_args[0][0]
+        assert "索引更新较慢" in extract_message_text(msg)
 
 
 # ---------------------------------------------------------------------------
@@ -184,7 +190,8 @@ class TestHandleAiEmptyDesc:
         await handle_ai(_make_bot(), _make_event(text="/ai"), matcher)
 
         matcher.finish.assert_awaited_once()
-        assert "/ai" in matcher.finish.call_args[0][0]
+        msg = matcher.finish.await_args[0][0]
+        assert "/ai" in extract_message_text(msg)
 
 
 # ---------------------------------------------------------------------------
@@ -213,7 +220,8 @@ class TestHandleAiSuccess:
 
         assert matcher.send.await_count == 2
         matcher.finish.assert_awaited_once()
-        finished_text = matcher.finish.call_args[0][0]
+        msg = matcher.finish.await_args[0][0]
+        finished_text = extract_message_text(msg)
         assert "1" in finished_text
         assert "小明" in finished_text
         assert "吐槽" in finished_text
@@ -260,7 +268,8 @@ class TestHandleAiNoMatch:
         await handle_ai(_make_bot(), _make_event(), matcher)
 
         matcher.finish.assert_awaited_once()
-        assert "没有找到" in matcher.finish.call_args[0][0]
+        msg = matcher.finish.await_args[0][0]
+        assert "没有找到" in extract_message_text(msg)
 
 
 # ---------------------------------------------------------------------------
@@ -286,7 +295,8 @@ class TestHandleAiServiceError:
         await handle_ai(_make_bot(), _make_event(), matcher)
 
         matcher.finish.assert_awaited_once()
-        assert "AI 服务暂时不可用" in matcher.finish.call_args[0][0]
+        msg = matcher.finish.await_args[0][0]
+        assert "AI 服务暂时不可用" in extract_message_text(msg)
 
     @pytest.mark.asyncio
     @patch.object(meme_ai, "get_index_manager")
@@ -303,4 +313,5 @@ class TestHandleAiServiceError:
         await handle_ai(_make_bot(), _make_event(), matcher)
 
         matcher.finish.assert_awaited_once()
-        assert "AI 服务暂时不可用" in matcher.finish.call_args[0][0]
+        msg = matcher.finish.await_args[0][0]
+        assert "AI 服务暂时不可用" in extract_message_text(msg)

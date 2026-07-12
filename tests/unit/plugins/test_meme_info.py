@@ -8,6 +8,7 @@ import pytest
 from bot.engine.index_manager import IndexInfo
 from bot.engine.metadata_store import MemeEntry
 from bot.session import ChatScope
+from tests.conftest import _assert_has_reply, _assert_no_reply, extract_message_text
 
 # ---------------------------------------------------------------------------
 # 在导入插件前 mock nonebot.on_command，避免 NoneBot2 完整初始化。
@@ -146,7 +147,9 @@ class TestHandleInfoOverall:
 
         matcher.finish.assert_awaited_once()
         reply = matcher.finish.call_args[0][0]
-        assert "进程内存：123 MiB" in reply
+        text = extract_message_text(reply)
+        assert "进程内存：123 MiB" in text
+        _assert_no_reply(reply)
 
     @pytest.mark.asyncio
     @patch("bot.plugins.meme_info.psutil.Process")
@@ -180,7 +183,9 @@ class TestHandleInfoOverall:
         await handle_info(_make_bot(), _make_event(), matcher, args=_make_message(""))
 
         reply = matcher.finish.call_args[0][0]
-        assert "进程内存：获取失败" in reply
+        text = extract_message_text(reply)
+        assert "进程内存：获取失败" in text
+        _assert_no_reply(reply)
 
 
 # ===========================================================================
@@ -226,6 +231,7 @@ class TestHandleInfoDetail:
             assert reply[0].type == "image"
             assert "file://" in reply[0].data["file"]
             assert reply[1].type == "text"
+            _assert_no_reply(reply)
             text = reply[1].data["text"]
             assert "id: 42" in text
             assert "文本：加班心累" in text
@@ -261,9 +267,11 @@ class TestHandleInfoDetail:
             )
 
             reply = matcher.finish.call_args[0][0]
-            assert "大小：文件不存在" in reply
-            assert "说话人：无" in reply
-            assert "标签：无" in reply
+            text = extract_message_text(reply)
+            assert "大小：文件不存在" in text
+            assert "说话人：无" in text
+            assert "标签：无" in text
+            _assert_no_reply(reply)
 
     @pytest.mark.asyncio
     @patch("bot.plugins.meme_info.psutil.Process")
@@ -301,8 +309,10 @@ class TestHandleInfoDetail:
         )
 
         reply = matcher.finish.call_args[0][0]
-        assert "表情包数量：5" in reply
-        assert "进程内存：0 Bytes" in reply
+        text = extract_message_text(reply)
+        assert "表情包数量：5" in text
+        assert "进程内存：0 Bytes" in text
+        _assert_no_reply(reply)
 
     @pytest.mark.asyncio
     @patch("bot.plugins.meme_info.psutil.Process")
@@ -341,7 +351,9 @@ class TestHandleInfoDetail:
         )
 
         reply = matcher.finish.call_args[0][0]
-        assert "表情包数量：3" in reply
+        text = extract_message_text(reply)
+        assert "表情包数量：3" in text
+        _assert_no_reply(reply)
 
     @pytest.mark.asyncio
     @patch("bot.plugins.meme_info.get_index_manager")
@@ -364,7 +376,11 @@ class TestHandleInfoDetail:
             _make_bot(), _make_event(), matcher, args=_make_message("1")
         )
 
-        matcher.finish.assert_awaited_once_with("索引更新较慢，请稍后再试")
+        matcher.finish.assert_awaited_once()
+        reply = matcher.finish.call_args[0][0]
+        text = extract_message_text(reply)
+        assert "索引更新较慢" in text
+        _assert_no_reply(reply)
 
 
 # ===========================================================================
@@ -411,13 +427,59 @@ class TestHandleInfoGroupChat:
         mock_virtual_memory.return_value = mem_mock
 
         matcher = _make_matcher()
-        await handle_info(_make_bot(), _make_event(message_type="group"), matcher, args=_make_message(""))
+        event = _make_event(message_type="group")
+        event.message_id = 123456
+        await handle_info(_make_bot(), event, matcher, args=_make_message(""))
 
         mock_index_manager.info.assert_awaited_once()
         matcher.finish.assert_awaited_once()
         reply = matcher.finish.call_args[0][0]
-        assert "表情包数量：128" in reply
-        assert "当前机器人状态：空闲" in reply
+        _assert_has_reply(reply)
+        text = extract_message_text(reply)
+        assert "表情包数量：128" in text
+        assert "当前机器人状态：空闲" in text
+
+    @pytest.mark.asyncio
+    @patch("bot.plugins.meme_info.psutil.Process")
+    @patch("bot.plugins.meme_info.psutil.cpu_percent", return_value=0.0)
+    @patch("bot.plugins.meme_info.psutil.virtual_memory")
+    @patch("bot.plugins.meme_info.get_index_manager")
+    @patch.object(meme_info, "is_authorized", return_value=True)
+    async def test_group_chat_without_message_id_fallback_to_plain_text(
+        self,
+        mock_auth: MagicMock,
+        mock_get_index_manager: MagicMock,
+        mock_virtual_memory: MagicMock,
+        mock_cpu_percent: MagicMock,
+        mock_process: MagicMock,
+    ) -> None:
+        """群聊 event 未设置 message_id 时，总体信息应退化为纯字符串。"""
+        process_mock = MagicMock()
+        process_mock.memory_info.return_value = MagicMock(rss=0)
+        mock_process.return_value = process_mock
+
+        mock_index_manager = MagicMock()
+        mock_index_manager.info = AsyncMock(
+            return_value=IndexInfo(entry_count=5, speaker_ranking=[], status="空闲")
+        )
+        mock_get_index_manager.return_value = mock_index_manager
+
+        mem_mock = MagicMock()
+        mem_mock.used = 0
+        mem_mock.total = 1024 * 1024 * 1024
+        mem_mock.percent = 0.0
+        mock_virtual_memory.return_value = mem_mock
+
+        matcher = _make_matcher()
+        event = _make_event(message_type="group")
+        event.message_id = None
+        # 故意不设置有效 message_id，验证退化行为
+        await handle_info(_make_bot(), event, matcher, args=_make_message(""))
+
+        matcher.finish.assert_awaited_once()
+        reply = matcher.finish.call_args[0][0]
+        assert isinstance(reply, str)
+        assert "表情包数量：5" in reply
 
 
 class TestHandleInfoIndexFailure:
@@ -440,7 +502,11 @@ class TestHandleInfoIndexFailure:
         await handle_info(_make_bot(), _make_event(), matcher, args=_make_message(""))
 
         mock_index_manager.info.assert_awaited_once()
-        matcher.finish.assert_awaited_once_with("索引信息获取失败，请稍后再试")
+        matcher.finish.assert_awaited_once()
+        reply = matcher.finish.call_args[0][0]
+        text = extract_message_text(reply)
+        assert "索引信息获取失败" in text
+        _assert_no_reply(reply)
 
 
 class TestHandleInfoStatusOverride:
@@ -490,7 +556,9 @@ class TestHandleInfoStatusOverride:
 
             matcher.finish.assert_awaited_once()
             reply = matcher.finish.call_args[0][0]
-            assert "当前机器人状态：正在处理命令" in reply
+            text = extract_message_text(reply)
+            assert "当前机器人状态：正在处理命令" in text
+            _assert_no_reply(reply)
         finally:
             session_manager.deactivate_chat(scope)
 
@@ -537,6 +605,8 @@ class TestHandleInfoStatusOverride:
 
             matcher.finish.assert_awaited_once()
             reply = matcher.finish.call_args[0][0]
-            assert "当前机器人状态：空闲" in reply
+            text = extract_message_text(reply)
+            assert "当前机器人状态：空闲" in text
+            _assert_no_reply(reply)
         finally:
             session_manager.deactivate_chat(scope)

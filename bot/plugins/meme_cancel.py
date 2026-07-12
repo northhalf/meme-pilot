@@ -11,6 +11,7 @@ from nonebot.adapters.onebot.v11 import Bot, MessageEvent
 from nonebot.matcher import Matcher
 from nonebot.rule import to_me
 
+from bot import reply as reply_utils
 from bot.auth import is_authorized, log_unauthorized
 from bot.log_context import generate_request_id, set_request_id
 from bot.session import ChatScope, session_manager
@@ -44,8 +45,8 @@ async def handle_cancel(bot: Bot, event: MessageEvent, matcher: Matcher) -> None
             await matcher.finish(None)
             return
 
-        succeed_cancel = await session_manager.execute_cancel(scope)
-        if not succeed_cancel:
-            await matcher.finish("当前没有活跃的会话")
+        cancel_succeeded = await session_manager.execute_cancel(scope, event)
+        if not cancel_succeeded:
+            await reply_utils.finish(event, matcher, "当前没有活跃的会话")
 
         logger.info("用户 %s 的 /cancel 成功", user_id)

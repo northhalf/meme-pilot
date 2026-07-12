@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from bot.engine.index_manager import RefreshInProgressError
+from tests.conftest import _assert_has_reply, _assert_no_reply, extract_message_text
 
 # ---------------------------------------------------------------------------
 # 在导入插件前 mock nonebot.on_command，避免需要 NoneBot2 完整初始化。
@@ -125,12 +126,15 @@ class TestHandleRefreshAuth:
         event = MagicMock()
         event.get_user_id.return_value = "111"
         event.message_type = "group"
+        event.message_id = 123456
 
         await handle_refresh(_make_bot(), event, matcher)
 
         matcher.finish.assert_awaited_once()
-        call_args = matcher.finish.call_args[0][0]
-        assert "仅限私聊" in call_args
+        reply = matcher.finish.call_args[0][0]
+        _assert_has_reply(reply)
+        text = extract_message_text(reply)
+        assert "仅限私聊" in text
         mock_get_im.assert_not_called()
 
 
@@ -155,7 +159,11 @@ class TestHandleRefreshLock:
 
         await handle_refresh(_make_bot(), _make_event("12345"), matcher)
 
-        matcher.finish.assert_awaited_once_with("已有刷新任务在进行中，请稍后再试")
+        matcher.finish.assert_awaited_once()
+        reply = matcher.finish.call_args[0][0]
+        text = extract_message_text(reply)
+        assert "已有刷新任务" in text
+        _assert_no_reply(reply)
         im.refresh.assert_awaited_once()
 
 
@@ -183,7 +191,9 @@ class TestHandleRefreshSync:
 
         bot.send.assert_awaited_once()
         call_args = bot.send.call_args[0]
-        assert "正在刷新索引" in call_args[1]
+        progress_msg = call_args[1]
+        assert "正在刷新索引" in extract_message_text(progress_msg)
+        _assert_no_reply(progress_msg)
 
     @pytest.mark.asyncio
     @patch.object(meme_refresh, "is_authorized", return_value=True)
@@ -200,7 +210,9 @@ class TestHandleRefreshSync:
 
         matcher.finish.assert_awaited_once()
         call_args = matcher.finish.call_args[0][0]
-        assert "失败" in call_args
+        text = extract_message_text(call_args)
+        assert "失败" in text
+        _assert_no_reply(call_args)
 
 
 # ---------------------------------------------------------------------------
@@ -228,7 +240,9 @@ class TestHandleRefreshResult:
 
         matcher.finish.assert_awaited_once()
         call_args = matcher.finish.call_args[0][0]
-        assert "表情包目录为空" in call_args
+        text = extract_message_text(call_args)
+        assert "表情包目录为空" in text
+        _assert_no_reply(call_args)
 
     @pytest.mark.asyncio
     @patch.object(meme_refresh, "is_authorized", return_value=True)
@@ -248,9 +262,11 @@ class TestHandleRefreshResult:
 
         matcher.finish.assert_awaited_once()
         call_args = matcher.finish.call_args[0][0]
-        assert "索引刷新完成" in call_args
-        assert "新增: 3" in call_args
-        assert "删除: 1" in call_args
+        text = extract_message_text(call_args)
+        assert "索引刷新完成" in text
+        assert "新增: 3" in text
+        assert "删除: 1" in text
+        _assert_no_reply(call_args)
 
     @pytest.mark.asyncio
     @patch.object(meme_refresh, "is_authorized", return_value=True)
@@ -269,9 +285,11 @@ class TestHandleRefreshResult:
         await handle_refresh(_make_bot(), _make_event("12345"), matcher)
 
         call_args = matcher.finish.call_args[0][0]
-        assert "失败: 2" in call_args
-        assert "bad.jpg" in call_args
-        assert "corrupt.png" in call_args
+        text = extract_message_text(call_args)
+        assert "失败: 2" in text
+        assert "bad.jpg" in text
+        assert "corrupt.png" in text
+        _assert_no_reply(call_args)
 
     @pytest.mark.asyncio
     @patch.object(meme_refresh, "is_authorized", return_value=True)
@@ -291,9 +309,11 @@ class TestHandleRefreshResult:
         await handle_refresh(_make_bot(), _make_event("12345"), matcher)
 
         call_args = matcher.finish.call_args[0][0]
-        assert "f0.jpg" in call_args
-        assert "f9.jpg" in call_args
-        assert "f14.jpg" not in call_args
+        text = extract_message_text(call_args)
+        assert "f0.jpg" in text
+        assert "f9.jpg" in text
+        assert "f14.jpg" not in text
+        _assert_no_reply(call_args)
 
 
 # ---------------------------------------------------------------------------
@@ -318,4 +338,6 @@ class TestHandleRefreshInitError:
 
         matcher.finish.assert_awaited_once()
         call_args = matcher.finish.call_args[0][0]
-        assert "未就绪" in call_args
+        text = extract_message_text(call_args)
+        assert "未就绪" in text
+        _assert_no_reply(call_args)

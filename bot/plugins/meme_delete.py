@@ -15,6 +15,7 @@ from nonebot.matcher import Matcher
 from nonebot.params import Arg, CommandArg
 from nonebot.rule import to_me
 
+from bot import reply as reply_utils
 from bot.app_state import get_index_manager, get_metadata_store
 from bot.auth import is_authorized, log_unauthorized
 from bot.engine.index_manager import IndexAddCancelledError, RefreshInProgressError
@@ -70,12 +71,14 @@ async def handle_delete(
 
             # 仅限私聊
             if event.message_type != "private":
-                await matcher.finish("此命令仅限私聊使用")
+                await reply_utils.finish(event, matcher, "此命令仅限私聊使用")
                 return
 
             # 会话检查
             if not session_manager.activate_chat(scope, "del", matcher):
-                await matcher.finish("已有命令在处理中，请先 /cancel")
+                await reply_utils.finish(
+                    event, matcher, "已有命令在处理中，请先 /cancel"
+                )
                 return
 
             # 解析参数
@@ -83,7 +86,7 @@ async def handle_delete(
             tokens = text_part.split()
             if not tokens:
                 session_manager.deactivate_chat(scope)
-                await matcher.finish("用法：/del <id>...")
+                await reply_utils.finish(event, matcher, "用法：/del <id>...")
                 return
 
             entry_ids: list[int] = []
@@ -92,7 +95,7 @@ async def handle_delete(
                     entry_ids.append(int(token))
                 except ValueError:
                     session_manager.deactivate_chat(scope)
-                    await matcher.finish("id 必须为数字")
+                    await reply_utils.finish(event, matcher, "id 必须为数字")
                     return
 
             # 去重，保持顺序
@@ -116,7 +119,7 @@ async def handle_delete(
 
             if not found:
                 session_manager.deactivate_chat(scope)
-                await matcher.finish("未找到任何表情包")
+                await reply_utils.finish(event, matcher, "未找到任何表情包")
                 return
 
             # 构建摘要确认消息
@@ -126,7 +129,7 @@ async def handle_delete(
             if not_found_ids:
                 lines.append(f"未找到 id：{', '.join(str(i) for i in not_found_ids)}")
 
-            await matcher.send("\n".join(lines))
+            await reply_utils.send(event, matcher, "\n".join(lines))
 
             # 存入 state
             matcher.state["entry_ids"] = [eid for eid, _ in found]
@@ -180,14 +183,22 @@ async def got_confirm(
                             timeout=get_index_manager().add_user_timeout,
                         )
                     except asyncio.TimeoutError:
-                        await matcher.finish("删除处理超时，请稍后再试")
+                        await reply_utils.finish(
+                            event, matcher, "删除处理超时，请稍后再试"
+                        )
                     except IndexAddCancelledError:
-                        await matcher.finish("服务正在关闭，请稍后再试")
+                        await reply_utils.finish(
+                            event, matcher, "服务正在关闭，请稍后再试"
+                        )
                     except RefreshInProgressError:
-                        await matcher.finish("索引正在刷新，请稍后再试")
+                        await reply_utils.finish(
+                            event, matcher, "索引正在刷新，请稍后再试"
+                        )
                     except Exception:
                         logger.exception("用户 %s 的 /del 删除异常", user_id)
-                        await matcher.finish("删除过程中发生异常，请稍后重试")
+                        await reply_utils.finish(
+                            event, matcher, "删除过程中发生异常，请稍后重试"
+                        )
                     else:
                         session_manager.deactivate_chat(scope)
                         logger.info(
@@ -218,12 +229,12 @@ async def got_confirm(
                                 for eid, reason in result.failed_ids
                             ]
                             lines.append("失败：" + "、".join(failed_parts))
-                        await matcher.finish("\n".join(lines))
+                        await reply_utils.finish(event, matcher, "\n".join(lines))
                         return
                 else:
                     session_manager.deactivate_chat(scope)
                     logger.info("用户 %s 取消 /del", user_id)
-                    await matcher.finish("已取消删除")
+                    await reply_utils.finish(event, matcher, "已取消删除")
 
                 # 异常统一清理
                 session_manager.deactivate_chat(scope)

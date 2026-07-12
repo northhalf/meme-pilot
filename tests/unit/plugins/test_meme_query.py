@@ -12,12 +12,20 @@ with patch("nonebot.on_command", return_value=_mock_cmd):
     from bot.plugins import meme_query
     from bot.plugins.meme_query import _parse_args, handle_query
 
+from tests.conftest import _assert_has_reply, _assert_no_reply, extract_message_text
 
-def _make_event(user_id: str = "12345", text: str = "/query 加班 @小明 #吐槽") -> MagicMock:
+
+def _make_event(
+    user_id: str = "12345",
+    text: str = "/query 加班 @小明 #吐槽",
+    message_type: str = "private",
+) -> MagicMock:
     event = MagicMock()
-    event.message_type = "private"
+    event.message_type = message_type
     event.get_user_id.return_value = user_id
     event.get_plaintext.return_value = text
+    if message_type == "group":
+        event.message_id = 123456
     return event
 
 
@@ -115,10 +123,31 @@ class TestHandleQueryEmptyArgs:
         mock_activate: MagicMock,
     ) -> None:
         matcher = _make_matcher()
-        await handle_query(_make_bot(), _make_event(text="/query"), matcher, _make_args(""))
-        matcher.finish.assert_awaited_once_with(
-            "/query <关键词> [@说话人] [#标签...]"
+        await handle_query(_make_bot(), _make_event(), matcher, _make_args(""))
+        matcher.finish.assert_awaited_once()
+        msg = matcher.finish.call_args[0][0]
+        assert extract_message_text(msg) == "/query <关键词> [@说话人] [#标签...]"
+        _assert_no_reply(msg)
+
+    @pytest.mark.asyncio
+    @patch.object(meme_query.session_manager, "activate_chat", return_value=True)
+    @patch.object(meme_query.session_manager, "deactivate_chat")
+    @patch.object(meme_query, "is_authorized", return_value=True)
+    async def test_all_empty_replies_usage_group_reply(
+        self,
+        mock_auth: MagicMock,
+        mock_deactivate: MagicMock,
+        mock_activate: MagicMock,
+    ) -> None:
+        """群聊中缺少参数时应带 reply 返回用法。"""
+        matcher = _make_matcher()
+        await handle_query(
+            _make_bot(), _make_event(message_type="group"), matcher, _make_args("")
         )
+        matcher.finish.assert_awaited_once()
+        reply = matcher.finish.call_args[0][0]
+        _assert_has_reply(reply)
+        assert extract_message_text(reply) == "/query <关键词> [@说话人] [#标签...]"
 
 
 class TestHandleQueryOptions:
@@ -161,7 +190,26 @@ class TestHandleQuerySession:
     ) -> None:
         matcher = _make_matcher()
         await handle_query(_make_bot(), _make_event(), matcher, _make_args("加班"))
-        matcher.finish.assert_awaited_once_with("已有命令在处理中，请先 /cancel")
+        matcher.finish.assert_awaited_once()
+        msg = matcher.finish.call_args[0][0]
+        assert extract_message_text(msg) == "已有命令在处理中，请先 /cancel"
+        _assert_no_reply(msg)
+
+    @pytest.mark.asyncio
+    @patch.object(meme_query.session_manager, "activate_chat", return_value=False)
+    @patch.object(meme_query, "is_authorized", return_value=True)
+    async def test_busy_replies_cancel_group_reply(
+        self, mock_auth: MagicMock, mock_activate: MagicMock
+    ) -> None:
+        """群聊中有活跃会话时应带 reply 提示取消。"""
+        matcher = _make_matcher()
+        await handle_query(
+            _make_bot(), _make_event(message_type="group"), matcher, _make_args("加班")
+        )
+        matcher.finish.assert_awaited_once()
+        reply = matcher.finish.call_args[0][0]
+        _assert_has_reply(reply)
+        assert extract_message_text(reply) == "已有命令在处理中，请先 /cancel"
 
 
 class TestHelpTextContainsQuery:

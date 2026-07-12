@@ -35,6 +35,7 @@ api
     ├── auth.md
     ├── app_state.md
     ├── session.md
+    ├── reply.md
     └── plugins
         ├── _help_text.md
         ├── _search_utils.md
@@ -767,12 +768,12 @@ NEXT_PAGE_TRIGGER: str = "n"
 
 @dataclass(frozen=True)
 class PresentOptions:
-    # 候选展示选项，控制相似度展示、翻页与群聊引用
+    # 候选展示选项，控制相似度展示、翻页
     show_similarity: bool = False              # 是否在列表行末尾展示相似度百分比
     similarity_scale: Literal["ratio", "score"] = "score"  # ratio=0–1，score=0–100
     next_trigger: str | None = None            # 下一页触发词；None 表示不支持翻页（如 /rand）
     page_size: int = PAGE_SIZE                 # 每页条数
-    reply_in_group: bool = True                # 群聊中是否通过 MessageSegment.reply 引用当前消息
+# 群聊 reply 由 bot.reply 统一处理，PresentOptions 不再包含 reply_in_group
 
 def _similarity_percent(similarity: float, scale: Literal["ratio", "score"]) -> int
 # 把相似度归一为 0–100 整数百分比；ratio 乘 100，score 直接取整；clamp 到 [0, 100]
@@ -787,11 +788,6 @@ def resolve_selection(
 ) -> SearchResult | str
 # 解析用户选择编号，返回 SearchResult 或错误消息字符串
 
-async def reject_with_reply(
-    matcher: Matcher, event: MessageEvent, text: str
-) -> None
-# 群聊中尽可能以 reply 消息段 reject，私聊退化为纯文本；引用消息 ID 取自 event.message_id
-
 async def present_candidates(
     bot: Bot,
     event: MessageEvent,
@@ -805,7 +801,7 @@ async def present_candidates(
 ) -> None
 # 展示当前页候选列表并创建/重置选择会话（仅处理多结果）
 # 列表行按 options 追加相似度百分比；仅当 has_next_page=True 追加"回复 n 看下一页"
-# 群聊是否发 reply 由 options.reply_in_group 与 event.message_id 共同决定
+# 文本发送通过 bot.reply 包装，群聊自动带 reply
 # 每次调用重置 SESSION_EXPIRE_TIMEOUT
 # use_reject=True 时用 matcher.reject 发送并重新等待下一次输入（got 内换一批/翻页，否则 matcher 结束无法继续交互）；False 时用 send（首次展示）
 
@@ -819,6 +815,7 @@ async def dispatch_search_results(
     prompt_suffix: str = "",
 ) -> None
 # 统一处理搜索结果：空结果（finish 提示）-> 单结果（发送图片+元数据）-> 多结果（存 state["all_results"]/state["page_index"]/state["total_pages"]，切第 1 页调 present_candidates）
+# 文本回复通过 bot.reply 包装，群聊自动带 reply
 
 async def execute_search(
     bot: Bot, event: MessageEvent, cmd_matcher: Matcher, keyword: str,
@@ -838,14 +835,14 @@ async def handle_got_selection(
     bot: Bot, event: MessageEvent, matcher: Matcher, selection_msg: Message,
     error_label: str = "搜索", *, options: PresentOptions = PresentOptions(),
 ) -> None
-# got 选择编号共享逻辑（旁路拦截 → 会话检查 → resolve_selection → 发送图片 → 发送元数据行）
+# got 选择编号共享逻辑（旁路拦截 → 会话检查 → resolve_selection → 发送图片 → 通过 bot.reply 发送元数据行）
 
 async def got_intercept_bypass(
     event: MessageEvent, matcher: Matcher, text: str, HELP_TEXT: str,
 ) -> bool
 # Got handler 入口统一拦截 /help 和 /cancel
-# /cancel 委托给 session_manager.execute_cancel()
-# /help 通过 reject(HELP_TEXT) 发送帮助文本并继续等待
+# /cancel 委托给 session_manager.execute_cancel(scope, event, ...)
+# /help 通过 bot.reply.reject(event, matcher, HELP_TEXT) 发送帮助文本并继续等待
 ```
 
 - 依赖：`app_state.get_index_manager()`、`bot.session.session_manager`、`bot.plugins._search_utils.got_intercept_bypass`、`bot.config.MEMES_DIR`、`bot.plugins._help_text.HELP_TEXT`
@@ -907,8 +904,24 @@ NoneBot2 命令插件，注册 `/cancel` 命令。
   - `set_current_task(scope, task) -> None` — 显式设置作用域的 current_task
   - `reset_current_task(scope) -> None` — 快速将 current_task 设为 None
   - `handler_context(scope, matcher)` — 上下文管理器，got handler 入口使用（with 语句）
-  - `execute_cancel(scope, message="当前会话已取消") -> bool` — 取消逻辑（自取消保护、跨 task 取消、选择会话清理）
-- `timeout_session(bot, event, scope, selection_id, message, *, on_cleanup, timeout)` — 会话超时检查任务（模块级函数）
+  - `execute_cancel(scope, event, message="当前会话已取消") -> bool` — 取消逻辑（自取消保护、跨 task 取消、选择会话清理）；通过 `reply_utils.finish` 发送取消消息，群聊自动带 reply
+- `timeout_session(bot, event, scope, selection_id, message, *, on_cleanup, timeout)` — 会话超时检查任务（模块级函数）；通过 `reply_utils.bot_send` 发送超时消息，群聊自动带 reply
+
+### `docs/api/bot/reply.md`
+
+群聊消息引用回复工具模块。
+
+```python
+def build_reply_text(event: MessageEvent, text: str) -> Message | str
+async def finish(event: MessageEvent, matcher: Matcher, text: str) -> None
+async def send(event: MessageEvent, matcher: Matcher, text: str) -> None
+async def reject(event: MessageEvent, matcher: Matcher, text: str) -> None
+async def bot_send(event: MessageEvent, bot: Bot, text: str) -> None
+```
+
+- `build_reply_text`：群聊且 `event.message_id` 存在时返回 `[reply, text]` 的 `Message`，否则返回原字符串
+- `finish/send/reject`：分别调用对应 `matcher.*` 方法发送已包装 reply 的文本
+- `bot_send`：调用 `bot.send(event, ...)`，用于超时任务等无 matcher 的场景
 
 ### `bot/plugins/meme_add.py`
 

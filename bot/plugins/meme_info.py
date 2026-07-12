@@ -17,6 +17,7 @@ from nonebot.matcher import Matcher
 from nonebot.params import CommandArg
 from nonebot.rule import to_me
 
+from bot import reply as reply_utils
 from bot.app_state import get_index_manager
 from bot.auth import is_authorized, log_unauthorized
 from bot.config import MEMES_DIR
@@ -109,7 +110,7 @@ async def handle_info(
                 index_manager = get_index_manager()
             except RuntimeError:
                 logger.error("IndexManager 尚未初始化")
-                await matcher.finish("服务未就绪，请稍后再试")
+                await reply_utils.finish(event, matcher, "服务未就绪，请稍后再试")
                 return
 
             # 解析可选 id
@@ -127,7 +128,7 @@ async def handle_info(
                     entry = await index_manager.get_entry(entry_id)
                 except asyncio.TimeoutError:
                     logger.info("用户 %s 的 /info %s 等待读锁超时", user_id, entry_id)
-                    await matcher.finish("索引更新较慢，请稍后再试")
+                    await reply_utils.finish(event, matcher, "索引更新较慢，请稍后再试")
                     return
                 except Exception:
                     logger.exception("获取条目详情失败: entry_id=%s", entry_id)
@@ -143,7 +144,7 @@ async def handle_info(
                 info = await index_manager.info()
             except Exception:
                 logger.exception("获取索引信息失败")
-                await matcher.finish("索引信息获取失败，请稍后再试")
+                await reply_utils.finish(event, matcher, "索引信息获取失败，请稍后再试")
                 return
 
             # engine 只感知刷新态；"正在处理命令"属应用层语义，由插件层覆写
@@ -198,6 +199,6 @@ async def handle_info(
                 f"CPU占用：{cpu_text}",
             ]
 
-            await matcher.finish("\n".join(lines))
+            await reply_utils.finish(event, matcher, "\n".join(lines))
         except asyncio.CancelledError:
             raise FinishedException

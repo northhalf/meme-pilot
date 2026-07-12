@@ -3,6 +3,10 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from nonebot.adapters.onebot.v11 import Message
+
+from tests.conftest import extract_message_text
+
 
 # 在导入插件前 mock nonebot.on_command，避免 NoneBot2 完整初始化
 _mock_cmd = MagicMock()
@@ -87,11 +91,16 @@ class TestHandleDelete:
             bot = _make_bot()
             event = _make_event()
             event.message_type = "group"
+            event.message_id = 123456
             matcher = _make_matcher()
 
             asyncio.run(handle_delete(bot, event, matcher, args=_make_message("")))  # type: ignore[arg-type]
 
-            matcher.finish.assert_awaited_once_with("此命令仅限私聊使用")
+            matcher.finish.assert_awaited_once()
+            msg = matcher.finish.await_args[0][0]
+            assert extract_message_text(msg) == "此命令仅限私聊使用"
+            if isinstance(msg, Message):
+                assert msg[0].type == "reply"
 
     def test_missing_args(self) -> None:
         """无参数 → 回复用法提示。"""
@@ -110,7 +119,7 @@ class TestHandleDelete:
 
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
-            assert "用法" in msg
+            assert "用法" in extract_message_text(msg)
 
     def test_invalid_id(self) -> None:
         """非数字 id → 回复 id 必须为数字。"""
@@ -127,7 +136,9 @@ class TestHandleDelete:
 
             asyncio.run(handle_delete(bot, event, matcher, args=_make_message("abc")))  # type: ignore[arg-type]
 
-            matcher.finish.assert_awaited_once_with("id 必须为数字")
+            matcher.finish.assert_awaited_once()
+            msg = matcher.finish.await_args[0][0]
+            assert extract_message_text(msg) == "id 必须为数字"
 
     def test_all_ids_not_found(self) -> None:
         """所有 id 都不存在 → 回复未找到任何表情包。"""
@@ -152,7 +163,9 @@ class TestHandleDelete:
 
             asyncio.run(handle_delete(bot, event, matcher, args=_make_message("999 998")))  # type: ignore[arg-type]
 
-            matcher.finish.assert_awaited_once_with("未找到任何表情包")
+            matcher.finish.assert_awaited_once()
+            msg = matcher.finish.await_args[0][0]
+            assert extract_message_text(msg) == "未找到任何表情包"
             mock_deactivate.assert_called_once()
 
     def test_summary_sent_correctly(self) -> None:
@@ -191,10 +204,10 @@ class TestHandleDelete:
 
             assert matcher.send.await_count == 1
             msg = matcher.send.await_args[0][0]
-            assert "确认删除以下表情包" in msg
-            assert "42, 加班心累时的表情包" in msg
-            assert "43, 当你的老板说今天要加班" in msg
-            assert "未找到 id：44" in msg
+            assert "确认删除以下表情包" in extract_message_text(msg)
+            assert "42, 加班心累时的表情包" in extract_message_text(msg)
+            assert "43, 当你的老板说今天要加班" in extract_message_text(msg)
+            assert "未找到 id：44" in extract_message_text(msg)
             assert matcher.state["entry_ids"] == [42, 43]
             assert matcher.state["not_found_ids"] == [44]
             mock_create_selection.assert_called_once()
@@ -238,9 +251,9 @@ class TestGotConfirm:
             im.delete.assert_awaited_once_with([42, 43])
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
-            assert "删除结果如下" in msg
-            assert "成功：42、43" in msg
-            assert "未找到：44" in msg
+            assert "删除结果如下" in extract_message_text(msg)
+            assert "成功：42、43" in extract_message_text(msg)
+            assert "未找到：44" in extract_message_text(msg)
 
     def test_confirm_yes_english(self) -> None:
         """用户回复 yes → 调用 delete。"""
@@ -293,7 +306,7 @@ class TestGotConfirm:
             asyncio.run(got_confirm(bot, event, matcher, _make_message(event.get_plaintext())))  # type: ignore[arg-type]
 
             msg = matcher.finish.await_args[0][0]
-            assert "失败：id:45 原因:『文件移动失败』" in msg
+            assert "失败：id:45 原因:『文件移动失败』" in extract_message_text(msg)
 
     def test_cancel(self) -> None:
         """用户回复其他内容 → 回复已取消删除。"""
@@ -309,7 +322,9 @@ class TestGotConfirm:
 
             asyncio.run(got_confirm(bot, event, matcher, _make_message(event.get_plaintext())))  # type: ignore[arg-type]
 
-            matcher.finish.assert_awaited_once_with("已取消删除")
+            matcher.finish.assert_awaited_once()
+            msg = matcher.finish.await_args[0][0]
+            assert extract_message_text(msg) == "已取消删除"
 
     def test_cancel_intercept(self) -> None:
         """等待确认时 /cancel → 旁路取消。"""
@@ -351,7 +366,9 @@ class TestGotConfirm:
 
             asyncio.run(got_confirm(bot, event, matcher, _make_message(event.get_plaintext())))  # type: ignore[arg-type]
 
-            matcher.finish.assert_awaited_once_with("索引正在刷新，请稍后再试")
+            matcher.finish.assert_awaited_once()
+            msg = matcher.finish.await_args[0][0]
+            assert extract_message_text(msg) == "索引正在刷新，请稍后再试"
 
 
 # ---------------------------------------------------------------------------
