@@ -7,13 +7,18 @@ import pytest
 
 from bot.engine.index_manager import IndexInfo, IndexManager
 from bot.engine.metadata_store import MemeEntry
-from bot.session import session_manager
+from bot.session import ChatScope, session_manager
 
 
 # ---------------------------------------------------------------------------
 # Fake stores
 # ---------------------------------------------------------------------------
 
+
+
+def _make_test_scope(user_id: str = "1001") -> ChatScope:
+    """构造测试用私聊 ChatScope。"""
+    return ChatScope(user_id=int(user_id), chat_type="private", chat_id=int(user_id))
 
 class FakeMetadataStore:
     """info() 测试专用内存 MetadataStore。"""
@@ -186,17 +191,17 @@ class TestInfo:
     ) -> None:
         """engine 不再感知 bot.session：激活会话后 status 仍为"空闲"（证明解耦）。"""
         matcher = MagicMock()
-        user_id = "user_1"
+        scope = _make_test_scope("1001")
 
         try:
-            activated = session_manager.activate_chat(user_id, "search", matcher)
+            activated = session_manager.activate_chat(scope, "search", matcher)
             assert activated is True
 
             # 会话活跃时 engine 仍报告空闲（命令态由插件层覆写）
             info = await index_manager.info()
             assert info.status == "空闲"
         finally:
-            session_manager.deactivate_chat(user_id)
+            session_manager.deactivate_chat(scope)
 
         # 会话清理后仍空闲
         info_after = await index_manager.info()

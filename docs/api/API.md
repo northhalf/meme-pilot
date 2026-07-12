@@ -767,11 +767,12 @@ NEXT_PAGE_TRIGGER: str = "n"
 
 @dataclass(frozen=True)
 class PresentOptions:
-    # 候选展示选项，控制相似度展示与翻页
+    # 候选展示选项，控制相似度展示、翻页与群聊引用
     show_similarity: bool = False              # 是否在列表行末尾展示相似度百分比
     similarity_scale: Literal["ratio", "score"] = "score"  # ratio=0–1，score=0–100
     next_trigger: str | None = None            # 下一页触发词；None 表示不支持翻页（如 /rand）
-    page_size: int = PAGE_SIZE
+    page_size: int = PAGE_SIZE                 # 每页条数
+    reply_in_group: bool = True                # 群聊中是否通过 MessageSegment.reply 引用当前消息
 
 def _similarity_percent(similarity: float, scale: Literal["ratio", "score"]) -> int
 # 把相似度归一为 0–100 整数百分比；ratio 乘 100，score 直接取整；clamp 到 [0, 100]
@@ -782,9 +783,14 @@ def format_metadata_line(
 # 格式化表情包元数据行：id, 无/说话人, tag1, tag2, ...；speaker 缺失显示"无"，空 tags 省略
 
 def resolve_selection(
-    matcher: Matcher, candidates: list[SearchResult], text: str
+    candidates: list[SearchResult], text: str
 ) -> SearchResult | str
 # 解析用户选择编号，返回 SearchResult 或错误消息字符串
+
+async def reject_with_reply(
+    matcher: Matcher, event: MessageEvent, text: str
+) -> None
+# 群聊中尽可能以 reply 消息段 reject，私聊退化为纯文本；引用消息 ID 取自 event.message_id
 
 async def present_candidates(
     bot: Bot,
@@ -793,13 +799,13 @@ async def present_candidates(
     candidates: list[SearchResult],
     *,
     options: PresentOptions = PresentOptions(),
-    page_index: int = 0,
-    total_pages: int = 1,
+    has_next_page: bool = False,
     prompt_suffix: str = "",
     use_reject: bool = False,
 ) -> None
 # 展示当前页候选列表并创建/重置选择会话（仅处理多结果）
-# 列表行按 options 追加相似度百分比；仅当 page_index+1 < total_pages 追加"回复 n 看下一页"
+# 列表行按 options 追加相似度百分比；仅当 has_next_page=True 追加"回复 n 看下一页"
+# 群聊是否发 reply 由 options.reply_in_group 与 event.message_id 共同决定
 # 每次调用重置 SESSION_EXPIRE_TIMEOUT
 # use_reject=True 时用 matcher.reject 发送并重新等待下一次输入（got 内换一批/翻页，否则 matcher 结束无法继续交互）；False 时用 send（首次展示）
 
@@ -821,6 +827,13 @@ async def execute_search(
 # 核心关键词搜索逻辑：获取 IndexManager → 执行关键词搜索 → dispatch_search_results 统一分发
 # 读锁等待超时时回复"索引更新较慢，请稍后再试"
 
+async def execute_combined_search(
+    bot: Bot, event: MessageEvent, cmd_matcher: Matcher,
+    keyword: str | None, speakers: list[str], tags: list[str],
+    *, options: PresentOptions = PresentOptions(),
+) -> None
+# 组合检索核心逻辑：获取 IndexManager → 执行 search_combined → dispatch_search_results 统一分发
+
 async def handle_got_selection(
     bot: Bot, event: MessageEvent, matcher: Matcher, selection_msg: Message,
     error_label: str = "搜索", *, options: PresentOptions = PresentOptions(),
@@ -828,7 +841,7 @@ async def handle_got_selection(
 # got 选择编号共享逻辑（旁路拦截 → 会话检查 → resolve_selection → 发送图片 → 发送元数据行）
 
 async def got_intercept_bypass(
-    user_id: str, matcher: Matcher, text: str, HELP_TEXT: str,
+    event: MessageEvent, matcher: Matcher, text: str, HELP_TEXT: str,
 ) -> bool
 # Got handler 入口统一拦截 /help 和 /cancel
 # /cancel 委托给 session_manager.execute_cancel()
@@ -877,23 +890,25 @@ NoneBot2 命令插件，注册 `/cancel` 命令。
 
 ### `bot/session.py`
 
-共享会话管理模块，管理聊天会话（ChatSession）和选择会话（SelectionSession）。
+共享会话管理模块，管理聊天会话（`ChatSession`）和选择会话（`SelectionSession`），以 `ChatScope` 作为会话键。
 
+- `ChatScope(user_id, chat_type, chat_id)` — 聊天作用域数据类，标识「一个用户在一个聊天窗口内」。`chat_type` 为 `"private"` 或 `"group"`；`chat_id` 私聊为对方 QQ 号，群聊为群号。`frozen=True` + `slots=True`，可直接作为字典键。
+  - `ChatScope.from_event(event: MessageEvent) -> ChatScope` — 从 OneBot V11 消息事件构造作用域。
 - `ChatSession(session_id, active=False, command_type=None, matcher=None, current_task=None)` — 聊天会话数据类
 - `SelectionSession(selection_id, timeout_task=None)` — 选择会话数据类
 - `session_manager: SessionManager` — 模块级 SessionManager 单例
-- `SessionManager` 类方法：
-  - `get_or_create_chat(user_id) -> ChatSession` — 获取或创建聊天会话
-  - `activate_chat(user_id, command_type, matcher) -> bool` — 激活会话（返回 False 表示已有活跃会话）
-  - `deactivate_chat(user_id) -> None` — 重置会话为空闲，同时删除选择会话
-  - `create_selection(user_id, selection_id, timeout_task) -> None` — 创建选择会话
-  - `remove_selection(user_id) -> SelectionSession | None` — 移除选择会话
-  - `get_selection(user_id) -> SelectionSession | None` — 查询选择会话
-  - `set_current_task(user_id, task) -> None` — 显式设置用户的 current_task
-  - `reset_current_task(user_id) -> None` — 快速将 current_task 设为 None
-  - `handler_context(user_id, matcher)` — 上下文管理器，got handler 入口使用（with 语句）
-  - `execute_cancel(user_id, message="当前会话已取消") -> bool` — 取消逻辑（自取消保护、跨 task 取消、选择会话清理）
-- `timeout_session(bot, event, user_id, selection_id, message, *, on_cleanup, timeout)` — 会话超时检查任务（模块级函数）
+- `SessionManager` 类方法（参数 `scope: ChatScope`）：
+  - `get_or_create_chat(scope) -> ChatSession` — 获取或创建聊天会话
+  - `activate_chat(scope, command_type, matcher) -> bool` — 激活会话（返回 False 表示已有活跃会话）
+  - `deactivate_chat(scope) -> None` — 重置会话为空闲，同时删除选择会话
+  - `create_selection(scope, selection_id, timeout_task) -> None` — 创建选择会话
+  - `remove_selection(scope) -> SelectionSession | None` — 移除选择会话
+  - `get_selection(scope) -> SelectionSession | None` — 查询选择会话
+  - `set_current_task(scope, task) -> None` — 显式设置作用域的 current_task
+  - `reset_current_task(scope) -> None` — 快速将 current_task 设为 None
+  - `handler_context(scope, matcher)` — 上下文管理器，got handler 入口使用（with 语句）
+  - `execute_cancel(scope, message="当前会话已取消") -> bool` — 取消逻辑（自取消保护、跨 task 取消、选择会话清理）
+- `timeout_session(bot, event, scope, selection_id, message, *, on_cleanup, timeout)` — 会话超时检查任务（模块级函数）
 
 ### `bot/plugins/meme_add.py`
 

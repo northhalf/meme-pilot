@@ -18,8 +18,8 @@ from dotenv import load_dotenv
 # 加载项目根目录 .env
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
-from bot.engine.ai_matcher import AIMatchCandidate
-from bot.engine.rerank_service import RerankService
+from bot.engine.ai_matcher import AIMatchCandidate  # noqa: E402
+from bot.engine.rerank_service import RerankService  # noqa: E402
 
 # 跳过条件：未设置 API Key 时跳过
 pytestmark = pytest.mark.skipif(

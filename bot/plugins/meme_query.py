@@ -28,7 +28,7 @@ from bot.plugins._search_utils import (
     execute_combined_search,
     handle_got_selection,
 )
-from bot.session import session_manager
+from bot.session import ChatScope, session_manager
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +92,7 @@ async def handle_query(
         args: 命令参数（CommandArg 注入）。
     """
     user_id = event.get_user_id()
+    scope = ChatScope.from_event(event)
     request_id = generate_request_id()
     with set_request_id(request_id):
         logger.info("用户 %s 调用 /query", user_id)
@@ -102,7 +103,7 @@ async def handle_query(
                 await matcher.finish(None)
                 return
 
-            if not session_manager.activate_chat(user_id, "query", matcher):
+            if not session_manager.activate_chat(scope, "query", matcher):
                 await matcher.finish("已有命令在处理中，请先 /cancel")
                 return
 
@@ -110,7 +111,7 @@ async def handle_query(
             keyword, speakers, tags = _parse_args(text)
 
             if not keyword and not speakers and not tags:
-                session_manager.deactivate_chat(user_id)
+                session_manager.deactivate_chat(scope)
                 logger.info("用户 %s 的 /query 缺少参数", user_id)
                 await matcher.finish(QUERY_USAGE)
                 return
@@ -131,14 +132,14 @@ async def handle_query(
                 bot, event, matcher, keyword, speakers, tags, options=options
             )
         except asyncio.CancelledError:
-            session_manager.deactivate_chat(user_id)
+            session_manager.deactivate_chat(scope)
             raise FinishedException
         except FinishedException:
-            session_manager.deactivate_chat(user_id)
+            session_manager.deactivate_chat(scope)
             raise
         except Exception:
             logger.exception("用户 %s 的 /query 处理异常", user_id)
-            session_manager.deactivate_chat(user_id)
+            session_manager.deactivate_chat(scope)
             raise
 
 

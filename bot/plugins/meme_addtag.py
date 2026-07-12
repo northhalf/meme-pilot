@@ -25,7 +25,7 @@ from bot.engine.index_manager import (
 from bot.log_context import generate_request_id, set_request_id
 from bot.plugins._help_text import HELP_TEXT
 from bot.plugins._search_utils import got_intercept_bypass
-from bot.session import session_manager, timeout_session
+from bot.session import ChatScope, session_manager, timeout_session
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +46,7 @@ async def handle_addtag(
     """
     user_id = event.get_user_id()
     request_id = generate_request_id()
+    scope = ChatScope.from_event(event)
     with set_request_id(request_id):
         logger.info("用户 %s 调用 /addtag", user_id)
 
@@ -62,7 +63,7 @@ async def handle_addtag(
                 return
 
             # 会话检查
-            if not session_manager.activate_chat(user_id, "addtag", matcher):
+            if not session_manager.activate_chat(scope, "addtag", matcher):
                 await matcher.finish("已有命令在处理中，请先 /cancel")
                 return
 
@@ -70,14 +71,14 @@ async def handle_addtag(
             text_part = args.extract_plain_text().strip()
             parts = text_part.split(maxsplit=1)
             if len(parts) < 2:
-                session_manager.deactivate_chat(user_id)
+                session_manager.deactivate_chat(scope)
                 await matcher.finish("用法：/addtag <entry_id> <tag> [<tag>...]")
                 return
 
             try:
                 entry_id = int(parts[0])
             except ValueError:
-                session_manager.deactivate_chat(user_id)
+                session_manager.deactivate_chat(scope)
                 await matcher.finish("entry_id 必须为数字")
                 return
 
@@ -90,7 +91,7 @@ async def handle_addtag(
             store = get_metadata_store()
             entry = store.get_entry(entry_id)
             if entry is None:
-                session_manager.deactivate_chat(user_id)
+                session_manager.deactivate_chat(scope)
                 await matcher.finish(f"未找到 id 为 {entry_id} 的表情包")
                 return
 
@@ -117,13 +118,13 @@ async def handle_addtag(
                 timeout_session(
                     bot,
                     event,
-                    user_id,
+                    scope,
                     selection_id,
                     "标签添加已取消（超时）",
                 ),
             )
-            session_manager.create_selection(user_id, selection_id, task)
-            session_manager.reset_current_task(user_id)
+            session_manager.create_selection(scope, selection_id, task)
+            session_manager.reset_current_task(scope)
 
         except asyncio.CancelledError:
             raise FinishedException
@@ -146,17 +147,18 @@ async def got_confirm(
     """
     user_id = event.get_user_id()
     request_id = generate_request_id()
+    scope = ChatScope.from_event(event)
     with set_request_id(request_id):
-        with session_manager.handler_context(user_id, matcher):
+        with session_manager.handler_context(scope, matcher):
             try:
-                text = event.get_plaintext().strip()
+                text = confirm_msg.extract_plain_text().strip()
 
                 # 旁路拦截 /help 和 /cancel
-                if await got_intercept_bypass(user_id, matcher, text, HELP_TEXT):
+                if await got_intercept_bypass(event, matcher, text, HELP_TEXT):
                     return
 
                 if text.strip().lower() in ("确认", "yes", "y"):
-                    session_manager.remove_selection(user_id)
+                    session_manager.remove_selection(scope)
                     entry_id = matcher.state["entry_id"]
                     tags = list(matcher.state["tags"])
 
@@ -174,7 +176,7 @@ async def got_confirm(
                     except ValueError:
                         await matcher.finish(f"未找到 id 为 {entry_id} 的表情包")
                     else:
-                        session_manager.deactivate_chat(user_id)
+                        session_manager.deactivate_chat(scope)
                         logger.info(
                             "/addtag 成功: entry_id=%s, tags=%r", entry_id, tags
                         )
@@ -191,22 +193,19 @@ async def got_confirm(
                         )
                         return
                 else:
-                    session_manager.deactivate_chat(user_id)
+                    session_manager.deactivate_chat(scope)
                     logger.info("用户 %s 取消 /addtag", user_id)
                     await matcher.finish("已取消")
 
-                # 异常统一清理
-                session_manager.deactivate_chat(user_id)
-
             except FinishedException:
-                session_manager.deactivate_chat(user_id)
+                session_manager.deactivate_chat(scope)
                 raise
             except RejectedException:
                 raise
             except asyncio.CancelledError:
-                session_manager.deactivate_chat(user_id)
+                session_manager.deactivate_chat(scope)
                 raise FinishedException
             except Exception:
                 logger.exception("用户 %s 的 /addtag 处理异常", user_id)
-                session_manager.deactivate_chat(user_id)
+                session_manager.deactivate_chat(scope)
                 raise

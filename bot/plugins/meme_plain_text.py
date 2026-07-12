@@ -28,7 +28,7 @@ from bot.plugins._search_utils import (
     execute_search,
     handle_got_selection,
 )
-from bot.session import session_manager
+from bot.session import ChatScope, session_manager
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +55,7 @@ async def handle_plain_text(bot: Bot, event: MessageEvent, matcher: Matcher) -> 
     """
     user_id = event.get_user_id()
     text = event.get_plaintext().strip()
+    scope = ChatScope.from_event(event)
     request_id = generate_request_id()
     with set_request_id(request_id):
         logger.info("兜底处理用户 %s 消息: %r", user_id, text)
@@ -74,7 +75,7 @@ async def handle_plain_text(bot: Bot, event: MessageEvent, matcher: Matcher) -> 
             # 普通文本按关键词兜底搜索
             logger.info("用户 %s 的普通文本执行关键词搜索: %r", user_id, text)
             # 会话检查：拒绝而非覆盖
-            if not session_manager.activate_chat(user_id, "search", matcher):
+            if not session_manager.activate_chat(scope, "search", matcher):
                 await matcher.finish("已有命令在处理中，请先 /cancel")
                 return
 
@@ -82,11 +83,11 @@ async def handle_plain_text(bot: Bot, event: MessageEvent, matcher: Matcher) -> 
         except asyncio.CancelledError:
             raise FinishedException
         except FinishedException:
-            session_manager.deactivate_chat(user_id)
+            session_manager.deactivate_chat(scope)
             raise
         except Exception:
             logger.exception("用户 %s 的兜底搜索处理异常", user_id)
-            session_manager.deactivate_chat(user_id)
+            session_manager.deactivate_chat(scope)
             raise
 
 
@@ -100,5 +101,10 @@ async def got_selection(
     request_id = generate_request_id()
     with set_request_id(request_id):
         await handle_got_selection(
-            bot, event, matcher, selection_msg, "兜底搜索", options=SEARCH_OPTIONS
+            bot,
+            event,
+            matcher,
+            selection_msg,
+            "兜底搜索",
+            options=SEARCH_OPTIONS,
         )

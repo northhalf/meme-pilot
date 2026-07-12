@@ -26,7 +26,7 @@ from bot.engine.index_manager import (
 from bot.log_context import generate_request_id, set_request_id
 from bot.plugins._help_text import HELP_TEXT
 from bot.plugins._search_utils import got_intercept_bypass
-from bot.session import session_manager, timeout_session
+from bot.session import ChatScope, session_manager, timeout_session
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +47,7 @@ async def handle_edit(
     """
     user_id = event.get_user_id()
     request_id = generate_request_id()
+    scope = ChatScope.from_event(event)
     with set_request_id(request_id):
         logger.info("用户 %s 调用 /edittext", user_id)
 
@@ -63,7 +64,7 @@ async def handle_edit(
                 return
 
             # 会话检查
-            if not session_manager.activate_chat(user_id, "edittext", matcher):
+            if not session_manager.activate_chat(scope, "edittext", matcher):
                 await matcher.finish("已有命令在处理中，请先 /cancel")
                 return
 
@@ -71,20 +72,20 @@ async def handle_edit(
             text_part = args.extract_plain_text().strip()
             parts = text_part.split(maxsplit=1)
             if len(parts) < 2:
-                session_manager.deactivate_chat(user_id)
+                session_manager.deactivate_chat(scope)
                 await matcher.finish("用法：/edittext <entry_id> <新文本>")
                 return
 
             try:
                 entry_id = int(parts[0])
             except ValueError:
-                session_manager.deactivate_chat(user_id)
+                session_manager.deactivate_chat(scope)
                 await matcher.finish("entry_id 必须为数字")
                 return
 
             new_text = "".join(parts[1].split())  # 统一去空白
             if not new_text:
-                session_manager.deactivate_chat(user_id)
+                session_manager.deactivate_chat(scope)
                 await matcher.finish("新文本不能为空")
                 return
 
@@ -112,12 +113,10 @@ async def handle_edit(
             # 注册超时
             selection_id = str(uuid.uuid4())
             task = asyncio.create_task(
-                timeout_session(
-                    bot, event, user_id, selection_id, "修改已取消（超时）"
-                ),
+                timeout_session(bot, event, scope, selection_id, "修改已取消（超时）"),
             )
-            session_manager.create_selection(user_id, selection_id, task)
-            session_manager.reset_current_task(user_id)
+            session_manager.create_selection(scope, selection_id, task)
+            session_manager.reset_current_task(scope)
 
         except asyncio.CancelledError:
             raise FinishedException
@@ -140,13 +139,14 @@ async def got_confirm(
     """
     user_id = event.get_user_id()
     request_id = generate_request_id()
+    scope = ChatScope.from_event(event)
     with set_request_id(request_id):
-        with session_manager.handler_context(user_id, matcher):
+        with session_manager.handler_context(scope, matcher):
             try:
-                text = event.get_plaintext().strip()
+                text = confirm_msg.extract_plain_text().strip()
 
                 # 旁路拦截 /help 和 /cancel
-                if await got_intercept_bypass(user_id, matcher, text, HELP_TEXT):
+                if await got_intercept_bypass(event, matcher, text, HELP_TEXT):
                     return
 
                 if text.strip().lower() in ("确认", "yes", "y"):
@@ -171,7 +171,7 @@ async def got_confirm(
                     except EmbeddingError:
                         await matcher.finish("修改失败（Embedding 异常），请稍后重试")
                     else:
-                        session_manager.deactivate_chat(user_id)
+                        session_manager.deactivate_chat(scope)
                         logger.info("/edittext 成功: entry_id=%s", entry_id)
                         await matcher.finish(
                             f"OCR 文本已修改 ✅\n"
@@ -180,22 +180,22 @@ async def got_confirm(
                         )
                         return
                 else:
-                    session_manager.deactivate_chat(user_id)
+                    session_manager.deactivate_chat(scope)
                     logger.info("用户 %s 取消 /edittext", user_id)
                     await matcher.finish("已取消修改")
 
                 # 异常统一清理
-                session_manager.deactivate_chat(user_id)
+                session_manager.deactivate_chat(scope)
 
             except FinishedException:
-                session_manager.deactivate_chat(user_id)
+                session_manager.deactivate_chat(scope)
                 raise
             except RejectedException:
                 raise
             except asyncio.CancelledError:
-                session_manager.deactivate_chat(user_id)
+                session_manager.deactivate_chat(scope)
                 raise FinishedException
             except Exception:
                 logger.exception("用户 %s 的 /edittext 处理异常", user_id)
-                session_manager.deactivate_chat(user_id)
+                session_manager.deactivate_chat(scope)
                 raise

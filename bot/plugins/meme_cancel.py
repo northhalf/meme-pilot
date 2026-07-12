@@ -13,7 +13,7 @@ from nonebot.rule import to_me
 
 from bot.auth import is_authorized, log_unauthorized
 from bot.log_context import generate_request_id, set_request_id
-from bot.session import session_manager
+from bot.session import ChatScope, session_manager
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,7 @@ async def handle_cancel(bot: Bot, event: MessageEvent, matcher: Matcher) -> None
     """
     user_id = event.get_user_id()
     request_id = generate_request_id()
+    scope = ChatScope.from_event(event)
     with set_request_id(request_id):
         logger.info("用户 %s 调用 /cancel", user_id)
 
@@ -43,7 +44,7 @@ async def handle_cancel(bot: Bot, event: MessageEvent, matcher: Matcher) -> None
             await matcher.finish(None)
             return
 
-        succeed_cancel = await session_manager.execute_cancel(user_id)
+        succeed_cancel = await session_manager.execute_cancel(scope)
         if not succeed_cancel:
             await matcher.finish("当前没有活跃的会话")
 

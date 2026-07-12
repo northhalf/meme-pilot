@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 # 加载项目根目录 .env
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
-from bot.engine.openai_ocr import OpenAIOcrService
+from bot.engine.openai_ocr import OpenAIOcrService  # noqa: E402
 
 # fixture 图片目录
 IMAGES_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "images"

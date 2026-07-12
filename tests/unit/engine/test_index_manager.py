@@ -972,12 +972,12 @@ class TestConcurrencyAndDrain:
         index_manager._write_entry = slow_write
 
         (Path(index_manager._memes_dir) / "a.jpg").write_bytes(b"fake")
-        task_a = asyncio.create_task(index_manager.add("a.jpg"))
+        _ = asyncio.create_task(index_manager.add("a.jpg"))
         await in_flight.wait()
 
         # Worker 正在处理 a.jpg，此时入队 b.jpg
         (Path(index_manager._memes_dir) / "b.jpg").write_bytes(b"fake")
-        task_b = asyncio.create_task(index_manager.add("b.jpg"))
+        _ = asyncio.create_task(index_manager.add("b.jpg"))
         await asyncio.sleep(0.02)
 
         # refresh 应观察到非空队列，等待 drain

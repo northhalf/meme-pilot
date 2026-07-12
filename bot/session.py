@@ -6,19 +6,61 @@
 
 import asyncio
 import logging
-from collections.abc import Callable
+import uuid
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Awaitable
-import uuid
+from typing import Any, Awaitable, Literal
 
-from nonebot.adapters.onebot.v11 import Bot, Event
+from nonebot.adapters.onebot.v11 import (
+    Bot,
+    Event,
+    MessageEvent,
+)
 from nonebot.exception import FinishedException
 from nonebot.matcher import Matcher
 
 from bot.config import read_session_timeout
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class ChatScope:
+    """会话作用域，标识一个聊天上下文。
+
+    Attributes:
+        user_id: 用户 ID。
+        chat_type: 聊天类型，"private" 或 "group"。
+        chat_id: 私聊时为用户 ID，群聊时为群 ID。
+    """
+
+    user_id: int
+    chat_type: Literal["private", "group"]
+    chat_id: int
+
+    def __str__(self) -> str:
+        """返回可读的会话作用域字符串。"""
+        return f"{self.chat_type}:{self.chat_id}:user:{self.user_id}"
+
+    @classmethod
+    def from_event(cls, event: MessageEvent) -> "ChatScope":
+        """从 OneBot V11 消息事件构造 ChatScope。
+
+        Args:
+            event: OneBot V11 消息事件。
+
+        Returns:
+            对应的 ChatScope 实例。
+        """
+        user_id = int(event.get_user_id())
+        message_type = getattr(event, "message_type", None)
+        if message_type == "group":
+            group_id = getattr(event, "group_id", None)
+            if group_id is None:
+                raise ValueError("群聊事件缺少 group_id")
+            return cls(user_id=user_id, chat_type="group", chat_id=int(group_id))
+        return cls(user_id=user_id, chat_type="private", chat_id=user_id)
 
 
 @dataclass(slots=True)
@@ -57,27 +99,27 @@ class SessionManager:
     """统一的会话管理器，封装 ChatSession 和 SelectionSession 的生命周期。"""
 
     def __init__(self) -> None:
-        self._chat_sessions: dict[str, ChatSession] = {}
-        self._selection_sessions: dict[str, SelectionSession] = {}
+        self._chat_sessions: dict[ChatScope, ChatSession] = {}
+        self._selection_sessions: dict[ChatScope, SelectionSession] = {}
 
     # ── 核心会话状态管理 ──
 
-    def get_or_create_chat(self, user_id: str) -> ChatSession:
+    def get_or_create_chat(self, scope: ChatScope) -> ChatSession:
         """首次访问时创建并存储 ChatSession，之后复用。
 
         Args:
-            user_id: 用户 ID。
+            scope: 聊天作用域。
 
         Returns:
-            该用户的 ChatSession 实例。
+            该作用域的 ChatSession 实例。
         """
-        if user_id not in self._chat_sessions:
-            self._chat_sessions[user_id] = ChatSession(session_id=str(uuid.uuid4()))
-        return self._chat_sessions[user_id]
+        if scope not in self._chat_sessions:
+            self._chat_sessions[scope] = ChatSession(session_id=str(uuid.uuid4()))
+        return self._chat_sessions[scope]
 
     def activate_chat(
         self,
-        user_id: str,
+        scope: ChatScope,
         command_type: str,
         matcher: Matcher,
     ) -> bool:
@@ -90,14 +132,14 @@ class SessionManager:
         - handler 的 finally 块中调用 deactivate_chat 清空。
 
         Args:
-            user_id: 用户 ID。
+            scope: 聊天作用域。
             command_type: 命令类型。
             matcher: NoneBot2 Matcher。
 
         Returns:
             True 表示成功激活，False 表示已有活跃会话。
         """
-        chat = self.get_or_create_chat(user_id)
+        chat = self.get_or_create_chat(scope)
         if chat.active:
             return False
         chat.active = True
@@ -106,14 +148,14 @@ class SessionManager:
         chat.current_task = asyncio.current_task()
         return True
 
-    def deactivate_chat(self, user_id: str) -> None:
+    def deactivate_chat(self, scope: ChatScope) -> None:
         """重置聊天会话为空闲状态。同时删除与之相关的选择会话。
 
         Args:
-            user_id: 用户 ID。
+            scope: 聊天作用域。
         """
-        self.remove_selection(user_id)
-        chat = self._chat_sessions.get(user_id)
+        self.remove_selection(scope)
+        chat = self._chat_sessions.get(scope)
         if chat is None:
             return
         chat.active = False
@@ -125,7 +167,7 @@ class SessionManager:
         """是否存在非空闲的聊天会话。
 
         Returns:
-            True 表示至少有一个用户处于活跃命令会话中。
+            True 表示至少有一个作用域处于活跃命令会话中。
         """
         return any(session.active for session in self._chat_sessions.values())
 
@@ -133,79 +175,81 @@ class SessionManager:
 
     def create_selection(
         self,
-        user_id: str,
+        scope: ChatScope,
         selection_id: str,
         timeout_task: asyncio.Task,
     ) -> None:
-        """创建选择会话。覆盖同一用户的旧选择会话。
+        """创建选择会话。覆盖同一作用域的旧选择会话。
 
         Args:
-            user_id: 用户 ID。
+            scope: 聊天作用域。
             selection_id: 选择会话 ID（UUID 字符串）。
             timeout_task: 超时监控任务。
         """
-        self._selection_sessions[user_id] = SelectionSession(
+        self._selection_sessions[scope] = SelectionSession(
             selection_id=selection_id,
             timeout_task=timeout_task,
         )
 
-    def remove_selection(self, user_id: str) -> SelectionSession | None:
+    def remove_selection(self, scope: ChatScope) -> SelectionSession | None:
         """移除选择会话，返回旧会话（用于取消 timeout_task）。
 
         Args:
-            user_id: 用户 ID。
+            scope: 聊天作用域。
 
         Returns:
             被移除的选择会话，不存在时返回 None。
         """
-        return self._selection_sessions.pop(user_id, None)
+        return self._selection_sessions.pop(scope, None)
 
-    def get_selection(self, user_id: str) -> SelectionSession | None:
-        """查询用户的选择会话。
+    def get_selection(self, scope: ChatScope) -> SelectionSession | None:
+        """查询作用域的选择会话。
 
         Args:
-            user_id: 用户 ID。
+            scope: 聊天作用域。
 
         Returns:
-            该用户的选择会话，不存在时返回 None。
+            该作用域的选择会话，不存在时返回 None。
         """
-        return self._selection_sessions.get(user_id)
+        return self._selection_sessions.get(scope)
 
     # ── Task 生命周期管理 ──
 
-    def set_current_task(self, user_id: str, task: asyncio.Task | None) -> None:
-        """显式设置用户的 current_task。
+    def set_current_task(self, scope: ChatScope, task: asyncio.Task | None) -> None:
+        """显式设置作用域的 current_task。
 
         Args:
-            user_id: 用户 ID。
+            scope: 聊天作用域。
             task: 要设置的异步任务，或 None。
         """
-        chat = self.get_or_create_chat(user_id)
+        chat = self.get_or_create_chat(scope)
         chat.current_task = task
 
-    def reset_current_task(self, user_id: str) -> None:
+    def reset_current_task(self, scope: ChatScope) -> None:
         """快速将 current_task 设为 None。
 
         Args:
-            user_id: 用户 ID。
+            scope: 聊天作用域。
         """
-        chat = self._chat_sessions.get(user_id)
+        chat = self._chat_sessions.get(scope)
         if chat:
             chat.current_task = None
 
     @contextmanager
-    def handler_context(self, user_id: str, matcher: Matcher):
+    def handler_context(
+        self, scope: ChatScope, matcher: Matcher
+    ) -> Generator[None, None, None]:
         """进入 got handler 时更新 current_task 和 matcher，离开时自动 reset。
 
         用法：
-            with session_manager.handler_context(user_id, matcher):
+            with session_manager.handler_context(scope, matcher):
                 ...
 
         Args:
-            user_id: 用户 ID。
+            scope: 聊天作用域。
             matcher: 当前 got handler 的 Matcher。
         """
-        chat = self.get_or_create_chat(user_id)
+        chat = self.get_or_create_chat(scope)
         chat.current_task = asyncio.current_task()
         chat.matcher = matcher
         try:
@@ -218,7 +262,7 @@ class SessionManager:
     # ── 取消 ──
 
     async def execute_cancel(
-        self, user_id: str, message: str = "当前会话已取消"
+        self, scope: ChatScope, message: str = "当前会话已取消"
     ) -> bool:
         """执行取消逻辑。
 
@@ -226,7 +270,7 @@ class SessionManager:
         2. current_task.cancel()（非当前 task 且未完成时）
         3. remove_selection() + 取消 timeout_task（若有）
         4. 在旧 matcher 上 finish()（发送取消消息到原上下文）
-        5. deactivate_chat(user_id)
+        5. deactivate_chat(scope)
 
         Note:
             got 处理器中捕获 CancelledError 后转为 FinishedException，
@@ -234,13 +278,13 @@ class SessionManager:
             防止被取消的事件滑落到兜底处理器。
 
         Args:
-            user_id: 用户 ID。
+            scope: 聊天作用域。
             message: 结束事件的提示信息。
 
         Returns:
             bool: 无活跃会话返回 False，成功返回 True。
         """
-        chat = self._chat_sessions.get(user_id)
+        chat = self._chat_sessions.get(scope)
         if not (chat and chat.active):
             return False
 
@@ -254,7 +298,7 @@ class SessionManager:
             chat.current_task.cancel()
 
         # 移除选择会话 + 取消超时任务
-        ss = self._selection_sessions.pop(user_id, None)
+        ss = self.remove_selection(scope)
         if ss and ss.timeout_task and not ss.timeout_task.done():
             ss.timeout_task.cancel()
 
@@ -265,7 +309,7 @@ class SessionManager:
             except FinishedException:
                 pass
 
-        self.deactivate_chat(user_id)
+        self.deactivate_chat(scope)
         return True
 
 
@@ -279,7 +323,7 @@ session_manager = SessionManager()
 async def timeout_session(
     bot: Bot,
     event: Event,
-    user_id: str,
+    scope: ChatScope,
     selection_id: str,
     message: str,
     *,
@@ -288,14 +332,14 @@ async def timeout_session(
 ) -> None:
     """会话超时检查任务。
 
-    超时后按 user_id + selection_id 双重校验。
+    超时后按 scope + selection_id 双重校验。
     匹配则发送超时提示 + remove_selection + deactivate_chat + on_cleanup。
     不匹配（被新选择或 /cancel 覆盖）则静默退出。
 
     Args:
         bot: OneBot V11 Bot 实例。
         event: 原始消息事件（用于确定回复目标）。
-        user_id: 用户 ID。
+        scope: 聊天作用域。
         selection_id: 闭包捕获的选择会话 ID。
         message: 超时提示消息。
         on_cleanup: 可选的清理回调，支持同步和异步。
@@ -309,11 +353,11 @@ async def timeout_session(
         return  # 被外部取消，静默退出
 
     # 通过公共方法 get_selection() 访问选择会话
-    ss = session_manager.get_selection(user_id)
+    ss = session_manager.get_selection(scope)
     if ss is not None and ss.selection_id == selection_id:
-        logger.info("用户 %s 的选择会话超时（%d 秒）", user_id, timeout)
-        session_manager.remove_selection(user_id)
-        session_manager.deactivate_chat(user_id)
+        logger.info("%s 的选择会话超时（%d 秒）", scope, timeout)
+        session_manager.remove_selection(scope)
+        session_manager.deactivate_chat(scope)
         if on_cleanup is not None:
             result = on_cleanup()
             if asyncio.iscoroutine(result) or asyncio.isfuture(result):

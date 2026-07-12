@@ -24,13 +24,13 @@ from dotenv import load_dotenv
 # 加载项目根目录 .env
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
-from bot.engine.ai_matcher import AIMatcher
-from bot.engine.index_manager import IndexManager
-from bot.engine.openai_embedding import OpenAIEmbeddingService
-from bot.engine.openai_ocr import OpenAIOcrService
-from bot.engine.metadata_store import MetadataStore
-from bot.engine.rerank_service import RerankService
-from bot.engine.vector_store import VectorStore
+from bot.engine.ai_matcher import AIMatcher  # noqa: E402
+from bot.engine.index_manager import IndexManager  # noqa: E402
+from bot.engine.openai_embedding import OpenAIEmbeddingService  # noqa: E402
+from bot.engine.openai_ocr import OpenAIOcrService  # noqa: E402
+from bot.engine.metadata_store import MetadataStore  # noqa: E402
+from bot.engine.rerank_service import RerankService  # noqa: E402
+from bot.engine.vector_store import VectorStore  # noqa: E402
 
 # fixture 图片目录
 FIXTURE_IMAGES_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "images"

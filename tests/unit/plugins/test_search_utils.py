@@ -1,11 +1,14 @@
 """_search_utils 模块单元测试。"""
+# pyright: reportUnusedVariable=false
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from nonebot.adapters.onebot.v11 import Message
 from nonebot.exception import RejectedException
 
 from bot.engine.types import SearchResult
+from bot.session import ChatScope
 
 
 def _make_search_result(
@@ -35,6 +38,30 @@ def _make_matcher(*, state: dict | None = None) -> MagicMock:
     return matcher
 
 
+def _make_scope(user_id: int = 12345) -> ChatScope:
+    return ChatScope(user_id=user_id, chat_type="private", chat_id=user_id)
+
+
+def _make_event(
+    user_id: str = "12345",
+    message_id: int | None = 42,
+    message_type: str = "private",
+    group_id: int | None = None,
+) -> MagicMock:
+    event = MagicMock()
+    event.get_user_id.return_value = user_id
+    event.message_id = message_id
+    event.message_type = message_type
+    event.group_id = group_id
+    return event
+
+
+def _make_bot() -> MagicMock:
+    bot = MagicMock()
+    bot.send = AsyncMock()
+    return bot
+
+
 class TestResolveSelection:
     """resolve_selection 测试。"""
 
@@ -46,9 +73,7 @@ class TestResolveSelection:
             _make_search_result(entry_id=1, image_path="a.jpg", text="甲"),
             _make_search_result(entry_id=2, image_path="b.jpg", text="乙"),
         ]
-        matcher = _make_matcher()
-
-        result = resolve_selection(matcher, candidates, "2")
+        result = resolve_selection(candidates, "2")
 
         assert isinstance(result, SearchResult)
         assert result.entry_id == 2
@@ -59,9 +84,7 @@ class TestResolveSelection:
         from bot.plugins._search_utils import resolve_selection
 
         candidates = [_make_search_result()]
-        matcher = _make_matcher()
-
-        result = resolve_selection(matcher, candidates, "abc")
+        result = resolve_selection(candidates,"abc")
 
         assert isinstance(result, str)
         assert "无效编号" in result
@@ -71,9 +94,7 @@ class TestResolveSelection:
         from bot.plugins._search_utils import resolve_selection
 
         candidates = [_make_search_result(), _make_search_result()]
-        matcher = _make_matcher()
-
-        result = resolve_selection(matcher, candidates, "0")
+        result = resolve_selection(candidates,"0")
 
         assert isinstance(result, str)
         assert "无效编号" in result
@@ -83,9 +104,7 @@ class TestResolveSelection:
         from bot.plugins._search_utils import resolve_selection
 
         candidates = [_make_search_result()]
-        matcher = _make_matcher()
-
-        result = resolve_selection(matcher, candidates, "5")
+        result = resolve_selection(candidates,"5")
 
         assert isinstance(result, str)
         assert "无效编号" in result
@@ -94,9 +113,7 @@ class TestResolveSelection:
         """candidates 为空时应返回错误消息。"""
         from bot.plugins._search_utils import resolve_selection
 
-        matcher = _make_matcher()
-
-        result = resolve_selection(matcher, [], "1")
+        result = resolve_selection([], "1")
 
         assert isinstance(result, str)
         assert "搜索状态异常" in result
@@ -115,18 +132,6 @@ def _make_index_manager(
     return im
 
 
-def _make_event(user_id: str = "12345") -> MagicMock:
-    event = MagicMock()
-    event.get_user_id.return_value = user_id
-    return event
-
-
-def _make_bot() -> MagicMock:
-    bot = MagicMock()
-    bot.send = AsyncMock()
-    return bot
-
-
 class TestPresentCandidates:
     """present_candidates 测试。"""
 
@@ -134,7 +139,7 @@ class TestPresentCandidates:
     @patch("bot.plugins._search_utils.session_manager.create_selection")
     @patch("bot.plugins._search_utils.timeout_session", new_callable=AsyncMock)
     async def test_creates_selection_and_formats_list(
-        self, mock_timeout: AsyncMock, mock_create_selection: MagicMock
+        self, _mock_timeout: AsyncMock, _mock_create_selection: MagicMock
     ) -> None:
         """应格式化列表、存储候选并创建选择会话。"""
         from bot.plugins._search_utils import present_candidates
@@ -146,21 +151,23 @@ class TestPresentCandidates:
         cmd = _make_matcher()
         cmd.state = {}
 
-        await present_candidates(_make_bot(), _make_event("111"), cmd, candidates)
+        await present_candidates(
+            _make_bot(), _make_event("111"), cmd, candidates
+        )
 
         assert "candidates" in cmd.state
         assert "selection_id" in cmd.state
         sent_text = cmd.send.call_args[0][0]
         assert "1. 甲 -- 1, 小明, 吐槽" in sent_text
         assert "2. 乙 -- 2, 无, 搞笑" in sent_text
-        mock_create_selection.assert_called_once()
-        mock_timeout.assert_called_once()
+        _mock_create_selection.assert_called_once()
+        _mock_timeout.assert_called_once()
 
     @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.session_manager.create_selection")
     @patch("bot.plugins._search_utils.timeout_session", new_callable=AsyncMock)
     async def test_prompt_suffix_appended(
-        self, mock_timeout: AsyncMock, mock_create_selection: MagicMock
+        self, _mock_timeout: AsyncMock, _mock_create_selection: MagicMock
     ) -> None:
         """prompt_suffix 应追加到提示文本末尾。"""
         from bot.plugins._search_utils import present_candidates
@@ -184,7 +191,7 @@ class TestPresentCandidates:
     @patch("bot.plugins._search_utils.session_manager.create_selection")
     @patch("bot.plugins._search_utils.timeout_session", new_callable=AsyncMock)
     async def test_show_similarity_score_appends_percent(
-        self, mock_timeout: AsyncMock, mock_create_selection: MagicMock
+        self, _mock_timeout: AsyncMock, _mock_create_selection: MagicMock
     ) -> None:
         """score 量纲下列表行末尾追加百分比。"""
         from bot.plugins._search_utils import PresentOptions, present_candidates
@@ -192,9 +199,13 @@ class TestPresentCandidates:
         candidates = [_make_search_result(entry_id=1, text="甲", similarity=82.0)]
         cmd = _make_matcher()
         cmd.state = {}
-        opts = PresentOptions(show_similarity=True, similarity_scale="score", next_trigger="n")
+        opts = PresentOptions(
+            show_similarity=True, similarity_scale="score", next_trigger="n"
+        )
 
-        await present_candidates(_make_bot(), _make_event("111"), cmd, candidates, options=opts)
+        await present_candidates(
+            _make_bot(), _make_event("111"), cmd, candidates, options=opts
+        )
 
         sent_text = cmd.send.call_args[0][0]
         assert "1. 甲 -- 1, 无, 82%" in sent_text
@@ -203,7 +214,7 @@ class TestPresentCandidates:
     @patch("bot.plugins._search_utils.session_manager.create_selection")
     @patch("bot.plugins._search_utils.timeout_session", new_callable=AsyncMock)
     async def test_show_similarity_ratio_appends_percent(
-        self, mock_timeout: AsyncMock, mock_create_selection: MagicMock
+        self, _mock_timeout: AsyncMock, _mock_create_selection: MagicMock
     ) -> None:
         """ratio 量纲下 0.82 -> 82%。"""
         from bot.plugins._search_utils import PresentOptions, present_candidates
@@ -211,9 +222,13 @@ class TestPresentCandidates:
         candidates = [_make_search_result(entry_id=1, text="甲", similarity=0.82)]
         cmd = _make_matcher()
         cmd.state = {}
-        opts = PresentOptions(show_similarity=True, similarity_scale="ratio", next_trigger="n")
+        opts = PresentOptions(
+            show_similarity=True, similarity_scale="ratio", next_trigger="n"
+        )
 
-        await present_candidates(_make_bot(), _make_event("111"), cmd, candidates, options=opts)
+        await present_candidates(
+            _make_bot(), _make_event("111"), cmd, candidates, options=opts
+        )
 
         assert "82%" in cmd.send.call_args[0][0]
 
@@ -221,7 +236,7 @@ class TestPresentCandidates:
     @patch("bot.plugins._search_utils.session_manager.create_selection")
     @patch("bot.plugins._search_utils.timeout_session", new_callable=AsyncMock)
     async def test_next_page_hint_shown_when_has_next(
-        self, mock_timeout: AsyncMock, mock_create_selection: MagicMock
+        self, _mock_timeout: AsyncMock, _mock_create_selection: MagicMock
     ) -> None:
         """有下一页时追加"回复 n 看下一页"。"""
         from bot.plugins._search_utils import PresentOptions, present_candidates
@@ -232,8 +247,12 @@ class TestPresentCandidates:
         opts = PresentOptions(next_trigger="n")
 
         await present_candidates(
-            _make_bot(), _make_event("111"), cmd, candidates,
-            options=opts, page_index=0, total_pages=3,
+            _make_bot(),
+            _make_event("111"),
+            cmd,
+            candidates,
+            options=opts,
+            has_next_page=True,
         )
 
         assert "回复 n 看下一页" in cmd.send.call_args[0][0]
@@ -242,7 +261,7 @@ class TestPresentCandidates:
     @patch("bot.plugins._search_utils.session_manager.create_selection")
     @patch("bot.plugins._search_utils.timeout_session", new_callable=AsyncMock)
     async def test_next_page_hint_hidden_on_last_page(
-        self, mock_timeout: AsyncMock, mock_create_selection: MagicMock
+        self, _mock_timeout: AsyncMock, _mock_create_selection: MagicMock
     ) -> None:
         """末页不追加"回复 n 看下一页"。"""
         from bot.plugins._search_utils import PresentOptions, present_candidates
@@ -253,8 +272,12 @@ class TestPresentCandidates:
         opts = PresentOptions(next_trigger="n")
 
         await present_candidates(
-            _make_bot(), _make_event("111"), cmd, candidates,
-            options=opts, page_index=2, total_pages=3,
+            _make_bot(),
+            _make_event("111"),
+            cmd,
+            candidates,
+            options=opts,
+            has_next_page=False,
         )
 
         assert "回复 n 看下一页" not in cmd.send.call_args[0][0]
@@ -263,7 +286,7 @@ class TestPresentCandidates:
     @patch("bot.plugins._search_utils.session_manager.create_selection")
     @patch("bot.plugins._search_utils.timeout_session", new_callable=AsyncMock)
     async def test_default_options_no_similarity_no_next_hint(
-        self, mock_timeout: AsyncMock, mock_create_selection: MagicMock
+        self, _mock_timeout: AsyncMock, _mock_create_selection: MagicMock
     ) -> None:
         """/rand 默认 options：无相似度、无"回复 n"。"""
         from bot.plugins._search_utils import present_candidates
@@ -273,8 +296,11 @@ class TestPresentCandidates:
         cmd.state = {}
 
         await present_candidates(
-            _make_bot(), _make_event("111"), cmd, candidates,
-            page_index=0, total_pages=1, prompt_suffix="回复 0 换一批",
+            _make_bot(),
+            _make_event("111"),
+            cmd,
+            candidates,
+            prompt_suffix="回复 0 换一批",
         )
 
         sent_text = cmd.send.call_args[0][0]
@@ -286,7 +312,7 @@ class TestPresentCandidates:
     @patch("bot.plugins._search_utils.session_manager.create_selection")
     @patch("bot.plugins._search_utils.timeout_session", new_callable=AsyncMock)
     async def test_use_reject_calls_reject_not_send(
-        self, mock_timeout: AsyncMock, mock_create_selection: MagicMock
+        self, _mock_timeout: AsyncMock, _mock_create_selection: MagicMock
     ) -> None:
         """use_reject=True 时用 matcher.reject 重新等待，而非 send。
 
@@ -299,13 +325,63 @@ class TestPresentCandidates:
         cmd.state = {}
 
         await present_candidates(
-            _make_bot(), _make_event("111"), cmd, candidates, use_reject=True
+            _make_bot(),
+            _make_event("111"),
+            cmd,
+            candidates,
+            use_reject=True,
         )
 
         cmd.reject.assert_awaited_once()
         cmd.send.assert_not_awaited()
         # 选择会话在 reject 之前创建
-        mock_create_selection.assert_called_once()
+        _mock_create_selection.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("bot.plugins._search_utils.session_manager.create_selection")
+    @patch("bot.plugins._search_utils.timeout_session", new_callable=AsyncMock)
+    async def test_private_sends_plain_text(
+        self, _mock_timeout: AsyncMock, _mock_create_selection: MagicMock
+    ) -> None:
+        """私聊中 present_candidates 发送纯文本。"""
+        from bot.plugins._search_utils import present_candidates
+
+        candidates = [_make_search_result(entry_id=1, text="甲")]
+        cmd = _make_matcher()
+        cmd.state = {}
+
+        await present_candidates(
+            _make_bot(), _make_event("111", message_id=42), cmd, candidates
+        )
+
+        sent = cmd.send.call_args[0][0]
+        assert isinstance(sent, str)
+
+    @pytest.mark.asyncio
+    @patch("bot.plugins._search_utils.session_manager.create_selection")
+    @patch("bot.plugins._search_utils.timeout_session", new_callable=AsyncMock)
+    async def test_group_with_reply_sends_message(
+        self, _mock_timeout: AsyncMock, _mock_create_selection: MagicMock
+    ) -> None:
+        """群聊默认通过 reply 段发送 Message。"""
+        from bot.plugins._search_utils import present_candidates
+
+        candidates = [_make_search_result(entry_id=1, text="甲")]
+        cmd = _make_matcher()
+        cmd.state = {}
+        event = _make_event(
+            "111", message_id=42, message_type="group", group_id=67890
+        )
+
+        await present_candidates(
+            _make_bot(), event, cmd, candidates
+        )
+
+        sent = cmd.send.call_args[0][0]
+        assert isinstance(sent, Message)
+        assert sent[0].type == "reply"
+        assert sent[0].data["id"] == "42"
+        assert "找到多个匹配的表情包" in sent[1].data["text"]
 
 
 class TestDispatchSearchResults:
@@ -317,15 +393,16 @@ class TestDispatchSearchResults:
         from bot.plugins._search_utils import dispatch_search_results
 
         cmd = _make_matcher()
+        event = _make_event("111")
 
         with patch(
             "bot.plugins._search_utils.session_manager.deactivate_chat"
         ) as mock_deactivate:
-            await dispatch_search_results(_make_bot(), _make_event("111"), cmd, [])
+            await dispatch_search_results(_make_bot(), event, cmd, [])
 
             cmd.finish.assert_awaited_once()
             assert "没有匹配到" in cmd.finish.call_args[0][0]
-            mock_deactivate.assert_called_once_with("111")
+            mock_deactivate.assert_called_once_with(ChatScope.from_event(event))
 
     @pytest.mark.asyncio
     async def test_single_result_sends_image(self) -> None:
@@ -334,17 +411,20 @@ class TestDispatchSearchResults:
 
         result = _make_search_result(entry_id=7, image_path="a.jpg", speaker="小明")
         cmd = _make_matcher()
+        event = _make_event("111")
 
         with patch(
             "bot.plugins._search_utils.session_manager.deactivate_chat"
         ) as mock_deactivate, patch(
             "bot.plugins._search_utils.MessageSegment"
         ) as mock_segment:
-            await dispatch_search_results(_make_bot(), _make_event("111"), cmd, [result])
+            await dispatch_search_results(
+                _make_bot(), event, cmd, [result]
+            )
 
             cmd.send.assert_awaited_once()
             cmd.finish.assert_awaited_once()
-            mock_deactivate.assert_called_once_with("111")
+            mock_deactivate.assert_called_once_with(ChatScope.from_event(event))
             mock_segment.image.assert_called_once()
 
     @pytest.mark.asyncio
@@ -361,11 +441,16 @@ class TestDispatchSearchResults:
             _make_search_result(entry_id=i, text=f"甲{i}") for i in range(1, 4)
         ]
         cmd = _make_matcher()
-        opts = PresentOptions(show_similarity=True, similarity_scale="score", next_trigger="n")
+        event = _make_event(
+            "111", message_id=42, message_type="group", group_id=67890
+        )
+        opts = PresentOptions(
+            show_similarity=True, similarity_scale="score", next_trigger="n"
+        )
 
         await dispatch_search_results(
             _make_bot(),
-            _make_event("111"),
+            event,
             cmd,
             results,
             options=opts,
@@ -375,9 +460,9 @@ class TestDispatchSearchResults:
         mock_present.assert_awaited_once()
         kwargs = mock_present.call_args.kwargs
         assert kwargs["options"] is opts
-        assert kwargs["page_index"] == 0
-        assert kwargs["total_pages"] == 1
+        assert kwargs["has_next_page"] is False
         assert kwargs["prompt_suffix"] == "回复 0 换一批"
+        assert kwargs["options"].reply_in_group is True
         # 第 1 页切片
         assert mock_present.call_args.args[3] == results[0:10]
         # 分页状态
@@ -392,20 +477,21 @@ class TestDispatchSearchResults:
     async def test_multiple_results_paginates_when_over_page_size(
         self, mock_present: AsyncMock
     ) -> None:
-        """结果数 > page_size 时切第 1 页，total_pages 正确。"""
+        """结果数 > page_size 时切第 1 页，并正确标记 has_next_page。"""
         from bot.plugins._search_utils import dispatch_search_results, PresentOptions
 
         results = [
             _make_search_result(entry_id=i, text=f"甲{i}") for i in range(1, 26)
         ]  # 25 条
         cmd = _make_matcher()
-        opts = PresentOptions(next_trigger="n")  # page_size=10
+        event = _make_event("111")
 
-        await dispatch_search_results(_make_bot(), _make_event("111"), cmd, results, options=opts)
+        await dispatch_search_results(
+            _make_bot(), event, cmd, results, options=PresentOptions(next_trigger="n")
+        )
 
         kwargs = mock_present.call_args.kwargs
-        assert kwargs["page_index"] == 0
-        assert kwargs["total_pages"] == 3
+        assert kwargs["has_next_page"] is True
         assert len(mock_present.call_args.args[3]) == 10  # 第 1 页 10 条
         assert cmd.state["total_pages"] == 3
 
@@ -427,8 +513,9 @@ class TestExecuteSearch:
         )
         _cmd = MagicMock()
         _cmd.finish = AsyncMock()
+        event = _make_event("111")
 
-        await execute_search(_make_bot(), _make_event(), _cmd, "加班")
+        await execute_search(_make_bot(), event, _cmd, "加班")
 
         _cmd.finish.assert_awaited_once()
         assert "索引更新较慢" in _cmd.finish.call_args[0][0]
@@ -445,12 +532,13 @@ class TestExecuteSearch:
         mock_get_im.return_value = _make_index_manager(results=[])
         _cmd = MagicMock()
         _cmd.finish = AsyncMock()
+        event = _make_event("111")
 
-        await execute_search(_make_bot(), _make_event(), _cmd, "xyz")
+        await execute_search(_make_bot(), event, _cmd, "xyz")
 
         _cmd.finish.assert_awaited_once()
         assert "没有匹配到" in _cmd.finish.call_args[0][0]
-        mock_deactivate.assert_called_once_with("12345")
+        mock_deactivate.assert_called_once_with(ChatScope.from_event(event))
 
     @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.session_manager.deactivate_chat")
@@ -475,15 +563,16 @@ class TestExecuteSearch:
         _cmd = MagicMock()
         _cmd.finish = AsyncMock()
         _cmd.send = AsyncMock()
+        event = _make_event("111")
 
-        await execute_search(_make_bot(), _make_event(), _cmd, "加班")
+        await execute_search(_make_bot(), event, _cmd, "加班")
 
         _cmd.send.assert_awaited_once()
         _cmd.finish.assert_awaited_once()
         finished_text = _cmd.finish.call_args[0][0]
         assert "7" in finished_text
         assert "小明" in finished_text
-        mock_deactivate.assert_called_once_with("12345")
+        mock_deactivate.assert_called_once_with(ChatScope.from_event(event))
 
     @pytest.mark.asyncio
     @patch(
@@ -504,11 +593,15 @@ class TestExecuteSearch:
         bot = _make_bot()
         event = _make_event("111")
         cmd = _make_matcher()
-        opts = PresentOptions(show_similarity=True, similarity_scale="score", next_trigger="n")
+        opts = PresentOptions(
+            show_similarity=True, similarity_scale="score", next_trigger="n"
+        )
 
         await execute_search(bot, event, cmd, "加班", options=opts)
 
-        mock_dispatch.assert_awaited_once_with(bot, event, cmd, results, options=opts)
+        mock_dispatch.assert_awaited_once_with(
+            bot, event, cmd, results, options=opts
+        )
 
     @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.get_index_manager")
@@ -523,8 +616,9 @@ class TestExecuteSearch:
         )
         _cmd = MagicMock()
         _cmd.finish = AsyncMock()
+        event = _make_event("111")
 
-        await execute_search(_make_bot(), _make_event(), _cmd, "加班")
+        await execute_search(_make_bot(), event, _cmd, "加班")
 
         _cmd.finish.assert_awaited_once()
         assert "搜索服务暂时不可用" in _cmd.finish.call_args[0][0]
@@ -542,11 +636,12 @@ class TestExecuteSearch:
         from bot.plugins._search_utils import execute_search
         from bot.session import session_manager
 
-        user_id = "f2_timeout_001"
+        user_id = 1001
+        scope = _make_scope(user_id)
         # 确保干净起始状态后激活会话
-        session_manager.deactivate_chat(user_id)
-        session_manager.activate_chat(user_id, "search", _make_matcher())
-        assert session_manager.get_or_create_chat(user_id).active is True
+        session_manager.deactivate_chat(scope)
+        session_manager.activate_chat(scope, "search", _make_matcher())
+        assert session_manager.get_or_create_chat(scope).active is True
 
         mock_get_im.return_value = _make_index_manager(
             search_side_effect=asyncio.TimeoutError()
@@ -554,10 +649,12 @@ class TestExecuteSearch:
         _cmd = MagicMock()
         _cmd.finish = AsyncMock()
 
-        await execute_search(_make_bot(), _make_event(user_id), _cmd, "加班")
+        await execute_search(
+            _make_bot(), _make_event(str(user_id)), _cmd, "加班"
+        )
 
         # 错误分支应 deactivate，会话不再活跃
-        assert session_manager.get_or_create_chat(user_id).active is False
+        assert session_manager.get_or_create_chat(scope).active is False
 
     @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.get_index_manager")
@@ -568,18 +665,21 @@ class TestExecuteSearch:
         from bot.plugins._search_utils import execute_search
         from bot.session import session_manager
 
-        user_id = "f2_runtime_001"
-        session_manager.deactivate_chat(user_id)
-        session_manager.activate_chat(user_id, "search", _make_matcher())
-        assert session_manager.get_or_create_chat(user_id).active is True
+        user_id = 1002
+        scope = _make_scope(user_id)
+        session_manager.deactivate_chat(scope)
+        session_manager.activate_chat(scope, "search", _make_matcher())
+        assert session_manager.get_or_create_chat(scope).active is True
 
         mock_get_im.side_effect = RuntimeError("not initialized")
         _cmd = MagicMock()
         _cmd.finish = AsyncMock()
 
-        await execute_search(_make_bot(), _make_event(user_id), _cmd, "加班")
+        await execute_search(
+            _make_bot(), _make_event(str(user_id)), _cmd, "加班"
+        )
 
-        assert session_manager.get_or_create_chat(user_id).active is False
+        assert session_manager.get_or_create_chat(scope).active is False
 
     @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.get_index_manager")
@@ -590,10 +690,11 @@ class TestExecuteSearch:
         from bot.plugins._search_utils import execute_search
         from bot.session import session_manager
 
-        user_id = "f2_exc_001"
-        session_manager.deactivate_chat(user_id)
-        session_manager.activate_chat(user_id, "search", _make_matcher())
-        assert session_manager.get_or_create_chat(user_id).active is True
+        user_id = 1003
+        scope = _make_scope(user_id)
+        session_manager.deactivate_chat(scope)
+        session_manager.activate_chat(scope, "search", _make_matcher())
+        assert session_manager.get_or_create_chat(scope).active is True
 
         mock_get_im.return_value = _make_index_manager(
             search_side_effect=RuntimeError("pylcs 错误")
@@ -601,9 +702,11 @@ class TestExecuteSearch:
         _cmd = MagicMock()
         _cmd.finish = AsyncMock()
 
-        await execute_search(_make_bot(), _make_event(user_id), _cmd, "加班")
+        await execute_search(
+            _make_bot(), _make_event(str(user_id)), _cmd, "加班"
+        )
 
-        assert session_manager.get_or_create_chat(user_id).active is False
+        assert session_manager.get_or_create_chat(scope).active is False
 
 
 class TestGotInterceptBypass:
@@ -614,8 +717,9 @@ class TestGotInterceptBypass:
         """普通文本返回 False。"""
         from bot.plugins._search_utils import got_intercept_bypass
 
+        event = _make_event("12345")
         matcher = AsyncMock()
-        result = await got_intercept_bypass("user1", matcher, "hello", "帮助文本")
+        result = await got_intercept_bypass(event, matcher, "hello", "帮助文本")
         assert result is False
 
     @pytest.mark.asyncio
@@ -623,10 +727,11 @@ class TestGotInterceptBypass:
         """/help 拦截后抛出 RejectedException。"""
         from bot.plugins._search_utils import got_intercept_bypass
 
+        event = _make_event("12345")
         matcher = AsyncMock()
         with pytest.raises(RejectedException):
             matcher.reject.side_effect = RejectedException("reject")
-            await got_intercept_bypass("user1", matcher, "/help", "帮助文本")
+            await got_intercept_bypass(event, matcher, "/help", "帮助文本")
         matcher.reject.assert_called_once_with("帮助文本")
 
     @pytest.mark.asyncio
@@ -635,9 +740,11 @@ class TestGotInterceptBypass:
         from bot.plugins._search_utils import got_intercept_bypass
         from bot.session import session_manager
 
+        event = _make_event("12345")
         matcher = AsyncMock()
-        session_manager.activate_chat("user1", "add", matcher)
-        result = await got_intercept_bypass("user1", matcher, "/cancel", "帮助文本")
+        scope = ChatScope.from_event(event)
+        session_manager.activate_chat(scope, "add", matcher)
+        result = await got_intercept_bypass(event, matcher, "/cancel", "帮助文本")
         assert result is True
 
     @pytest.mark.asyncio
@@ -645,10 +752,11 @@ class TestGotInterceptBypass:
         """/help xxx（带参数）也匹配帮助，抛出 RejectedException。"""
         from bot.plugins._search_utils import got_intercept_bypass
 
+        event = _make_event("12345")
         matcher = AsyncMock()
         with pytest.raises(RejectedException):
             matcher.reject.side_effect = RejectedException("reject")
-            await got_intercept_bypass("user1", matcher, "/help 加班", "帮助文本")
+            await got_intercept_bypass(event, matcher, "/help 加班", "帮助文本")
         matcher.reject.assert_called_once_with("帮助文本")
 
     @pytest.mark.asyncio
@@ -657,10 +765,12 @@ class TestGotInterceptBypass:
         from bot.plugins._search_utils import got_intercept_bypass
         from bot.session import session_manager
 
+        event = _make_event("12345")
         matcher = AsyncMock()
-        session_manager.activate_chat("user1", "add", matcher)
+        scope = ChatScope.from_event(event)
+        session_manager.activate_chat(scope, "add", matcher)
         result = await got_intercept_bypass(
-            "user1", matcher, "/cancel something", "帮助文本"
+            event, matcher, "/cancel something", "帮助文本"
         )
         assert result is True
 
@@ -762,7 +872,9 @@ class TestHandleGotSelectionPagination:
             "total_pages": 3,
             "candidates": all_results[0:10],
         }
-        event = _make_event("111")
+        event = _make_event(
+            "111", message_id=42, message_type="group", group_id=67890
+        )
         event.get_plaintext.return_value = "n"
         msg = MagicMock()
         msg.extract_plain_text.return_value = "n"
@@ -771,7 +883,7 @@ class TestHandleGotSelectionPagination:
         )
 
         @contextmanager
-        def _ctx(uid, m):
+        def _ctx(s, m):
             yield
 
         mock_ctx.side_effect = _ctx
@@ -782,7 +894,8 @@ class TestHandleGotSelectionPagination:
 
         assert matcher.state["page_index"] == 1
         mock_present.assert_awaited_once()
-        assert mock_present.call_args.kwargs["page_index"] == 1
+        assert mock_present.call_args.kwargs["has_next_page"] is True
+        assert mock_present.call_args.kwargs["options"].reply_in_group is True
         assert len(mock_present.call_args.args[3]) == 10  # 第 2 页 10 条
         # 翻页在 got 内，必须用 reject 重新等待，否则 matcher 结束
         assert mock_present.call_args.kwargs["use_reject"] is True
@@ -790,10 +903,12 @@ class TestHandleGotSelectionPagination:
     @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.session_manager.handler_context")
     @patch("bot.plugins._search_utils.session_manager.get_selection")
+    @patch("bot.plugins._search_utils.reject_with_reply", new_callable=AsyncMock)
     @patch("bot.plugins._search_utils.got_intercept_bypass", new_callable=AsyncMock)
     async def test_next_trigger_on_last_page_rejects(
         self,
         mock_bypass: AsyncMock,
+        mock_reject_with_reply: AsyncMock,
         mock_get_selection: MagicMock,
         mock_ctx: MagicMock,
     ) -> None:
@@ -816,12 +931,13 @@ class TestHandleGotSelectionPagination:
         }
         event = _make_event("111")
         event.get_plaintext.return_value = "n"
+        event.message_id = 42
         msg = MagicMock()
         msg.extract_plain_text.return_value = "n"
         opts = PresentOptions(next_trigger="n")
 
         @contextmanager
-        def _ctx(uid, m):
+        def _ctx(s, m):
             yield
 
         mock_ctx.side_effect = _ctx
@@ -830,8 +946,9 @@ class TestHandleGotSelectionPagination:
             _make_bot(), event, matcher, msg, "搜索", options=opts
         )
 
-        matcher.reject.assert_awaited_once()
-        assert "没有更多结果了" in matcher.reject.call_args[0][0]
+        mock_reject_with_reply.assert_awaited_once_with(
+            matcher, event, "没有更多结果了"
+        )
         assert matcher.state["page_index"] == 0
 
     @pytest.mark.asyncio
@@ -904,8 +1021,7 @@ class TestExecuteCombinedSearch:
         mock_get_im.return_value.search_combined = AsyncMock(
             return_value=[_make_search_result()]
         )
-        event = MagicMock()
-        event.get_user_id.return_value = "123"
+        event = _make_event("123")
 
         await execute_combined_search(
             MagicMock(), event, _make_matcher(),
@@ -932,8 +1048,7 @@ class TestExecuteCombinedSearch:
         mock_get_im.return_value.search_combined = AsyncMock(
             side_effect=asyncio.TimeoutError()
         )
-        event = MagicMock()
-        event.get_user_id.return_value = "123"
+        event = _make_event("123")
         matcher = _make_matcher()
 
         await execute_combined_search(
@@ -955,8 +1070,7 @@ class TestExecuteCombinedSearch:
         """IndexManager 未就绪回复「服务未就绪」。"""
         from bot.plugins._search_utils import execute_combined_search
 
-        event = MagicMock()
-        event.get_user_id.return_value = "123"
+        event = _make_event("123")
         matcher = _make_matcher()
 
         await execute_combined_search(

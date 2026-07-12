@@ -1,12 +1,18 @@
 """SessionManager 单元测试。"""
+# pyright: reportUnusedFunction=false
 
 import pytest
 
-from bot.session import ChatSession, session_manager
+from bot.session import ChatScope, ChatSession, session_manager
+
+
+def _private_scope(user_id: int = 1001) -> ChatScope:
+    """构造私聊作用域。"""
+    return ChatScope(user_id=user_id, chat_type="private", chat_id=user_id)
 
 
 @pytest.fixture(autouse=True)
-def _clear_sessions():
+def _clear_sessions():  # type: ignore[reportUnusedFunction]
     """每个测试前后清空全局 SessionManager 的内部状态。"""
     session_manager._chat_sessions.clear()
     session_manager._selection_sessions.clear()
@@ -22,17 +28,19 @@ def test_has_active_session_initially_false():
 
 def test_has_active_session_true_after_activate():
     """激活一个会话后，has_active_session 应返回 True。"""
+    scope = _private_scope()
     chat = ChatSession(session_id="test-id")
     chat.active = True
-    session_manager._chat_sessions["user_1"] = chat
+    session_manager._chat_sessions[scope] = chat
     assert session_manager.has_active_session() is True
 
 
 def test_has_active_session_false_after_deactivate():
     """去激活后，has_active_session 应恢复为 False。"""
+    scope = _private_scope()
     chat = ChatSession(session_id="test-id")
     chat.active = True
-    session_manager._chat_sessions["user_1"] = chat
+    session_manager._chat_sessions[scope] = chat
 
-    session_manager.deactivate_chat("user_1")
+    session_manager.deactivate_chat(scope)
     assert session_manager.has_active_session() is False

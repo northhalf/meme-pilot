@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from bot.engine.types import SearchResult
+from bot.session import ChatScope
+
 
 # ---------------------------------------------------------------------------
 # 在导入插件前 mock nonebot.on_command，避免 NoneBot2 完整初始化。
@@ -29,9 +31,15 @@ def _make_event(user_id: str = "12345", text: str = "/rand 加班") -> MagicMock
     """创建模拟的 MessageEvent。"""
     event = MagicMock()
     event.message_type = "private"
+    event.message_id = 1
     event.get_user_id.return_value = user_id
     event.get_plaintext.return_value = text
     return event
+
+
+def _make_scope(user_id: str = "12345") -> ChatScope:
+    """创建模拟的私聊 ChatScope。"""
+    return ChatScope(user_id=int(user_id), chat_type="private", chat_id=int(user_id))
 
 
 def _make_bot() -> MagicMock:
@@ -206,13 +214,11 @@ class TestGotRandSelection:
                 _make_bot(), _make_event(text="0"), matcher, _make_message("0")
             )
 
-            mock_remove_sel.assert_called_once_with("12345")
+            mock_remove_sel.assert_called_once_with(_make_scope("12345"))
             mock_present.assert_awaited_once()
             args = mock_present.call_args
             assert args.kwargs.get("prompt_suffix") == "回复 0 换一批"
-            # 换一批补齐 page_index=0, total_pages=1（单页，不翻页）
-            assert args.kwargs.get("page_index") == 0
-            assert args.kwargs.get("total_pages") == 1
+            assert args.kwargs.get("has_next_page", False) is False
             # 换一批在 got 内，必须用 reject 重新等待，否则 matcher 结束
             assert args.kwargs.get("use_reject") is True
 
@@ -237,12 +243,12 @@ class TestGotRandSelection:
         candidates = [result]
         matcher = _make_matcher(state={"candidates": candidates})
 
-        with patch("bot.plugins.meme_rand.MessageSegment") as mock_segment:
+        with patch("bot.plugins.meme_rand.MessageSegment") as _:
             await got_rand_selection(
                 _make_bot(), _make_event(text="1"), matcher, _make_message("1")
             )
 
-            mock_remove_sel.assert_called_once_with("12345")
+            mock_remove_sel.assert_called_once_with(_make_scope("12345"))
             matcher.send.assert_awaited_once()
             matcher.finish.assert_awaited_once()
 

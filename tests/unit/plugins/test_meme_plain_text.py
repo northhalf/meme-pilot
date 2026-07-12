@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from bot.engine.types import SearchResult
 
 # ---------------------------------------------------------------------------
 # 在导入插件前 mock nonebot.on_message，

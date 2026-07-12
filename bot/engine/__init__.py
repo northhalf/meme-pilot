@@ -6,22 +6,14 @@
 
 import logging
 
-from .provider_factory import (
-    mark_embedding_unavailable,
-    mark_ocr_unavailable,
-    register_embedding,
-    register_ocr,
-)
-
-logger = logging.getLogger(__name__)
-
 # 从各子模块导出公共接口
 from .ai_matcher import (
-    AIMatcher,
     AIMatchCandidate,
+    AIMatcher,
     AIMatchResult,
     RerankProvider,
 )
+from .combined_searcher import CombinedSearcher
 from .image_optimizer import ImageOptimizer, OptimizeResult
 from .index_manager import (
     AddResult,
@@ -34,12 +26,19 @@ from .index_manager import (
     resolve_unique_filename,
 )
 from .keyword_searcher import KeywordSearcher
-from .combined_searcher import CombinedSearcher
 from .metadata_store import MemeEntry, MetadataStore
 from .protocols import EmbeddingProvider, MetadataEntryProvider, VectorQueryProvider
+from .provider_factory import (
+    mark_embedding_unavailable,
+    mark_ocr_unavailable,
+    register_embedding,
+    register_ocr,
+)
 from .rerank_service import RerankService
 from .types import SearchResult
 from .vector_store import VectorHit, VectorStore
+
+logger = logging.getLogger(__name__)
 
 # OCR providers（导入失败时标记为不可用）
 try:

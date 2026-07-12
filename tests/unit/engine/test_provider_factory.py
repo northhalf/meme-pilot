@@ -7,7 +7,6 @@ from bot.engine.provider_factory import (
     create_embedding_provider,
     create_ocr_provider,
     mark_embedding_unavailable,
-    mark_ocr_unavailable,
     register_embedding,
     register_ocr,
     reset_provider_registries,

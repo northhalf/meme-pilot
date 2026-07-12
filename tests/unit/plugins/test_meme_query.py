@@ -10,7 +10,7 @@ _mock_cmd.got.return_value = lambda fn: fn
 
 with patch("nonebot.on_command", return_value=_mock_cmd):
     from bot.plugins import meme_query
-    from bot.plugins.meme_query import _parse_args, got_selection, handle_query
+    from bot.plugins.meme_query import _parse_args, handle_query
 
 
 def _make_event(user_id: str = "12345", text: str = "/query 加班 @小明 #吐槽") -> MagicMock:

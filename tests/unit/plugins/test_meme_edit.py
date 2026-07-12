@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from bot.engine.index_manager import EditTextResult
+
 # 在导入插件前 mock nonebot.on_command，避免 NoneBot2 完整初始化
 _mock_cmd = MagicMock()
 _mock_cmd.handle.return_value = lambda fn: fn
@@ -18,10 +20,6 @@ with (
         got_confirm,
         handle_edit,
     )
-
-from bot.engine.index_manager import (
-    EditTextResult,
-)
 
 
 def _make_event(user_id: str = "12345", text: str = "/edittext") -> MagicMock:
@@ -251,7 +249,7 @@ class TestGotConfirm:
             event = _make_event(text="确认")
             matcher = self._setup_matcher()
 
-            await got_confirm(bot, event, matcher, "确认")
+            await got_confirm(bot, event, matcher, _make_message("确认"))
 
             im.edit_text.assert_awaited_once_with(5, "加班到崩溃")
             matcher.finish.assert_awaited_once()
@@ -272,7 +270,7 @@ class TestGotConfirm:
             event = _make_event(text="不要")
             matcher = self._setup_matcher()
 
-            await got_confirm(bot, event, matcher, "不要")
+            await got_confirm(bot, event, matcher, _make_message("不要"))
 
             matcher.finish.assert_awaited_once_with("已取消修改")
 
@@ -284,7 +282,7 @@ class TestGotConfirm:
             patch("bot.plugins.meme_edit.got_intercept_bypass") as mock_bypass,
         ):
             # Simulate bypass returning False (handled by bypass, so finish not called)
-            async def bypass_side_effect(uid, matcher, text, help_text):
+            async def bypass_side_effect(event, matcher, text, help_text):
                 if text == "/help":
                     return True  # handled by bypass
                 return False
@@ -301,7 +299,7 @@ class TestGotConfirm:
                 }
             )
 
-            await got_confirm(bot, event, matcher, "/help")
+            await got_confirm(bot, event, matcher, _make_message("/help"))
 
             # bypass intercepted /help, so finish should not be called
             assert matcher.finish.call_count == 0
@@ -314,7 +312,7 @@ class TestGotConfirm:
             patch("bot.plugins.meme_edit.got_intercept_bypass") as mock_bypass,
         ):
 
-            async def bypass_side_effect(uid, matcher, text, help_text):
+            async def bypass_side_effect(event, matcher, text, help_text):
                 if text == "/cancel":
                     return True  # handled by bypass
                 return False
@@ -331,7 +329,7 @@ class TestGotConfirm:
                 }
             )
 
-            await got_confirm(bot, event, matcher, "/cancel")
+            await got_confirm(bot, event, matcher, _make_message("/cancel"))
 
             assert matcher.finish.call_count == 0
 
@@ -362,6 +360,6 @@ class TestGotConfirm:
                 }
             )
 
-            await got_confirm(bot, event, matcher, "确认")
+            await got_confirm(bot, event, matcher, _make_message("确认"))
 
             matcher.finish.assert_awaited_once_with("修改处理超时，请稍后再试")

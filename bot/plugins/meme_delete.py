@@ -21,7 +21,7 @@ from bot.engine.index_manager import IndexAddCancelledError, RefreshInProgressEr
 from bot.log_context import generate_request_id, set_request_id
 from bot.plugins._help_text import HELP_TEXT
 from bot.plugins._search_utils import got_intercept_bypass
-from bot.session import session_manager, timeout_session
+from bot.session import ChatScope, session_manager, timeout_session
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +57,7 @@ async def handle_delete(
     """
     user_id = event.get_user_id()
     request_id = generate_request_id()
+    scope = ChatScope.from_event(event)
     with set_request_id(request_id):
         logger.info("用户 %s 调用 /del", user_id)
 
@@ -73,7 +74,7 @@ async def handle_delete(
                 return
 
             # 会话检查
-            if not session_manager.activate_chat(user_id, "del", matcher):
+            if not session_manager.activate_chat(scope, "del", matcher):
                 await matcher.finish("已有命令在处理中，请先 /cancel")
                 return
 
@@ -81,7 +82,7 @@ async def handle_delete(
             text_part = args.extract_plain_text().strip()
             tokens = text_part.split()
             if not tokens:
-                session_manager.deactivate_chat(user_id)
+                session_manager.deactivate_chat(scope)
                 await matcher.finish("用法：/del <id>...")
                 return
 
@@ -90,7 +91,7 @@ async def handle_delete(
                 try:
                     entry_ids.append(int(token))
                 except ValueError:
-                    session_manager.deactivate_chat(user_id)
+                    session_manager.deactivate_chat(scope)
                     await matcher.finish("id 必须为数字")
                     return
 
@@ -114,7 +115,7 @@ async def handle_delete(
             )
 
             if not found:
-                session_manager.deactivate_chat(user_id)
+                session_manager.deactivate_chat(scope)
                 await matcher.finish("未找到任何表情包")
                 return
 
@@ -134,12 +135,10 @@ async def handle_delete(
             # 注册超时
             selection_id = str(uuid.uuid4())
             task = asyncio.create_task(
-                timeout_session(
-                    bot, event, user_id, selection_id, "删除已取消（超时）"
-                ),
+                timeout_session(bot, event, scope, selection_id, "删除已取消（超时）"),
             )
-            session_manager.create_selection(user_id, selection_id, task)
-            session_manager.reset_current_task(user_id)
+            session_manager.create_selection(scope, selection_id, task)
+            session_manager.reset_current_task(scope)
 
         except asyncio.CancelledError:
             raise FinishedException
@@ -162,17 +161,18 @@ async def got_confirm(
     """
     user_id = event.get_user_id()
     request_id = generate_request_id()
+    scope = ChatScope.from_event(event)
     with set_request_id(request_id):
-        with session_manager.handler_context(user_id, matcher):
+        with session_manager.handler_context(scope, matcher):
             try:
-                text = event.get_plaintext().strip()
+                text = confirm_msg.extract_plain_text().strip()
 
                 # 旁路拦截 /help 和 /cancel
-                if await got_intercept_bypass(user_id, matcher, text, HELP_TEXT):
+                if await got_intercept_bypass(event, matcher, text, HELP_TEXT):
                     return
 
                 if text.strip().lower() in ("确认", "yes", "y"):
-                    session_manager.remove_selection(user_id)
+                    session_manager.remove_selection(scope)
 
                     try:
                         result = await asyncio.wait_for(
@@ -189,7 +189,7 @@ async def got_confirm(
                         logger.exception("用户 %s 的 /del 删除异常", user_id)
                         await matcher.finish("删除过程中发生异常，请稍后重试")
                     else:
-                        session_manager.deactivate_chat(user_id)
+                        session_manager.deactivate_chat(scope)
                         logger.info(
                             "/del 完成: 成功=%d, 未找到=%d, 失败=%d",
                             len(result.deleted_ids),
@@ -221,22 +221,22 @@ async def got_confirm(
                         await matcher.finish("\n".join(lines))
                         return
                 else:
-                    session_manager.deactivate_chat(user_id)
+                    session_manager.deactivate_chat(scope)
                     logger.info("用户 %s 取消 /del", user_id)
                     await matcher.finish("已取消删除")
 
                 # 异常统一清理
-                session_manager.deactivate_chat(user_id)
+                session_manager.deactivate_chat(scope)
 
             except FinishedException:
-                session_manager.deactivate_chat(user_id)
+                session_manager.deactivate_chat(scope)
                 raise
             except RejectedException:
                 raise
             except asyncio.CancelledError:
-                session_manager.deactivate_chat(user_id)
+                session_manager.deactivate_chat(scope)
                 raise FinishedException
             except Exception:
                 logger.exception("用户 %s 的 /del 处理异常", user_id)
-                session_manager.deactivate_chat(user_id)
+                session_manager.deactivate_chat(scope)
                 raise

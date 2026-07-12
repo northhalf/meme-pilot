@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 # 加载项目根目录 .env
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
-from bot.engine.openai_embedding import OpenAIEmbeddingService
+from bot.engine.openai_embedding import OpenAIEmbeddingService  # noqa: E402
 
 # 跳过条件：未设置 API Key 时跳过
 pytestmark = pytest.mark.skipif(

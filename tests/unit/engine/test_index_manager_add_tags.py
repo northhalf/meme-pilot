@@ -5,7 +5,6 @@ from pathlib import Path
 import pytest
 
 from bot.engine.index_manager import (
-    AddTagResult,
     IndexManager,
 )
 from bot.engine.metadata_store import MemeEntry

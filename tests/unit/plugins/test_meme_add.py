@@ -1,12 +1,21 @@
 """/add 命令插件单元测试。"""
 
 import asyncio
-import re
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+
+from bot.engine.index_manager import (
+    AddResult,
+    CompressionError,
+    EmbeddingError,
+    IndexAddCancelledError,
+    OcrError,
+    RefreshInProgressError,
+)
+from bot.session import ChatScope
 
 # ---------------------------------------------------------------------------
 # 在导入插件前 mock nonebot.on_command，避免 NoneBot2 完整初始化。
@@ -23,21 +32,15 @@ with (
 ):
     from bot.plugins import meme_add
     from bot.plugins.meme_add import (
-        _auto_filename,
         _get_extension,
         got_image,
         handle_add,
     )
 
 
-from bot.engine.index_manager import (
-    AddResult,
-    CompressionError,
-    EmbeddingError,
-    IndexAddCancelledError,
-    OcrError,
-    RefreshInProgressError,
-)
+def _make_scope(user_id: str = "12345") -> ChatScope:
+    """构造私聊 ChatScope。"""
+    return ChatScope(user_id=int(user_id), chat_type="private", chat_id=int(user_id))
 
 
 def _make_event(user_id: str = "12345", text: str = "/add") -> MagicMock:
@@ -69,7 +72,6 @@ def _make_matcher(*, state: dict | None = None) -> MagicMock:
 
 def _make_index_manager() -> MagicMock:
     """创建模拟的 IndexManager。"""
-    from bot.engine.index_manager import AddResult
 
     im = MagicMock()
     im.add = AsyncMock(
@@ -437,7 +439,7 @@ class TestHandleAdd:
             _make_bot(), _make_event("111"), matcher, args=_make_message("")
         )
 
-        mock_sm.activate_chat.assert_called_once_with("111", "add", matcher)
+        mock_sm.activate_chat.assert_called_once_with(_make_scope("111"), "add", matcher)
 
     @pytest.mark.asyncio
     @patch.object(meme_add, "is_authorized", return_value=True)
@@ -534,7 +536,7 @@ class TestGotImage:
 
         matcher.finish.assert_awaited_once()
         assert "未就绪" in matcher.finish.call_args[0][0]
-        mock_sm.deactivate_chat.assert_called_once_with("111")
+        mock_sm.deactivate_chat.assert_called_once_with(_make_scope("111"))
 
     @pytest.mark.asyncio
     @patch.object(meme_add, "session_manager")
@@ -558,7 +560,6 @@ class TestGotImage:
         tmp_path: Path,
     ) -> None:
         """正常流程应回复成功。"""
-        from bot.engine.index_manager import AddResult
 
         im = _make_index_manager()
         im.add = AsyncMock(
@@ -603,7 +604,6 @@ class TestGotImage:
         tmp_path: Path,
     ) -> None:
         """带 speaker 和 tags 时应回复成功。"""
-        from bot.engine.index_manager import AddResult
 
         im = _make_index_manager()
         im.add = AsyncMock(
@@ -648,7 +648,7 @@ class TestGotImage:
 
         matcher.finish.assert_awaited_once()
         assert "下载失败" in matcher.finish.call_args[0][0]
-        mock_sm.deactivate_chat.assert_called_once_with("12345")
+        mock_sm.deactivate_chat.assert_called_once_with(_make_scope("12345"))
 
     @pytest.mark.asyncio
     @patch.object(meme_add, "session_manager")
@@ -681,7 +681,7 @@ class TestGotImage:
 
         matcher.finish.assert_awaited_once()
         assert "不支持的图片格式" in matcher.finish.call_args[0][0]
-        mock_sm.deactivate_chat.assert_called_once_with("12345")
+        mock_sm.deactivate_chat.assert_called_once_with(_make_scope("12345"))
 
     @pytest.mark.asyncio
     @patch.object(meme_add, "session_manager")
@@ -705,7 +705,6 @@ class TestGotImage:
         tmp_path: Path,
     ) -> None:
         """压缩失败时应回复对应错误。"""
-        from bot.engine.index_manager import CompressionError
 
         im = _make_index_manager()
         im.add = AsyncMock(side_effect=CompressionError("压缩失败"))
@@ -722,7 +721,7 @@ class TestGotImage:
 
         matcher.finish.assert_awaited_once()
         assert "压缩失败" in matcher.finish.call_args[0][0]
-        mock_sm.deactivate_chat.assert_called_once_with("12345")
+        mock_sm.deactivate_chat.assert_called_once_with(_make_scope("12345"))
 
     @pytest.mark.asyncio
     @patch.object(meme_add, "session_manager")
@@ -746,7 +745,6 @@ class TestGotImage:
         tmp_path: Path,
     ) -> None:
         """OCR 失败时应回复对应错误。"""
-        from bot.engine.index_manager import OcrError
 
         im = _make_index_manager()
         im.add = AsyncMock(side_effect=OcrError("OCR 失败"))
@@ -763,7 +761,7 @@ class TestGotImage:
 
         matcher.finish.assert_awaited_once()
         assert "OCR" in matcher.finish.call_args[0][0]
-        mock_sm.deactivate_chat.assert_called_once_with("12345")
+        mock_sm.deactivate_chat.assert_called_once_with(_make_scope("12345"))
 
     @pytest.mark.asyncio
     @patch.object(meme_add, "session_manager")
@@ -787,7 +785,6 @@ class TestGotImage:
         tmp_path: Path,
     ) -> None:
         """Embedding 失败时应回复对应错误。"""
-        from bot.engine.index_manager import EmbeddingError
 
         im = _make_index_manager()
         im.add = AsyncMock(side_effect=EmbeddingError("Embedding 失败"))
@@ -804,7 +801,7 @@ class TestGotImage:
 
         matcher.finish.assert_awaited_once()
         assert "Embedding" in matcher.finish.call_args[0][0]
-        mock_sm.deactivate_chat.assert_called_once_with("12345")
+        mock_sm.deactivate_chat.assert_called_once_with(_make_scope("12345"))
 
     @pytest.mark.asyncio
     @patch.object(meme_add, "session_manager")
@@ -843,7 +840,7 @@ class TestGotImage:
 
         matcher.finish.assert_awaited_once()
         assert "添加失败" in matcher.finish.call_args[0][0]
-        mock_sm.deactivate_chat.assert_called_once_with("12345")
+        mock_sm.deactivate_chat.assert_called_once_with(_make_scope("12345"))
 
     @pytest.mark.asyncio
     @patch.object(meme_add, "session_manager")
@@ -881,7 +878,7 @@ class TestGotImage:
 
         matcher.finish.assert_awaited_once()
         assert "索引正在刷新" in matcher.finish.call_args[0][0]
-        mock_sm.deactivate_chat.assert_called_once_with("12345")
+        mock_sm.deactivate_chat.assert_called_once_with(_make_scope("12345"))
 
     @pytest.mark.asyncio
     @patch.object(meme_add, "session_manager")
@@ -919,7 +916,7 @@ class TestGotImage:
 
         matcher.finish.assert_awaited_once()
         assert "添加任务已取消" in matcher.finish.call_args[0][0]
-        mock_sm.deactivate_chat.assert_called_once_with("12345")
+        mock_sm.deactivate_chat.assert_called_once_with(_make_scope("12345"))
 
     @pytest.mark.asyncio
     @patch.object(meme_add, "session_manager")
@@ -957,7 +954,7 @@ class TestGotImage:
 
         matcher.finish.assert_awaited_once()
         assert "添加处理超时" in matcher.finish.call_args[0][0]
-        mock_sm.deactivate_chat.assert_called_once_with("12345")
+        mock_sm.deactivate_chat.assert_called_once_with(_make_scope("12345"))
 
     @pytest.mark.asyncio
     @patch.object(meme_add, "session_manager")

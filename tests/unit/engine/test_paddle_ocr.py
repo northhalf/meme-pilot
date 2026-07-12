@@ -27,7 +27,7 @@ class TestPaddleOcrClientServiceInit:
     @patch.dict("os.environ", {"PADDLEOCR_ACCESS_TOKEN": ""})
     def test_default_values(self, mock_client_cls: MagicMock) -> None:
         """无参数无环境变量时使用默认值。"""
-        service = PaddleOcrClientService()
+        _ = PaddleOcrClientService()
         mock_client_cls.assert_called_once()
         _, kwargs = mock_client_cls.call_args
         # 默认 token 为空字符串
@@ -42,14 +42,14 @@ class TestPaddleOcrClientServiceInit:
     )
     def test_from_env_var(self, mock_client_cls: MagicMock) -> None:
         """从环境变量读取 access_token。"""
-        service = PaddleOcrClientService()
+        _ = PaddleOcrClientService()
         _, kwargs = mock_client_cls.call_args
         assert kwargs.get("token") == "my-access-token"
 
     @patch("bot.engine.paddle_ocr.AsyncPaddleOCRClient")
     def test_constructor_params_override_env(self, mock_client_cls: MagicMock) -> None:
         """构造参数优先于环境变量。"""
-        service = PaddleOcrClientService(access_token="explicit-token")
+        _ = PaddleOcrClientService(access_token="explicit-token")
         _, kwargs = mock_client_cls.call_args
         assert kwargs.get("token") == "explicit-token"
 
@@ -63,7 +63,7 @@ class TestPaddleOcrClientServiceInit:
     )
     def test_base_url_from_env(self, mock_client_cls: MagicMock) -> None:
         """PADDLEOCR_BASE_URL 传递到 AsyncPaddleOCRClient。"""
-        service = PaddleOcrClientService()
+        _ = PaddleOcrClientService()
         _, kwargs = mock_client_cls.call_args
         assert kwargs.get("base_url") == "https://custom.api.com"
 

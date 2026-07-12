@@ -12,7 +12,7 @@ _mock_cmd.got.return_value = lambda fn: fn
 
 with patch("nonebot.on_command", return_value=_mock_cmd):
     from bot.plugins import meme_sim
-    from bot.plugins.meme_sim import got_sim_selection, handle_sim
+    from bot.plugins.meme_sim import handle_sim
 
 
 def _make_event(user_id: str = "12345", text: str = "/sim 心累的加班") -> MagicMock:

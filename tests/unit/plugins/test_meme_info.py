@@ -7,6 +7,7 @@ import pytest
 
 from bot.engine.index_manager import IndexInfo
 from bot.engine.metadata_store import MemeEntry
+from bot.session import ChatScope
 
 # ---------------------------------------------------------------------------
 # 在导入插件前 mock nonebot.on_command，避免 NoneBot2 完整初始化。
@@ -26,6 +27,11 @@ with patch("nonebot.on_command", return_value=_mock_cmd):
 # 辅助构造
 # ---------------------------------------------------------------------------
 
+
+
+def _make_test_scope(user_id: str = "1001") -> ChatScope:
+    """构造测试用私聊 ChatScope。"""
+    return ChatScope(user_id=int(user_id), chat_type="private", chat_id=int(user_id))
 
 def _make_event(user_id: str = "12345", message_type: str = "private") -> MagicMock:
     """创建模拟的 MessageEvent。"""
@@ -473,20 +479,20 @@ class TestHandleInfoStatusOverride:
         mem_mock.percent = 25.0
         mock_virtual_memory.return_value = mem_mock
 
-        user_id = "f13_active_001"
-        session_manager.deactivate_chat(user_id)
+        scope = _make_test_scope("1001")
+        session_manager.deactivate_chat(scope)
         try:
-            assert session_manager.activate_chat(user_id, "search", MagicMock()) is True
+            assert session_manager.activate_chat(scope, "search", MagicMock()) is True
             assert session_manager.has_active_session() is True
 
             matcher = _make_matcher()
-            await handle_info(_make_bot(), _make_event(user_id), matcher, args=_make_message(""))
+            await handle_info(_make_bot(), _make_event("1001"), matcher, args=_make_message(""))
 
             matcher.finish.assert_awaited_once()
             reply = matcher.finish.call_args[0][0]
             assert "当前机器人状态：正在处理命令" in reply
         finally:
-            session_manager.deactivate_chat(user_id)
+            session_manager.deactivate_chat(scope)
 
     @pytest.mark.asyncio
     @patch("bot.plugins.meme_info.psutil.Process")
@@ -521,16 +527,16 @@ class TestHandleInfoStatusOverride:
         mem_mock.percent = 25.0
         mock_virtual_memory.return_value = mem_mock
 
-        user_id = "f13_idle_001"
-        session_manager.deactivate_chat(user_id)
+        scope = _make_test_scope("1002")
+        session_manager.deactivate_chat(scope)
         try:
             assert session_manager.has_active_session() is False
 
             matcher = _make_matcher()
-            await handle_info(_make_bot(), _make_event(user_id), matcher, args=_make_message(""))
+            await handle_info(_make_bot(), _make_event("1001"), matcher, args=_make_message(""))
 
             matcher.finish.assert_awaited_once()
             reply = matcher.finish.call_args[0][0]
             assert "当前机器人状态：空闲" in reply
         finally:
-            session_manager.deactivate_chat(user_id)
+            session_manager.deactivate_chat(scope)

@@ -3,7 +3,8 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
+from bot.engine.index_manager import AddTagResult
+
 
 # 在导入插件前 mock nonebot.on_command，避免 NoneBot2 完整初始化
 _mock_cmd = MagicMock()
@@ -18,8 +19,6 @@ with (
         got_confirm,
         handle_addtag,
     )
-
-from bot.engine.index_manager import AddTagResult
 
 
 def _make_event(user_id: str = "12345", text: str = "/addtag") -> MagicMock:
@@ -275,7 +274,7 @@ class TestGotConfirm:
                 state={"entry_id": 3, "tags": ["新增1", "新增2"]}
             )
 
-            asyncio.run(got_confirm(bot, event, matcher, "CONFIRM_ARG_SENTINEL"))  # type: ignore[arg-type]
+            asyncio.run(got_confirm(bot, event, matcher, _make_message(event.get_plaintext())))  # type: ignore[arg-type]
 
             im.add_tags.assert_awaited_once_with(3, ["新增1", "新增2"])
             matcher.finish.assert_awaited_once()
@@ -306,7 +305,7 @@ class TestGotConfirm:
             event = _make_event(text="yes")
             matcher = _make_matcher(state={"entry_id": 3, "tags": ["新增"]})
 
-            asyncio.run(got_confirm(bot, event, matcher, "CONFIRM_ARG_SENTINEL"))  # type: ignore[arg-type]
+            asyncio.run(got_confirm(bot, event, matcher, _make_message(event.get_plaintext())))  # type: ignore[arg-type]
 
             im.add_tags.assert_awaited_once_with(3, ["新增"])
 
@@ -322,7 +321,7 @@ class TestGotConfirm:
                 state={"entry_id": 3, "tags": ["新增1", "新增2"]}
             )
 
-            asyncio.run(got_confirm(bot, event, matcher, "CONFIRM_ARG_SENTINEL"))  # type: ignore[arg-type]
+            asyncio.run(got_confirm(bot, event, matcher, _make_message(event.get_plaintext())))  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once_with("已取消")
 
@@ -342,7 +341,7 @@ class TestGotConfirm:
             event = _make_event(text="/cancel")
             matcher = _make_matcher()
 
-            asyncio.run(got_confirm(bot, event, matcher, "CONFIRM_ARG_SENTINEL"))  # type: ignore[arg-type]
+            asyncio.run(got_confirm(bot, event, matcher, _make_message(event.get_plaintext())))  # type: ignore[arg-type]
 
             mock_bypass.assert_awaited_once()
 

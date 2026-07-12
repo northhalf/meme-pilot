@@ -5,7 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from bot.session import session_manager
+from bot.session import ChatScope, session_manager
+
 
 # ---------------------------------------------------------------------------
 # 在导入插件前 mock nonebot.on_command，避免 NoneBot2 完整初始化。
@@ -27,6 +28,19 @@ def _clear_sessions() -> Generator[None, Any, None]:
     session_manager._selection_sessions.clear()
 
 
+def _make_event(user_id: str = "1001") -> MagicMock:
+    """创建模拟的私聊消息事件。"""
+    event = MagicMock()
+    event.get_user_id.return_value = user_id
+    event.message_type = "private"
+    return event
+
+
+def _make_scope(user_id: str = "1001") -> ChatScope:
+    """构造私聊 ChatScope。"""
+    return ChatScope(user_id=int(user_id), chat_type="private", chat_id=int(user_id))
+
+
 class TestCancelCommand:
     """/cancel 命令测试。"""
 
@@ -34,17 +48,17 @@ class TestCancelCommand:
     async def test_cancel_with_active_session(self) -> None:
         """有活跃会话时取消成功。"""
         matcher = AsyncMock()
-        session_manager.activate_chat("user1", "add", matcher)
+        scope = _make_scope("1001")
+        session_manager.activate_chat(scope, "add", matcher)
 
         bot = AsyncMock()
-        event = MagicMock()
-        event.get_user_id.return_value = "user1"
+        event = _make_event("1001")
 
         with patch("bot.plugins.meme_cancel.is_authorized", return_value=True):
             await handle_cancel(bot, event, matcher)
 
         # 验证会话已取消
-        chat = session_manager._chat_sessions.get("user1")
+        chat = session_manager._chat_sessions.get(scope)
         assert chat is None or chat.active is False
 
     @pytest.mark.asyncio
@@ -52,8 +66,7 @@ class TestCancelCommand:
         """无活跃会话时提示。"""
         matcher = AsyncMock()
         bot = AsyncMock()
-        event = MagicMock()
-        event.get_user_id.return_value = "user1"
+        event = _make_event("1001")
 
         with patch("bot.plugins.meme_cancel.is_authorized", return_value=True):
             await handle_cancel(bot, event, matcher)
@@ -67,8 +80,7 @@ class TestCancelCommand:
         """未授权用户发送 /cancel 被静默忽略，不调用 execute_cancel。"""
         matcher = AsyncMock()
         bot = AsyncMock()
-        event = MagicMock()
-        event.get_user_id.return_value = "unauthorized"
+        event = _make_event("9999")
 
         with patch("bot.plugins.meme_cancel.is_authorized", return_value=False), \
              patch.object(session_manager, "execute_cancel", new=AsyncMock()) as mock_exec:

@@ -35,7 +35,7 @@ from bot.engine.retry_config import api_retry
 from bot.log_context import generate_request_id, set_request_id
 from bot.plugins._help_text import HELP_TEXT
 from bot.plugins._search_utils import format_metadata_line, got_intercept_bypass
-from bot.session import session_manager, timeout_session
+from bot.session import ChatScope, session_manager, timeout_session
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +61,7 @@ async def handle_add(
     """
     user_id = event.get_user_id()
     request_id = generate_request_id()
+    scope = ChatScope.from_event(event)
     with set_request_id(request_id):
         logger.info("用户 %s 调用 /add", user_id)
 
@@ -78,7 +79,7 @@ async def handle_add(
                 return
 
             # 会话检查：拒绝而非覆盖
-            if not session_manager.activate_chat(user_id, "add", matcher):
+            if not session_manager.activate_chat(scope, "add", matcher):
                 await matcher.finish("已有命令在处理中，请先 /cancel")
                 return
 
@@ -94,11 +95,11 @@ async def handle_add(
             selection_id = str(uuid.uuid4())
             task = asyncio.create_task(
                 timeout_session(
-                    bot, event, user_id, selection_id, "发送图片超时，请重新 /add"
+                    bot, event, scope, selection_id, "发送图片超时，请重新 /add"
                 )
             )
-            session_manager.create_selection(user_id, selection_id, task)
-            session_manager.reset_current_task(user_id)
+            session_manager.create_selection(scope, selection_id, task)
+            session_manager.reset_current_task(scope)
         except asyncio.CancelledError:
             raise FinishedException
 
@@ -123,12 +124,13 @@ async def got_image(
     """
     user_id = event.get_user_id()
     request_id = generate_request_id()
+    scope = ChatScope.from_event(event)
     with set_request_id(request_id):
-        with session_manager.handler_context(user_id, matcher):
+        with session_manager.handler_context(scope, matcher):
             try:
                 # ── 阶段 0：/help 和 /cancel 旁路拦截 ──
                 text = event.get_plaintext().strip()
-                if await got_intercept_bypass(user_id, matcher, text, HELP_TEXT):
+                if await got_intercept_bypass(event, matcher, text, HELP_TEXT):
                     return
 
                 # ── 阶段 1：图片验证 ──
@@ -136,20 +138,20 @@ async def got_image(
                     urls = extract_image_urls(image_msg)
                 except Exception:
                     logger.exception("extract_image_urls 异常")
-                    session_manager.deactivate_chat(user_id)
+                    session_manager.deactivate_chat(scope)
                     raise
                 if not urls:
                     await matcher.reject("请发送一张图片")
                     return
                 # 成功发送图片
-                session_manager.remove_selection(user_id)
+                session_manager.remove_selection(scope)
 
                 # 获取 IndexManager
                 try:
                     index_manager = get_index_manager()
                 except RuntimeError:
                     logger.error("IndexManager 尚未初始化")
-                    session_manager.deactivate_chat(user_id)
+                    session_manager.deactivate_chat(scope)
                     await matcher.finish("服务未就绪，请稍后再试")
                     return
 
@@ -168,14 +170,14 @@ async def got_image(
                     image_data, response = await _download_image(image_url)
                 except Exception as exc:
                     logger.error("图片下载失败: %s", exc)
-                    session_manager.deactivate_chat(user_id)
+                    session_manager.deactivate_chat(scope)
                     await matcher.finish("图片下载失败")
                     return
 
                 # 确定扩展名
                 ext = _get_extension(image_url, response)
                 if ext is None or ext.lower() not in SUPPORTED_EXTENSIONS:
-                    session_manager.deactivate_chat(user_id)
+                    session_manager.deactivate_chat(scope)
                     await matcher.finish(f"不支持的图片格式: {ext or '未知'}")
                     return
 
@@ -190,7 +192,7 @@ async def got_image(
                     filepath.write_bytes(image_data)
                 except OSError as exc:
                     logger.error("保存图片失败: %s", exc)
-                    session_manager.deactivate_chat(user_id)
+                    session_manager.deactivate_chat(scope)
                     await matcher.finish("图片保存失败")
                     return
 
@@ -229,7 +231,7 @@ async def got_image(
                         result.entry_id,
                         result.reason,
                     )
-                    session_manager.deactivate_chat(user_id)
+                    session_manager.deactivate_chat(scope)
                     if result.reason == "no_text":
                         await matcher.finish("未识别到文字，已移至 meme_no_text/")
                     elif result.reason == "replaced":
@@ -260,11 +262,11 @@ async def got_image(
 
                 # 统一错误处理：删除已保存的图片 + 清理会话
                 filepath.unlink(missing_ok=True)
-                session_manager.deactivate_chat(user_id)
+                session_manager.deactivate_chat(scope)
                 await matcher.finish(msg)
 
             except FinishedException:
-                session_manager.deactivate_chat(user_id)
+                session_manager.deactivate_chat(scope)
                 raise
             except RejectedException:
                 # reject 意味着等待用户再次输入，不清除会话状态
@@ -274,11 +276,11 @@ async def got_image(
                 # 捕获 CancelledError 转为 FinishedException，
                 # 让 run() 正常收尾并抛出 StopPropagation，
                 # 防止事件滑落到兜底处理器（如 catch_all）
-                session_manager.deactivate_chat(user_id)
+                session_manager.deactivate_chat(scope)
                 raise FinishedException
             except Exception:
                 logger.exception("用户 %s 的 /add 处理异常", user_id)
-                session_manager.deactivate_chat(user_id)
+                session_manager.deactivate_chat(scope)
                 raise
 
 

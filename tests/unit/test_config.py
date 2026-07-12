@@ -1,6 +1,5 @@
 """bot.config 全局路径常量与配置读取测试。"""
 
-from pathlib import Path
 
 import pytest
 
@@ -8,7 +7,6 @@ from bot.config import (
     CHROMA_DIR,
     INDEX_DB_PATH,
     MEMES_DELETED_DIR,
-    MEMES_DIR,
     MEMES_REPLACED_DIR,
     PROJECT_ROOT,
     _parse_timeout_seconds,

@@ -3,7 +3,6 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 
 # 在导入插件前 mock nonebot.on_command，避免 NoneBot2 完整初始化
 _mock_cmd = MagicMock()
@@ -234,7 +233,7 @@ class TestGotConfirm:
                 state={"entry_ids": [42, 43], "not_found_ids": [44]}
             )
 
-            asyncio.run(got_confirm(bot, event, matcher, "CONFIRM_ARG_SENTINEL"))  # type: ignore[arg-type]
+            asyncio.run(got_confirm(bot, event, matcher, _make_message(event.get_plaintext())))  # type: ignore[arg-type]
 
             im.delete.assert_awaited_once_with([42, 43])
             matcher.finish.assert_awaited_once()
@@ -265,7 +264,7 @@ class TestGotConfirm:
             event = _make_event(text="yes")
             matcher = _make_matcher(state={"entry_ids": [42]})
 
-            asyncio.run(got_confirm(bot, event, matcher, "CONFIRM_ARG_SENTINEL"))  # type: ignore[arg-type]
+            asyncio.run(got_confirm(bot, event, matcher, _make_message(event.get_plaintext())))  # type: ignore[arg-type]
 
             im.delete.assert_awaited_once_with([42])
 
@@ -291,7 +290,7 @@ class TestGotConfirm:
             event = _make_event(text="确认")
             matcher = _make_matcher(state={"entry_ids": [42, 45]})
 
-            asyncio.run(got_confirm(bot, event, matcher, "CONFIRM_ARG_SENTINEL"))  # type: ignore[arg-type]
+            asyncio.run(got_confirm(bot, event, matcher, _make_message(event.get_plaintext())))  # type: ignore[arg-type]
 
             msg = matcher.finish.await_args[0][0]
             assert "失败：id:45 原因:『文件移动失败』" in msg
@@ -308,7 +307,7 @@ class TestGotConfirm:
                 state={"entry_ids": [42, 43], "not_found_ids": [44]}
             )
 
-            asyncio.run(got_confirm(bot, event, matcher, "CONFIRM_ARG_SENTINEL"))  # type: ignore[arg-type]
+            asyncio.run(got_confirm(bot, event, matcher, _make_message(event.get_plaintext())))  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once_with("已取消删除")
 
@@ -328,7 +327,7 @@ class TestGotConfirm:
             event = _make_event(text="/cancel")
             matcher = _make_matcher()
 
-            asyncio.run(got_confirm(bot, event, matcher, "CONFIRM_ARG_SENTINEL"))  # type: ignore[arg-type]
+            asyncio.run(got_confirm(bot, event, matcher, _make_message(event.get_plaintext())))  # type: ignore[arg-type]
 
             mock_bypass.assert_awaited_once()
 
@@ -350,7 +349,7 @@ class TestGotConfirm:
             event = _make_event(text="确认")
             matcher = _make_matcher(state={"entry_ids": [42]})
 
-            asyncio.run(got_confirm(bot, event, matcher, "CONFIRM_ARG_SENTINEL"))  # type: ignore[arg-type]
+            asyncio.run(got_confirm(bot, event, matcher, _make_message(event.get_plaintext())))  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once_with("索引正在刷新，请稍后再试")
 

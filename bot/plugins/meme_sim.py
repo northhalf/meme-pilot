@@ -22,7 +22,7 @@ from bot.plugins._search_utils import (
     dispatch_search_results,
     handle_got_selection,
 )
-from bot.session import session_manager
+from bot.session import ChatScope, session_manager
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +47,7 @@ async def handle_sim(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
     """
     user_id = event.get_user_id()
     request_id = generate_request_id()
+    scope = ChatScope.from_event(event)
     with set_request_id(request_id):
         logger.info("用户 %s 调用 /sim", user_id)
 
@@ -58,7 +59,7 @@ async def handle_sim(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
                 return
 
             # 会话互斥：拒绝而非覆盖
-            if not session_manager.activate_chat(user_id, "sim", matcher):
+            if not session_manager.activate_chat(scope, "sim", matcher):
                 await matcher.finish("已有命令在处理中，请先 /cancel")
                 return
 
@@ -66,7 +67,7 @@ async def handle_sim(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
             raw_text = event.get_plaintext().strip()
             description = raw_text.removeprefix("/sim").removeprefix("sim").strip()
             if not description:
-                session_manager.deactivate_chat(user_id)
+                session_manager.deactivate_chat(scope)
                 logger.info("用户 %s 的 /sim 缺少描述文本", user_id)
                 await matcher.finish("/sim <描述文本>")
                 return
@@ -79,7 +80,7 @@ async def handle_sim(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
                 index_manager = get_index_manager()
             except RuntimeError:
                 logger.error("IndexManager 尚未初始化")
-                session_manager.deactivate_chat(user_id)
+                session_manager.deactivate_chat(scope)
                 await matcher.finish("服务未就绪，请稍后再试")
                 return
 
@@ -88,7 +89,7 @@ async def handle_sim(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
                 results = await index_manager.semantic_search(description, limit=None)
             except asyncio.TimeoutError:
                 logger.info("用户 %s 的 /sim 等待读锁超时", user_id)
-                session_manager.deactivate_chat(user_id)
+                session_manager.deactivate_chat(scope)
                 await matcher.finish("索引更新较慢，请稍后再试")
                 return
             except ValueError:
@@ -97,18 +98,18 @@ async def handle_sim(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
                     user_id,
                     description,
                 )
-                session_manager.deactivate_chat(user_id)
+                session_manager.deactivate_chat(scope)
                 await matcher.finish("AI 服务暂时不可用，稍后重试")
                 return
             except Exception:
                 logger.exception("语义搜索异常: description=%r", description)
-                session_manager.deactivate_chat(user_id)
+                session_manager.deactivate_chat(scope)
                 await matcher.finish("AI 服务暂时不可用，稍后重试")
                 return
 
             # 空结果分支
             if not results:
-                session_manager.deactivate_chat(user_id)
+                session_manager.deactivate_chat(scope)
                 await matcher.finish("没有找到匹配的表情包 🙁")
                 return
 
@@ -117,7 +118,7 @@ async def handle_sim(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
                 bot, event, matcher, results, options=SIM_OPTIONS
             )
         except asyncio.CancelledError:
-            session_manager.deactivate_chat(user_id)
+            session_manager.deactivate_chat(scope)
             raise FinishedException
 
 
