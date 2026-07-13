@@ -1,6 +1,6 @@
 # CD workflow
 #
-# push 到 main 时自动构建镜像并发布到 Docker Hub：
+# 推送 v* tag 时自动构建镜像并发布到 Docker Hub：
 #   1. 单元测试 + Python 语法检查
 #   2. 构建 Docker 镜像
 #   3. 推送到 Docker Hub（latest + sha-<commit> 标签）
@@ -10,7 +10,8 @@ name: CD
 
 on:
   push:
-    branches: [main]
+    tags:
+      - "v*"
 
 env:
   IMAGE_NAME: northhalf/meme-pilot

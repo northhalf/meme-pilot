@@ -298,15 +298,15 @@ push 或 PR 到 `main` 时，CI 会先跑单元测试，通过后并行执行集
 
 ### 🔒 持续集成（CD）审批
 
-push 到 `main` 分支会自动触发 CD：先跑单元测试，通过后构建镜像并发布到 Docker Hub。发布环节（`publish` job）配置了 `environment: deploy` 审批门。
+推送 `v*` tag 会自动触发 CD：先跑单元测试，通过后构建镜像并发布到 Docker Hub。发布环节（`publish` job）配置了 `environment: deploy` 审批门。
 
 一次性配置（须仓库管理员操作）：
 
 1. 进入 GitHub 仓库 Settings -> Environments -> New environment，命名为 `deploy`。
 2. 在 `deploy` 环境下添加 Required reviewers，勾选审批人。
-3. 此后 push 到 `main` 触发 test 自动运行，`publish` 须人工 approve 后才会发版。
+3. 此后推送 `v*` tag 会触发 test 自动运行，`publish` 须人工 approve 后才会发版。
 
-> 注意：`environment: deploy` 仅在配置了 required reviewers 时才生效；未配则等同无审批门（仅打上环境标签）。
+> 注意：`environment: deploy` 仅在配置了 required reviewers 时才生效；未配则等同无审批门（仅打上环境标签）。如果该环境限制了 Deployment branches and tags，还需允许 `v*` tag。
 
 ## 🏗️ 架构
 
