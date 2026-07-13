@@ -1,6 +1,8 @@
 """/edittext 命令插件单元测试。"""
 
 import asyncio
+from collections.abc import Awaitable
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -22,6 +24,16 @@ with (
         got_confirm,
         handle_edit,
     )
+
+
+async def _await_handler(result: Any | Awaitable[Any]) -> Any:
+    """等待 NoneBot Handler 的宽泛 Awaitable 返回类型。"""
+    return await result
+
+
+def _run_handler(result: Any | Awaitable[Any]) -> Any:
+    """在独立事件循环中运行 NoneBot Handler。"""
+    return asyncio.run(_await_handler(result))
 
 
 def _make_event(user_id: str = "12345", text: str = "/edittext") -> MagicMock:
@@ -84,7 +96,7 @@ class TestHandleEdit:
             event = _make_event()
             matcher = _make_matcher()
 
-            asyncio.run(handle_edit(bot, event, matcher, args=_make_message("")))  # type: ignore[arg-type]
+            _run_handler(handle_edit(bot, event, matcher, args=_make_message("")))  # type: ignore[arg-type]
 
             assert matcher.finish.call_count == 1
             assert matcher.finish.await_args[0][0] is None
@@ -94,9 +106,7 @@ class TestHandleEdit:
         """群聊中 @bot → 回复仅限私聊。"""
         with (
             patch("bot.plugins.edit.is_authorized", return_value=True),
-            patch(
-                "bot.plugins.edit.session_manager.activate_chat", return_value=True
-            ),
+            patch("bot.plugins.edit.session_manager.activate_chat", return_value=True),
         ):
             bot = _make_bot()
             event = _make_event()
@@ -104,7 +114,7 @@ class TestHandleEdit:
             event.message_id = 123456
             matcher = _make_matcher()
 
-            asyncio.run(handle_edit(bot, event, matcher, args=_make_message("")))  # type: ignore[arg-type]
+            _run_handler(handle_edit(bot, event, matcher, args=_make_message("")))  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
@@ -116,15 +126,13 @@ class TestHandleEdit:
         """参数不足 → 用法提示。"""
         with (
             patch("bot.plugins.edit.is_authorized", return_value=True),
-            patch(
-                "bot.plugins.edit.session_manager.activate_chat", return_value=True
-            ),
+            patch("bot.plugins.edit.session_manager.activate_chat", return_value=True),
         ):
             bot = _make_bot()
             event = _make_event(text="/edittext")
             matcher = _make_matcher()
 
-            asyncio.run(handle_edit(bot, event, matcher, args=_make_message("")))  # type: ignore[arg-type]
+            _run_handler(handle_edit(bot, event, matcher, args=_make_message("")))  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once()
             args, _ = matcher.finish.await_args
@@ -134,15 +142,15 @@ class TestHandleEdit:
         """entry_id 非数字 → 用法提示。"""
         with (
             patch("bot.plugins.edit.is_authorized", return_value=True),
-            patch(
-                "bot.plugins.edit.session_manager.activate_chat", return_value=True
-            ),
+            patch("bot.plugins.edit.session_manager.activate_chat", return_value=True),
         ):
             bot = _make_bot()
             event = _make_event(text="/edittext abc 新文本")
             matcher = _make_matcher()
 
-            asyncio.run(handle_edit(bot, event, matcher, args=_make_message("abc 新文本")))  # type: ignore[arg-type]
+            _run_handler(
+                handle_edit(bot, event, matcher, args=_make_message("abc 新文本"))
+            )  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
@@ -152,9 +160,7 @@ class TestHandleEdit:
         """entry_id 不存在 → 错误消息。"""
         with (
             patch("bot.plugins.edit.is_authorized", return_value=True),
-            patch(
-                "bot.plugins.edit.session_manager.activate_chat", return_value=True
-            ),
+            patch("bot.plugins.edit.session_manager.activate_chat", return_value=True),
             patch("bot.plugins.edit.get_metadata_store") as mock_store,
         ):
             store = MagicMock()
@@ -165,7 +171,9 @@ class TestHandleEdit:
             event = _make_event(text="/edittext 5 新文本")
             matcher = _make_matcher()
 
-            asyncio.run(handle_edit(bot, event, matcher, args=_make_message("5 新文本")))  # type: ignore[arg-type]
+            _run_handler(
+                handle_edit(bot, event, matcher, args=_make_message("5 新文本"))
+            )  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once()
             args, _ = matcher.finish.await_args
@@ -184,7 +192,9 @@ class TestHandleEdit:
             event = _make_event(text="/edittext 5 新文本")
             matcher = _make_matcher()
 
-            asyncio.run(handle_edit(bot, event, matcher, args=_make_message("5 新文本")))  # type: ignore[arg-type]
+            _run_handler(
+                handle_edit(bot, event, matcher, args=_make_message("5 新文本"))
+            )  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
@@ -194,9 +204,7 @@ class TestHandleEdit:
         """短命令 /e 的参数经 CommandArg 提取后应与 /edittext 一致。"""
         with (
             patch("bot.plugins.edit.is_authorized", return_value=True),
-            patch(
-                "bot.plugins.edit.session_manager.activate_chat", return_value=True
-            ),
+            patch("bot.plugins.edit.session_manager.activate_chat", return_value=True),
             patch("bot.plugins.edit.get_metadata_store") as mock_store,
             patch("bot.plugins.edit.session_manager.create_selection"),
             patch("bot.plugins.edit.session_manager.reset_current_task"),
@@ -211,7 +219,9 @@ class TestHandleEdit:
             event = _make_event(text="/e 5 新文本")
             matcher = _make_matcher()
 
-            asyncio.run(handle_edit(bot, event, matcher, args=_make_message("5 新文本")))  # type: ignore[arg-type]
+            _run_handler(
+                handle_edit(bot, event, matcher, args=_make_message("5 新文本"))
+            )  # type: ignore[arg-type]
 
             assert matcher.state["entry_id"] == 5
             assert matcher.state["new_text"] == "新文本"

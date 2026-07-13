@@ -63,17 +63,12 @@ def _make_index_manager(
 
     im = MagicMock()
     im.entry_count = entry_count
-    result = (
-        sync_result
-        if sync_result is not None
-        else SyncResult(added=2, deleted=0)
-    )
+    result = sync_result if sync_result is not None else SyncResult(added=2, deleted=0)
     if refresh_side_effect is not None:
         im.refresh = AsyncMock(side_effect=refresh_side_effect)
     else:
         im.refresh = AsyncMock(return_value=result)
     return im
-
 
 
 # ----------

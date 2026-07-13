@@ -79,9 +79,7 @@ class TestHandleUnknownSlashCommand:
         _reset_mocks()
         matcher = _make_matcher()
 
-        await handle_plain_text(
-            _make_bot(), _make_event("111", "/foo"), matcher
-        )
+        await handle_plain_text(_make_bot(), _make_event("111", "/foo"), matcher)
 
         matcher.finish.assert_awaited_once()
         call_args = matcher.finish.call_args[0][0]
@@ -99,9 +97,7 @@ class TestHandleUnknownSlashCommand:
         _reset_mocks()
         bot = _make_bot()
 
-        await handle_plain_text(
-            bot, _make_event("999", "/foo"), _make_matcher()
-        )
+        await handle_plain_text(bot, _make_event("999", "/foo"), _make_matcher())
 
         _mock_message.finish.assert_not_called()
         bot.send.assert_not_called()
@@ -147,9 +143,7 @@ class TestHandlePlainTextAsSearch:
         _reset_mocks()
         matcher = _make_matcher()
 
-        await handle_plain_text(
-            _make_bot(), _make_event("111", "加班"), matcher
-        )
+        await handle_plain_text(_make_bot(), _make_event("111", "加班"), matcher)
 
         mock_exec.assert_awaited_once()
         call_args = mock_exec.call_args
@@ -169,9 +163,7 @@ class TestHandlePlainTextAsSearch:
         _reset_mocks()
         matcher = _make_matcher()
 
-        await handle_plain_text(
-            _make_bot(), _make_event("111", "加班"), matcher
-        )
+        await handle_plain_text(_make_bot(), _make_event("111", "加班"), matcher)
 
         matcher.finish.assert_awaited_once()
         msg = matcher.finish.call_args[0][0]
@@ -206,16 +198,12 @@ class TestHandlePlainTextAsSearch:
 
     @pytest.mark.asyncio
     @patch.object(plain_text, "is_authorized", return_value=False)
-    async def test_unauthorized_plain_text_ignored(
-        self, mock_auth: MagicMock
-    ) -> None:
+    async def test_unauthorized_plain_text_ignored(self, mock_auth: MagicMock) -> None:
         """非授权用户发送纯文本应被静默忽略。"""
         _reset_mocks()
         bot = _make_bot()
 
-        await handle_plain_text(
-            bot, _make_event("999", "你好"), _make_matcher()
-        )
+        await handle_plain_text(bot, _make_event("999", "你好"), _make_matcher())
 
         _mock_message.finish.assert_not_called()
         bot.send.assert_not_called()

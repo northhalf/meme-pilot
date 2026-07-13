@@ -13,7 +13,9 @@ from PIL import Image
 from bot.engine.metadata_store import MetadataStore
 
 
-def _make_img(path: Path, mode: str = "RGB", color=(128, 64, 32), fmt: str = "JPEG") -> None:
+def _make_img(
+    path: Path, mode: str = "RGB", color=(128, 64, 32), fmt: str = "JPEG"
+) -> None:
     Image.new(mode, (50, 50), color=color).save(path, fmt)
 
 
@@ -26,7 +28,9 @@ def _run(memes_dir: Path, db_path: Path, dry_run: bool = False) -> tuple[int, in
 
 
 class TestConvertToWebp:
-    def test_converts_jpg_and_updates_db(self, tmp_path: Path, tmp_sqlite_path: Path) -> None:
+    def test_converts_jpg_and_updates_db(
+        self, tmp_path: Path, tmp_sqlite_path: Path
+    ) -> None:
         memes = tmp_path / "memes"
         memes.mkdir()
         jpg = memes / "a.jpg"
@@ -59,7 +63,9 @@ class TestConvertToWebp:
         assert jpg.exists()
         assert not (memes / "a.webp").exists()
 
-    def test_target_exists_appends_n(self, tmp_path: Path, tmp_sqlite_path: Path) -> None:
+    def test_target_exists_appends_n(
+        self, tmp_path: Path, tmp_sqlite_path: Path
+    ) -> None:
         memes = tmp_path / "memes"
         memes.mkdir()
         jpg = memes / "a.jpg"
@@ -69,7 +75,9 @@ class TestConvertToWebp:
         assert success == 1 and failed == 0
         assert (memes / "a_1.webp").exists()
 
-    def test_no_db_record_only_convert(self, tmp_path: Path, tmp_sqlite_path: Path) -> None:
+    def test_no_db_record_only_convert(
+        self, tmp_path: Path, tmp_sqlite_path: Path
+    ) -> None:
         memes = tmp_path / "memes"
         memes.mkdir()
         jpg = memes / "a.jpg"
@@ -78,7 +86,9 @@ class TestConvertToWebp:
         assert success == 1 and failed == 0
         assert (memes / "a.webp").exists()
 
-    def test_backup_dir_holds_original(self, tmp_path: Path, tmp_sqlite_path: Path) -> None:
+    def test_backup_dir_holds_original(
+        self, tmp_path: Path, tmp_sqlite_path: Path
+    ) -> None:
         memes = tmp_path / "memes"
         memes.mkdir()
         jpg = memes / "a.jpg"
@@ -87,8 +97,11 @@ class TestConvertToWebp:
         mod = importlib.import_module("scripts.convert_memes_to_webp")
         importlib.reload(mod)
         mod.run_conversion(
-            memes_dir=memes, db_path=tmp_sqlite_path, quality=85,
-            dry_run=False, backup_dir=backup,
+            memes_dir=memes,
+            db_path=tmp_sqlite_path,
+            quality=85,
+            dry_run=False,
+            backup_dir=backup,
         )
         assert (backup / "a.jpg").exists()
 
@@ -101,7 +114,9 @@ class TestConvertToWebp:
         success, _, _ = _run(memes, tmp_sqlite_path)
         assert success == 0
 
-    def test_gif_animated_converted(self, tmp_path: Path, tmp_sqlite_path: Path) -> None:
+    def test_gif_animated_converted(
+        self, tmp_path: Path, tmp_sqlite_path: Path
+    ) -> None:
         memes = tmp_path / "memes"
         memes.mkdir()
         frames = [
@@ -109,14 +124,18 @@ class TestConvertToWebp:
             for i in range(3)
         ]
         gif = memes / "a.gif"
-        frames[0].save(gif, save_all=True, append_images=frames[1:], duration=100, loop=0)
+        frames[0].save(
+            gif, save_all=True, append_images=frames[1:], duration=100, loop=0
+        )
         success, _, failed = _run(memes, tmp_sqlite_path)
         assert success == 1 and failed == 0
         with Image.open(memes / "a.webp") as w:
             assert w.format == "WEBP"
             assert getattr(w, "n_frames", 1) == 3
 
-    def test_include_archives_no_sqlite_update(self, tmp_path: Path, tmp_sqlite_path: Path) -> None:
+    def test_include_archives_no_sqlite_update(
+        self, tmp_path: Path, tmp_sqlite_path: Path
+    ) -> None:
         """归档目录图仅转文件+备份，不更新 sqlite。"""
         memes = tmp_path / "memes"
         memes.mkdir()

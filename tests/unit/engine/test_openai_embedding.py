@@ -138,7 +138,9 @@ class TestRetry:
 
         mock_response = MagicMock()
         mock_response.data = [MagicMock(embedding=[0.1])]
-        service = OpenAIEmbeddingService(api_key="sk-test", base_url="http://test", model="test-model")
+        service = OpenAIEmbeddingService(
+            api_key="sk-test", base_url="http://test", model="test-model"
+        )
         service._client.embeddings.create = AsyncMock(
             side_effect=[
                 openai.APIConnectionError(message="conn", request=MagicMock()),
@@ -162,7 +164,9 @@ class TestRetry:
 
         monkeypatch.setattr(asyncio, "sleep", _noop_sleep)
 
-        service = OpenAIEmbeddingService(api_key="sk-test", base_url="http://test", model="test-model")
+        service = OpenAIEmbeddingService(
+            api_key="sk-test", base_url="http://test", model="test-model"
+        )
         service._client.embeddings.create = AsyncMock(
             side_effect=openai.APIConnectionError(message="conn", request=MagicMock())
         )
@@ -180,7 +184,9 @@ class TestEmbeddingSemaphore:
     async def test_default_concurrency(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """不传 concurrency 时使用环境变量默认值 (5)。"""
         monkeypatch.delenv("EMBEDDING_CONCURRENCY", raising=False)
-        service = OpenAIEmbeddingService(api_key="sk-test", base_url="http://test", model="test-model")
+        service = OpenAIEmbeddingService(
+            api_key="sk-test", base_url="http://test", model="test-model"
+        )
         assert service._semaphore._value == 5
 
     @pytest.mark.asyncio
@@ -195,7 +201,9 @@ class TestEmbeddingSemaphore:
     async def test_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """设置 EMBEDDING_CONCURRENCY 环境变量时生效。"""
         monkeypatch.setenv("EMBEDDING_CONCURRENCY", "3")
-        service = OpenAIEmbeddingService(api_key="sk-test", base_url="http://test", model="test-model")
+        service = OpenAIEmbeddingService(
+            api_key="sk-test", base_url="http://test", model="test-model"
+        )
         assert service._semaphore._value == 3
 
     @pytest.mark.asyncio

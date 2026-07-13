@@ -26,12 +26,14 @@ class FakeOcrProvider:
     async def close(self) -> None:
         pass
 
+
 class FakeEmbeddingProvider:
     async def embed(self, text: str) -> list[float]:
         return [0.1, 0.2]
 
     async def close(self) -> None:
         pass
+
 
 def test_create_ocr_provider_returns_registered_instance() -> None:
     register_ocr("fake", lambda: FakeOcrProvider())

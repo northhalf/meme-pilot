@@ -65,7 +65,9 @@ class TestReplySendHelpers:
         matcher.finish = AsyncMock()
         await finish(event, matcher, "hello")
         matcher.finish.assert_awaited_once()
-        message = matcher.finish.await_args[0][0]
+        call_args = matcher.finish.await_args
+        assert call_args is not None
+        message = call_args.args[0]
         assert isinstance(message, Message)
         assert message[0].type == "reply"
         assert message[1].type == "text"
@@ -97,7 +99,9 @@ class TestReplySendHelpers:
         bot.send = AsyncMock()
         await bot_send(event, bot, "hello")
         bot.send.assert_awaited_once()
-        message = bot.send.await_args[0][1]
+        call_args = bot.send.await_args
+        assert call_args is not None
+        message = call_args.args[1]
         assert isinstance(message, Message)
         assert message[0].type == "reply"
         assert message[1].type == "text"

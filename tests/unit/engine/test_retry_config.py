@@ -42,7 +42,9 @@ async def test_api_retry_does_not_retry_value_error() -> None:
 
 @pytest.mark.asyncio
 async def test_api_retry_default_network_error_retries_twice_then_succeeds() -> None:
-    mock_call = mock.Mock(side_effect=[httpx.NetworkError("fail 1"), httpx.NetworkError("fail 2"), None])
+    mock_call = mock.Mock(
+        side_effect=[httpx.NetworkError("fail 1"), httpx.NetworkError("fail 2"), None]
+    )
     assert await _network_operation(mock_call) == "success"
     assert mock_call.call_count == 3
 

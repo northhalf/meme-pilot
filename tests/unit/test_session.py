@@ -68,7 +68,7 @@ class TestChatScope:
         assert hash(scope1) == hash(scope2)
         assert mapping[scope2] == "value"
         with pytest.raises(AttributeError):
-            scope1.user_id = 2  # type: ignore[misc]
+            setattr(scope1, "user_id", 2)
 
     def test_str(self):
         """__str__ 输出包含类型与 ID 信息。"""
@@ -216,7 +216,9 @@ class TestExecuteCancel:
     @pytest.mark.asyncio
     async def test_no_active_session(self):
         """无活跃会话时返回 False。"""
-        result = await session_manager.execute_cancel(_private_scope(), _private_event())
+        result = await session_manager.execute_cancel(
+            _private_scope(), _private_event()
+        )
         assert result is False
 
     @pytest.mark.asyncio

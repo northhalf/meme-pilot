@@ -99,7 +99,9 @@ def lcs2_of_list(s1: str, s2_list: list[str]) -> list[int]:
     """
     ...
 
-def edit_distance(s1: str, s2: str, weight: dict[str, dict[str, float]] | None = None) -> float:
+def edit_distance(
+    s1: str, s2: str, weight: dict[str, dict[str, float]] | None = None
+) -> float:
     """计算两个字符串的编辑距离。
 
     Args:

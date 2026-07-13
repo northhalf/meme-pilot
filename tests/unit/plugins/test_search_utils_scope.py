@@ -71,9 +71,7 @@ class TestPresentCandidatesWithScope:
         event = _make_event(message_id=42, message_type="private")
         matcher = _make_matcher()
 
-        await present_candidates(
-            _make_bot(), event, matcher, [_make_search_result()]
-        )
+        await present_candidates(_make_bot(), event, matcher, [_make_search_result()])
 
         matcher.send.assert_awaited_once()
         sent = matcher.send.call_args[0][0]
@@ -87,9 +85,7 @@ class TestPresentCandidatesWithScope:
         self, _mock_timeout: AsyncMock, _mock_create_selection: MagicMock
     ) -> None:
         """群聊作用域默认发送带 reply 的 Message。"""
-        event = _make_event(
-            message_id=42, message_type="group", group_id=67890
-        )
+        event = _make_event(message_id=42, message_type="group", group_id=67890)
         matcher = _make_matcher()
 
         await present_candidates(
@@ -113,14 +109,10 @@ class TestPresentCandidatesWithScope:
         self, _mock_timeout: AsyncMock, _mock_create_selection: MagicMock
     ) -> None:
         """群聊作用域但 message_id 为 None 时退化为纯文本。"""
-        event = _make_event(
-            message_id=None, message_type="group", group_id=67890
-        )
+        event = _make_event(message_id=None, message_type="group", group_id=67890)
         matcher = _make_matcher()
 
-        await present_candidates(
-            _make_bot(), event, matcher, [_make_search_result()]
-        )
+        await present_candidates(_make_bot(), event, matcher, [_make_search_result()])
 
         matcher.send.assert_awaited_once()
         sent = matcher.send.call_args[0][0]
@@ -133,9 +125,7 @@ class TestPresentCandidatesWithScope:
         self, _mock_timeout: AsyncMock, _mock_create_selection: MagicMock
     ) -> None:
         """群聊 use_reject=True 时同样用 Message 包裹并调用 reject。"""
-        event = _make_event(
-            message_id=42, message_type="group", group_id=67890
-        )
+        event = _make_event(message_id=42, message_type="group", group_id=67890)
         matcher = _make_matcher()
 
         await present_candidates(
@@ -169,9 +159,7 @@ class TestChatScopeFromEvent:
 
     def test_group_event(self) -> None:
         """群聊事件构造 group ChatScope。"""
-        event = _make_event(
-            "12345", message_type="group", group_id=67890
-        )
+        event = _make_event("12345", message_type="group", group_id=67890)
         scope = ChatScope.from_event(event)
         assert scope.chat_type == "group"
         assert scope.user_id == 12345

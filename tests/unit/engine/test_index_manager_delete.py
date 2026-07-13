@@ -107,9 +107,7 @@ class FakeVectorStore:
     async def remove_many(self, entry_ids: list[int]) -> None:
         pass
 
-    async def query(
-        self, query_embedding: list[float], n_results: int = 10
-    ) -> list:
+    async def query(self, query_embedding: list[float], n_results: int = 10) -> list:
         return []
 
     async def get_all_ids(self) -> set[int]:
@@ -168,9 +166,7 @@ class TestDelete:
         assert index_manager._metadata_store.get_entry(1) is None
 
     @pytest.mark.asyncio
-    async def test_delete_not_found_id(
-        self, index_manager: IndexManager
-    ) -> None:
+    async def test_delete_not_found_id(self, index_manager: IndexManager) -> None:
         """entry_id 不存在时返回 not_found_ids。"""
         result = await index_manager.delete([999])
 

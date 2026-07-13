@@ -1,6 +1,8 @@
 """/del 命令插件单元测试。"""
 
 import asyncio
+from collections.abc import Awaitable
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from nonebot.adapters.onebot.v11 import Message
@@ -18,6 +20,16 @@ with (
     patch("nonebot.params.Arg", return_value="CONFIRM_ARG_SENTINEL"),
 ):
     from bot.plugins.delete import got_confirm, handle_delete
+
+
+async def _await_handler(result: Any | Awaitable[Any]) -> Any:
+    """等待 NoneBot Handler 的宽泛 Awaitable 返回类型。"""
+    return await result
+
+
+def _run_handler(result: Any | Awaitable[Any]) -> Any:
+    """在独立事件循环中运行 NoneBot Handler。"""
+    return asyncio.run(_await_handler(result))
 
 
 def _make_event(user_id: str = "12345", text: str = "/del") -> MagicMock:
@@ -79,7 +91,7 @@ class TestHandleDelete:
             event = _make_event()
             matcher = _make_matcher()
 
-            asyncio.run(handle_delete(bot, event, matcher, args=_make_message("")))  # type: ignore[arg-type]
+            _run_handler(handle_delete(bot, event, matcher, args=_make_message("")))  # type: ignore[arg-type]
 
             assert matcher.finish.call_count == 1
             assert matcher.finish.await_args[0][0] is None
@@ -94,7 +106,7 @@ class TestHandleDelete:
             event.message_id = 123456
             matcher = _make_matcher()
 
-            asyncio.run(handle_delete(bot, event, matcher, args=_make_message("")))  # type: ignore[arg-type]
+            _run_handler(handle_delete(bot, event, matcher, args=_make_message("")))  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
@@ -115,7 +127,7 @@ class TestHandleDelete:
             event = _make_event(text="/del")
             matcher = _make_matcher()
 
-            asyncio.run(handle_delete(bot, event, matcher, args=_make_message("")))  # type: ignore[arg-type]
+            _run_handler(handle_delete(bot, event, matcher, args=_make_message("")))  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
@@ -134,7 +146,7 @@ class TestHandleDelete:
             event = _make_event(text="/del abc")
             matcher = _make_matcher()
 
-            asyncio.run(handle_delete(bot, event, matcher, args=_make_message("abc")))  # type: ignore[arg-type]
+            _run_handler(handle_delete(bot, event, matcher, args=_make_message("abc")))  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
@@ -161,7 +173,9 @@ class TestHandleDelete:
             event = _make_event(text="/del 999 998")
             matcher = _make_matcher()
 
-            asyncio.run(handle_delete(bot, event, matcher, args=_make_message("999 998")))  # type: ignore[arg-type]
+            _run_handler(
+                handle_delete(bot, event, matcher, args=_make_message("999 998"))
+            )  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
@@ -200,7 +214,9 @@ class TestHandleDelete:
             event = _make_event(text="/del 42 43 44")
             matcher = _make_matcher()
 
-            asyncio.run(handle_delete(bot, event, matcher, args=_make_message("42 43 44")))  # type: ignore[arg-type]
+            _run_handler(
+                handle_delete(bot, event, matcher, args=_make_message("42 43 44"))
+            )  # type: ignore[arg-type]
 
             assert matcher.send.await_count == 1
             msg = matcher.send.await_args[0][0]
@@ -246,7 +262,9 @@ class TestGotConfirm:
                 state={"entry_ids": [42, 43], "not_found_ids": [44]}
             )
 
-            asyncio.run(got_confirm(bot, event, matcher, _make_message(event.get_plaintext())))  # type: ignore[arg-type]
+            _run_handler(
+                got_confirm(bot, event, matcher, _make_message(event.get_plaintext()))
+            )  # type: ignore[arg-type]
 
             im.delete.assert_awaited_once_with([42, 43])
             matcher.finish.assert_awaited_once()
@@ -277,7 +295,9 @@ class TestGotConfirm:
             event = _make_event(text="yes")
             matcher = _make_matcher(state={"entry_ids": [42]})
 
-            asyncio.run(got_confirm(bot, event, matcher, _make_message(event.get_plaintext())))  # type: ignore[arg-type]
+            _run_handler(
+                got_confirm(bot, event, matcher, _make_message(event.get_plaintext()))
+            )  # type: ignore[arg-type]
 
             im.delete.assert_awaited_once_with([42])
 
@@ -303,7 +323,9 @@ class TestGotConfirm:
             event = _make_event(text="确认")
             matcher = _make_matcher(state={"entry_ids": [42, 45]})
 
-            asyncio.run(got_confirm(bot, event, matcher, _make_message(event.get_plaintext())))  # type: ignore[arg-type]
+            _run_handler(
+                got_confirm(bot, event, matcher, _make_message(event.get_plaintext()))
+            )  # type: ignore[arg-type]
 
             msg = matcher.finish.await_args[0][0]
             assert "失败：id:45 原因:『文件移动失败』" in extract_message_text(msg)
@@ -320,7 +342,9 @@ class TestGotConfirm:
                 state={"entry_ids": [42, 43], "not_found_ids": [44]}
             )
 
-            asyncio.run(got_confirm(bot, event, matcher, _make_message(event.get_plaintext())))  # type: ignore[arg-type]
+            _run_handler(
+                got_confirm(bot, event, matcher, _make_message(event.get_plaintext()))
+            )  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
@@ -342,7 +366,9 @@ class TestGotConfirm:
             event = _make_event(text="/cancel")
             matcher = _make_matcher()
 
-            asyncio.run(got_confirm(bot, event, matcher, _make_message(event.get_plaintext())))  # type: ignore[arg-type]
+            _run_handler(
+                got_confirm(bot, event, matcher, _make_message(event.get_plaintext()))
+            )  # type: ignore[arg-type]
 
             mock_bypass.assert_awaited_once()
 
@@ -364,7 +390,9 @@ class TestGotConfirm:
             event = _make_event(text="确认")
             matcher = _make_matcher(state={"entry_ids": [42]})
 
-            asyncio.run(got_confirm(bot, event, matcher, _make_message(event.get_plaintext())))  # type: ignore[arg-type]
+            _run_handler(
+                got_confirm(bot, event, matcher, _make_message(event.get_plaintext()))
+            )  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
@@ -388,12 +416,8 @@ class TestShortCommandDelete:
                 return_value=True,
             ),
             patch("bot.plugins.delete.get_metadata_store") as mock_store,
-            patch(
-                "bot.plugins.delete.session_manager.create_selection"
-            ),
-            patch(
-                "bot.plugins.delete.session_manager.reset_current_task"
-            ),
+            patch("bot.plugins.delete.session_manager.create_selection"),
+            patch("bot.plugins.delete.session_manager.reset_current_task"),
             patch("bot.plugins.delete.timeout_session", new_callable=MagicMock),
             patch("bot.plugins.delete.asyncio.create_task"),
         ):
@@ -404,7 +428,7 @@ class TestShortCommandDelete:
             mock_store.return_value = store
 
             matcher = _make_matcher()
-            asyncio.run(
+            _run_handler(
                 handle_delete(
                     _make_bot(),
                     _make_event(text="/d 12 42"),

@@ -1,6 +1,8 @@
 """/addtag 命令插件单元测试。"""
 
 import asyncio
+from collections.abc import Awaitable
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from nonebot.adapters.onebot.v11 import Message
@@ -22,6 +24,16 @@ with (
         got_confirm,
         handle_addtag,
     )
+
+
+async def _await_handler(result: Any | Awaitable[Any]) -> Any:
+    """等待 NoneBot Handler 的宽泛 Awaitable 返回类型。"""
+    return await result
+
+
+def _run_handler(result: Any | Awaitable[Any]) -> Any:
+    """在独立事件循环中运行 NoneBot Handler。"""
+    return asyncio.run(_await_handler(result))
 
 
 def _make_event(user_id: str = "12345", text: str = "/addtag") -> MagicMock:
@@ -90,7 +102,7 @@ class TestHandleAddtag:
             event = _make_event()
             matcher = _make_matcher()
 
-            asyncio.run(handle_addtag(bot, event, matcher, args=_make_message("")))  # type: ignore[arg-type]
+            _run_handler(handle_addtag(bot, event, matcher, args=_make_message("")))  # type: ignore[arg-type]
 
             assert matcher.finish.call_count == 1
             assert matcher.finish.await_args[0][0] is None
@@ -111,7 +123,7 @@ class TestHandleAddtag:
             event.message_id = 123456
             matcher = _make_matcher()
 
-            asyncio.run(handle_addtag(bot, event, matcher, args=_make_message("")))  # type: ignore[arg-type]
+            _run_handler(handle_addtag(bot, event, matcher, args=_make_message("")))  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
@@ -132,7 +144,9 @@ class TestHandleAddtag:
             event = _make_event(text="/addtag 3 标签")
             matcher = _make_matcher()
 
-            asyncio.run(handle_addtag(bot, event, matcher, args=_make_message("3 标签")))  # type: ignore[arg-type]
+            _run_handler(
+                handle_addtag(bot, event, matcher, args=_make_message("3 标签"))
+            )  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
@@ -151,7 +165,7 @@ class TestHandleAddtag:
             event = _make_event(text="/addtag")
             matcher = _make_matcher()
 
-            asyncio.run(handle_addtag(bot, event, matcher, args=_make_message("")))  # type: ignore[arg-type]
+            _run_handler(handle_addtag(bot, event, matcher, args=_make_message("")))  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
@@ -170,7 +184,7 @@ class TestHandleAddtag:
             event = _make_event(text="/addtag 3")
             matcher = _make_matcher()
 
-            asyncio.run(handle_addtag(bot, event, matcher, args=_make_message("3")))  # type: ignore[arg-type]
+            _run_handler(handle_addtag(bot, event, matcher, args=_make_message("3")))  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
@@ -189,7 +203,9 @@ class TestHandleAddtag:
             event = _make_event(text="/addtag abc 标签")
             matcher = _make_matcher()
 
-            asyncio.run(handle_addtag(bot, event, matcher, args=_make_message("abc 标签")))  # type: ignore[arg-type]
+            _run_handler(
+                handle_addtag(bot, event, matcher, args=_make_message("abc 标签"))
+            )  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
@@ -213,7 +229,9 @@ class TestHandleAddtag:
             event = _make_event(text="/addtag 999 标签")
             matcher = _make_matcher()
 
-            asyncio.run(handle_addtag(bot, event, matcher, args=_make_message("999 标签")))  # type: ignore[arg-type]
+            _run_handler(
+                handle_addtag(bot, event, matcher, args=_make_message("999 标签"))
+            )  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
@@ -238,7 +256,9 @@ class TestHandleAddtag:
             event = _make_event(text="/addtag 3 新增1 新增2")
             matcher = _make_matcher()
 
-            asyncio.run(handle_addtag(bot, event, matcher, args=_make_message("3 新增1 新增2")))  # type: ignore[arg-type]
+            _run_handler(
+                handle_addtag(bot, event, matcher, args=_make_message("3 新增1 新增2"))
+            )  # type: ignore[arg-type]
 
             # 应只发送一条确认消息（不发送图片）
             matcher.send.assert_awaited_once()
@@ -282,11 +302,11 @@ class TestGotConfirm:
 
             bot = _make_bot()
             event = _make_event(text="确认")
-            matcher = _make_matcher(
-                state={"entry_id": 3, "tags": ["新增1", "新增2"]}
-            )
+            matcher = _make_matcher(state={"entry_id": 3, "tags": ["新增1", "新增2"]})
 
-            asyncio.run(got_confirm(bot, event, matcher, _make_message(event.get_plaintext())))  # type: ignore[arg-type]
+            _run_handler(
+                got_confirm(bot, event, matcher, _make_message(event.get_plaintext()))
+            )  # type: ignore[arg-type]
 
             im.add_tags.assert_awaited_once_with(3, ["新增1", "新增2"])
             matcher.finish.assert_awaited_once()
@@ -317,7 +337,9 @@ class TestGotConfirm:
             event = _make_event(text="yes")
             matcher = _make_matcher(state={"entry_id": 3, "tags": ["新增"]})
 
-            asyncio.run(got_confirm(bot, event, matcher, _make_message(event.get_plaintext())))  # type: ignore[arg-type]
+            _run_handler(
+                got_confirm(bot, event, matcher, _make_message(event.get_plaintext()))
+            )  # type: ignore[arg-type]
 
             im.add_tags.assert_awaited_once_with(3, ["新增"])
 
@@ -329,11 +351,11 @@ class TestGotConfirm:
         ):
             bot = _make_bot()
             event = _make_event(text="不")
-            matcher = _make_matcher(
-                state={"entry_id": 3, "tags": ["新增1", "新增2"]}
-            )
+            matcher = _make_matcher(state={"entry_id": 3, "tags": ["新增1", "新增2"]})
 
-            asyncio.run(got_confirm(bot, event, matcher, _make_message(event.get_plaintext())))  # type: ignore[arg-type]
+            _run_handler(
+                got_confirm(bot, event, matcher, _make_message(event.get_plaintext()))
+            )  # type: ignore[arg-type]
 
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
@@ -355,7 +377,9 @@ class TestGotConfirm:
             event = _make_event(text="/cancel")
             matcher = _make_matcher()
 
-            asyncio.run(got_confirm(bot, event, matcher, _make_message(event.get_plaintext())))  # type: ignore[arg-type]
+            _run_handler(
+                got_confirm(bot, event, matcher, _make_message(event.get_plaintext()))
+            )  # type: ignore[arg-type]
 
             mock_bypass.assert_awaited_once()
 
@@ -387,7 +411,7 @@ class TestShortCommandAddtag:
             mock_store.return_value = store
 
             matcher = _make_matcher()
-            asyncio.run(
+            _run_handler(
                 handle_addtag(
                     _make_bot(),
                     _make_event(text="/at 42 心累 深夜"),

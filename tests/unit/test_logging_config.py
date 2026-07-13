@@ -44,12 +44,18 @@ def reset_logging() -> Generator[None, None, None]:
 
 def _get_file_handlers() -> list[RotatingFileHandler]:
     """从 bot Logger 中获取 RotatingFileHandler 列表。"""
-    return [h for h in logging.getLogger("bot").handlers if isinstance(h, RotatingFileHandler)]
+    return [
+        h
+        for h in logging.getLogger("bot").handlers
+        if isinstance(h, RotatingFileHandler)
+    ]
 
 
 def _get_stream_handlers() -> list[logging.StreamHandler]:
     """从 bot Logger 中获取 StreamHandler 列表（精确类型，不含子类）。"""
-    return [h for h in logging.getLogger("bot").handlers if type(h) is logging.StreamHandler]
+    return [
+        h for h in logging.getLogger("bot").handlers if type(h) is logging.StreamHandler
+    ]
 
 
 class TestSetupLogging:

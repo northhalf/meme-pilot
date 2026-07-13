@@ -24,7 +24,9 @@ def sample_entries() -> dict[int, MemeEntry]:
         1: MemeEntry(id=1, image_path="cat.jpg", text="一只猫在跳起来抓蝴蝶哈哈哈"),
         2: MemeEntry(id=2, image_path="overtime.jpg", text="加班到凌晨三点的我"),
         3: MemeEntry(
-            id=3, image_path="suspect.jpg", text="人家一片热忱你怎能以小人之心度君子之腹呢"
+            id=3,
+            image_path="suspect.jpg",
+            text="人家一片热忱你怎能以小人之心度君子之腹呢",
         ),
         4: MemeEntry(id=4, image_path="empty.jpg", text=""),
         5: MemeEntry(id=5, image_path="boss.jpg", text="当你的老板说今天要加班"),
@@ -125,7 +127,9 @@ class TestSearchExactSubstringLayer:
         # raw 不是任何 text 子串 → 回退 LCS（cleaned 去助词后是 text 子串 → 100）
         entries = {1: MemeEntry(id=1, image_path="a.jpg", text="加班到凌晨")}
         s = KeywordSearcher(MockMetadataStore(entries))
-        results = s.search("了加班吗")  # raw="了加班吗" 不命中；cleaned="加班" 是 text 子串 → 100
+        results = s.search(
+            "了加班吗"
+        )  # raw="了加班吗" 不命中；cleaned="加班" 是 text 子串 → 100
         assert len(results) == 1
         assert results[0].entry_id == 1
         assert results[0].similarity == 100.0
@@ -300,7 +304,9 @@ class TestStripAllWhitespace:
 class TestSearchIn:
     """search_in：在给定 entries 子集上搜索。"""
 
-    def test_search_in_respects_subset(self, sample_entries: dict[int, MemeEntry]) -> None:
+    def test_search_in_respects_subset(
+        self, sample_entries: dict[int, MemeEntry]
+    ) -> None:
         """search_in 只在传入子集上匹配，不触及全集其他条目。"""
         s = KeywordSearcher(MockMetadataStore(sample_entries))
         subset = {5: sample_entries[5]}  # "当你的老板说今天要加班"

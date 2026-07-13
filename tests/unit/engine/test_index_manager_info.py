@@ -16,10 +16,10 @@ from bot.session import ChatScope, session_manager
 # ---------------------------------------------------------------------------
 
 
-
 def _make_test_scope(user_id: str = "1001") -> ChatScope:
     """构造测试用私聊 ChatScope。"""
     return ChatScope(user_id=int(user_id), chat_type="private", chat_id=int(user_id))
+
 
 class FakeMetadataStore:
     """info() 测试专用内存 MetadataStore。"""
@@ -111,9 +111,7 @@ class FakeVectorStore:
     async def remove_many(self, entry_ids: list[int]) -> None:
         pass
 
-    async def query(
-        self, query_embedding: list[float], n_results: int = 10
-    ) -> list:
+    async def query(self, query_embedding: list[float], n_results: int = 10) -> list:
         return []
 
     async def rebuild_all(self, items: list[tuple[int, list[float]]]) -> None:
@@ -174,7 +172,9 @@ class TestInfo:
         assert info.status == "空闲"
 
     @pytest.mark.asyncio
-    async def test_info_ranking_truncates_to_ten(self, index_manager: IndexManager) -> None:
+    async def test_info_ranking_truncates_to_ten(
+        self, index_manager: IndexManager
+    ) -> None:
         """speaker 种类超过 10 个时，排行截断到前 10。"""
         metadata_store = index_manager._metadata_store
         for i in range(12):

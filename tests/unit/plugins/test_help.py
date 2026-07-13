@@ -63,9 +63,7 @@ class TestHandleHelp:
 
     @pytest.mark.asyncio
     @patch.object(help, "is_authorized", return_value=True)
-    async def test_authorized_user_receives_help(
-        self, mock_auth: MagicMock
-    ) -> None:
+    async def test_authorized_user_receives_help(self, mock_auth: MagicMock) -> None:
         """授权用户应收到帮助文本。"""
         _reset_mocks()
         matcher = _make_matcher()
@@ -84,9 +82,7 @@ class TestHandleHelp:
 
     @pytest.mark.asyncio
     @patch.object(help, "is_authorized", return_value=False)
-    async def test_unauthorized_user_ignored(
-        self, mock_auth: MagicMock
-    ) -> None:
+    async def test_unauthorized_user_ignored(self, mock_auth: MagicMock) -> None:
         """非授权用户应被静默忽略。"""
         _reset_mocks()
         bot = _make_bot()
@@ -100,14 +96,14 @@ class TestHandleHelp:
 
     @pytest.mark.asyncio
     @patch.object(help, "is_authorized", return_value=True)
-    async def test_group_chat_reply(
-        self, mock_auth: MagicMock
-    ) -> None:
+    async def test_group_chat_reply(self, mock_auth: MagicMock) -> None:
         """群聊中授权用户应收到带 reply 的帮助文本。"""
         _reset_mocks()
         matcher = _make_matcher()
 
-        await handle_help(_make_bot(), _make_event("111", message_type="group"), matcher)
+        await handle_help(
+            _make_bot(), _make_event("111", message_type="group"), matcher
+        )
 
         matcher.finish.assert_awaited_once()
         reply = matcher.finish.call_args[0][0]

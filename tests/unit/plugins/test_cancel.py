@@ -101,8 +101,12 @@ class TestCancelCommand:
         bot = AsyncMock()
         event = _make_event("9999")
 
-        with patch("bot.plugins.cancel.is_authorized", return_value=False), \
-             patch.object(session_manager, "execute_cancel", new=AsyncMock()) as mock_exec:
+        with (
+            patch("bot.plugins.cancel.is_authorized", return_value=False),
+            patch.object(
+                session_manager, "execute_cancel", new=AsyncMock()
+            ) as mock_exec,
+        ):
             await handle_cancel(bot, event, matcher)
 
         # 非授权用户静默忽略：finish(None) 且不触发 execute_cancel

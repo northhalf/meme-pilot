@@ -101,7 +101,9 @@ class TestHandleRandAuth:
     ) -> None:
         """授权用户应正常调用 dispatch_search_results。"""
         with patch.object(rand, "get_index_manager") as mock_get_im:
-            mock_get_im.return_value.random_search = AsyncMock(return_value=[_make_search_result()])
+            mock_get_im.return_value.random_search = AsyncMock(
+                return_value=[_make_search_result()]
+            )
             await handle_rand(_make_bot(), _make_event(), _make_matcher())
             mock_dispatch.assert_awaited_once()
 
@@ -120,7 +122,9 @@ class TestHandleRandDelegation:
             mock_random = AsyncMock(return_value=[_make_search_result()])
             mock_get_im.return_value.random_search = mock_random
 
-            await handle_rand(_make_bot(), _make_event(text="/rand 加班"), _make_matcher())
+            await handle_rand(
+                _make_bot(), _make_event(text="/rand 加班"), _make_matcher()
+            )
 
             mock_random.assert_awaited_once_with("加班")
 
@@ -181,7 +185,9 @@ class TestHandleRandEmptyResults:
             matcher = _make_matcher()
 
             await handle_rand(
-                _make_bot(), _make_event(text="/rand 火星文", message_type="group"), matcher
+                _make_bot(),
+                _make_event(text="/rand 火星文", message_type="group"),
+                matcher,
             )
 
             matcher.finish.assert_awaited_once()
@@ -263,7 +269,9 @@ class TestGotRandSelection:
         new_results = [_make_search_result(entry_id=2, text="乙")]
         with patch.object(rand, "get_index_manager") as mock_get_im:
             mock_get_im.return_value.random_search = AsyncMock(return_value=new_results)
-            matcher = _make_matcher(state={"candidates": [_make_search_result()], "keyword": None})
+            matcher = _make_matcher(
+                state={"candidates": [_make_search_result()], "keyword": None}
+            )
 
             await got_rand_selection(
                 _make_bot(), _make_event(text="0"), matcher, _make_message("0")
@@ -326,7 +334,10 @@ class TestGotRandSelection:
         matcher = _make_matcher(state={"candidates": []})
 
         await got_rand_selection(
-            _make_bot(), _make_event(text="1", message_type="group"), matcher, _make_message("1")
+            _make_bot(),
+            _make_event(text="1", message_type="group"),
+            matcher,
+            _make_message("1"),
         )
 
         matcher.finish.assert_awaited_once()

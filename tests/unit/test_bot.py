@@ -1,6 +1,5 @@
 """bot.bot 模块单元测试。"""
 
-
 import pytest
 
 from bot.config import read_bot_port, read_int_env

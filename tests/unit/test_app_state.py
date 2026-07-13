@@ -118,7 +118,12 @@ class TestGetAiMatcher:
 
         ai = MagicMock(spec=AIMatcher)
         app_state.init_app(
-            MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock(), ai_matcher=ai
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            ai_matcher=ai,
         )
         assert app_state.get_ai_matcher() is ai
 
@@ -160,9 +165,7 @@ class TestGetMetadataStore:
         from bot.engine import MetadataStore
 
         md = MagicMock(spec=MetadataStore)
-        app_state.init_app(
-            MagicMock(), md, MagicMock(), MagicMock(), MagicMock()
-        )
+        app_state.init_app(MagicMock(), md, MagicMock(), MagicMock(), MagicMock())
         assert app_state.get_metadata_store() is md
 
     def test_raises_when_not_initialized(self) -> None:
@@ -179,9 +182,7 @@ class TestGetVectorStore:
         from bot.engine import VectorStore
 
         vs = MagicMock(spec=VectorStore)
-        app_state.init_app(
-            MagicMock(), MagicMock(), vs, MagicMock(), MagicMock()
-        )
+        app_state.init_app(MagicMock(), MagicMock(), vs, MagicMock(), MagicMock())
         assert app_state.get_vector_store() is vs
 
     def test_raises_when_not_initialized(self) -> None:

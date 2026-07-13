@@ -35,9 +35,9 @@ from google.genai import types
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from bot.config import CHROMA_DIR, INDEX_DB_PATH
-from bot.engine.metadata_store import MetadataStore
-from bot.engine.vector_store import VectorStore
+from bot.config import CHROMA_DIR, INDEX_DB_PATH  # noqa: E402
+from bot.engine.metadata_store import MetadataStore  # noqa: E402
+from bot.engine.vector_store import VectorStore  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,7 @@ def _parse_args() -> argparse.Namespace:
         type=float,
         default=0.0,
         help="两次 API 调用之间的等待秒数（默认 0）。当批量大小接近免费额度 RPM 上限时，"
-             "可设为 60 以控制速率。",
+        "可设为 60 以控制速率。",
     )
     parser.add_argument(
         "--dry-run",

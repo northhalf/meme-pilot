@@ -2,7 +2,7 @@
 
 import sqlite3
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -283,11 +283,9 @@ class TestFrozenAndEntriesCache:
         entry = store.get_entry(1)
         assert entry is not None
         with pytest.raises(dataclasses.FrozenInstanceError):
-            entry.image_path = "b.jpg"  # type: ignore[misc]
+            entry.image_path = "b.jpg"  # type: ignore[misc, ty:invalid-assignment]
 
-    def test_load_rebuilds_entries_and_text_to_id(
-        self, tmp_sqlite_path: Path
-    ) -> None:
+    def test_load_rebuilds_entries_and_text_to_id(self, tmp_sqlite_path: Path) -> None:
         """load 后 _entries 与 _text_to_id 同步填充，含 tags。"""
         s1 = MetadataStore(str(tmp_sqlite_path))
         s1.load()
@@ -401,7 +399,7 @@ class TestReadPathHitsCache:
                 return getattr(self._real, name)
 
         counter = _CountingConn(real_conn)
-        store._conn = counter  # type: ignore[assignment]
+        store._conn = cast(sqlite3.Connection, counter)
         try:
             for _ in range(3):
                 store.get_all_entries()

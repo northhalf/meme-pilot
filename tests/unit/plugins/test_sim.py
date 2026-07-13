@@ -74,7 +74,9 @@ class TestHandleSimAuth:
         self, mock_dispatch: AsyncMock, mock_auth: MagicMock, mock_activate: MagicMock
     ) -> None:
         with patch.object(sim, "get_index_manager") as mock_get_im:
-            mock_get_im.return_value.semantic_search = AsyncMock(return_value=[_make_search_result()])
+            mock_get_im.return_value.semantic_search = AsyncMock(
+                return_value=[_make_search_result()]
+            )
             await handle_sim(_make_bot(), _make_event(), _make_matcher())
             mock_dispatch.assert_awaited_once()
 
@@ -90,7 +92,9 @@ class TestHandleSimDelegation:
             mock_semantic = AsyncMock(return_value=[_make_search_result()])
             mock_get_im.return_value.semantic_search = mock_semantic
 
-            await handle_sim(_make_bot(), _make_event(text="/sim 心累的加班"), _make_matcher())
+            await handle_sim(
+                _make_bot(), _make_event(text="/sim 心累的加班"), _make_matcher()
+            )
 
             mock_semantic.assert_awaited_once_with("心累的加班", limit=None)
 
@@ -171,9 +175,7 @@ class TestHandleSimEmptyResults:
             mock_get_im.return_value.semantic_search = AsyncMock(return_value=[])
             matcher = _make_matcher()
 
-            await handle_sim(
-                _make_bot(), _make_event(message_type="group"), matcher
-            )
+            await handle_sim(_make_bot(), _make_event(message_type="group"), matcher)
 
             matcher.finish.assert_awaited_once()
             reply = matcher.finish.call_args[0][0]
@@ -195,7 +197,9 @@ class TestHandleSimErrors:
         import asyncio
 
         with patch.object(sim, "get_index_manager") as mock_get_im:
-            mock_get_im.return_value.semantic_search = AsyncMock(side_effect=asyncio.TimeoutError())
+            mock_get_im.return_value.semantic_search = AsyncMock(
+                side_effect=asyncio.TimeoutError()
+            )
             matcher = _make_matcher()
 
             await handle_sim(_make_bot(), _make_event(), matcher)
@@ -224,9 +228,7 @@ class TestHandleSimErrors:
             )
             matcher = _make_matcher()
 
-            await handle_sim(
-                _make_bot(), _make_event(message_type="group"), matcher
-            )
+            await handle_sim(_make_bot(), _make_event(message_type="group"), matcher)
 
             matcher.finish.assert_awaited_once()
             reply = matcher.finish.call_args[0][0]
@@ -244,7 +246,9 @@ class TestHandleSimErrors:
         mock_activate: MagicMock,
     ) -> None:
         with patch.object(sim, "get_index_manager") as mock_get_im:
-            mock_get_im.return_value.semantic_search = AsyncMock(side_effect=ValueError("零向量"))
+            mock_get_im.return_value.semantic_search = AsyncMock(
+                side_effect=ValueError("零向量")
+            )
             matcher = _make_matcher()
 
             await handle_sim(_make_bot(), _make_event(), matcher)
@@ -271,9 +275,7 @@ class TestHandleSimErrors:
             )
             matcher = _make_matcher()
 
-            await handle_sim(
-                _make_bot(), _make_event(message_type="group"), matcher
-            )
+            await handle_sim(_make_bot(), _make_event(message_type="group"), matcher)
 
             matcher.finish.assert_awaited_once()
             reply = matcher.finish.call_args[0][0]

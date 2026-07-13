@@ -1,6 +1,5 @@
 """SemanticSearcher 单元测试。"""
 
-
 import pytest
 
 from bot.engine.metadata_store import MemeEntry
@@ -41,12 +40,16 @@ def sample_entries() -> dict[int, MemeEntry]:
 
 
 @pytest.mark.asyncio
-async def test_search_semantic_returns_search_results(sample_entries: dict[int, MemeEntry]) -> None:
+async def test_search_semantic_returns_search_results(
+    sample_entries: dict[int, MemeEntry],
+) -> None:
     hits = [
         VectorHit(entry_id=1, similarity=0.95),
         VectorHit(entry_id=2, similarity=0.85),
     ]
-    searcher = SemanticSearcher(MockMetadataStore(sample_entries), MockVectorStore(hits))
+    searcher = SemanticSearcher(
+        MockMetadataStore(sample_entries), MockVectorStore(hits)
+    )
 
     results = await searcher.search_semantic([0.1] * 1024, limit=10)
 
@@ -59,13 +62,15 @@ async def test_search_semantic_returns_search_results(sample_entries: dict[int, 
 
 @pytest.mark.asyncio
 async def test_search_semantic_skips_missing_metadata(
-    sample_entries: dict[int, MemeEntry]
+    sample_entries: dict[int, MemeEntry],
 ) -> None:
     hits = [
         VectorHit(entry_id=1, similarity=0.95),
         VectorHit(entry_id=999, similarity=0.90),  # 不存在的 entry
     ]
-    searcher = SemanticSearcher(MockMetadataStore(sample_entries), MockVectorStore(hits))
+    searcher = SemanticSearcher(
+        MockMetadataStore(sample_entries), MockVectorStore(hits)
+    )
 
     results = await searcher.search_semantic([0.1] * 1024, limit=10)
 
@@ -74,13 +79,17 @@ async def test_search_semantic_skips_missing_metadata(
 
 
 @pytest.mark.asyncio
-async def test_search_semantic_respects_limit(sample_entries: dict[int, MemeEntry]) -> None:
+async def test_search_semantic_respects_limit(
+    sample_entries: dict[int, MemeEntry],
+) -> None:
     hits = [
         VectorHit(entry_id=1, similarity=0.95),
         VectorHit(entry_id=2, similarity=0.85),
         VectorHit(entry_id=3, similarity=0.75),
     ]
-    searcher = SemanticSearcher(MockMetadataStore(sample_entries), MockVectorStore(hits))
+    searcher = SemanticSearcher(
+        MockMetadataStore(sample_entries), MockVectorStore(hits)
+    )
 
     results = await searcher.search_semantic([0.1] * 1024, limit=2)
 
@@ -99,7 +108,9 @@ async def test_search_semantic_limit_none_returns_all(
         VectorHit(entry_id=2, similarity=0.85),
         VectorHit(entry_id=3, similarity=0.75),
     ]
-    searcher = SemanticSearcher(MockMetadataStore(sample_entries), MockVectorStore(hits))
+    searcher = SemanticSearcher(
+        MockMetadataStore(sample_entries), MockVectorStore(hits)
+    )
 
     results = await searcher.search_semantic([0.1] * 1024, limit=None)
 

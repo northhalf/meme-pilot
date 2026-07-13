@@ -19,11 +19,29 @@ class MockMetadataStore:
 @pytest.fixture
 def sample_entries() -> dict[int, MemeEntry]:
     return {
-        1: MemeEntry(id=1, image_path="a.jpg", text="加班到凌晨", speaker="小明", tags=["吐槽", "加班"]),
-        2: MemeEntry(id=2, image_path="b.jpg", text="老板又让加班", speaker="小红", tags=["加班"]),
-        3: MemeEntry(id=3, image_path="c.jpg", text="周末加班通知", speaker="小明", tags=["通知", "加班"]),
-        4: MemeEntry(id=4, image_path="d.jpg", text="猫在睡觉", speaker=None, tags=["萌宠"]),
-        5: MemeEntry(id=5, image_path="e.jpg", text="Cat", speaker="Tom", tags=["animal"]),
+        1: MemeEntry(
+            id=1,
+            image_path="a.jpg",
+            text="加班到凌晨",
+            speaker="小明",
+            tags=["吐槽", "加班"],
+        ),
+        2: MemeEntry(
+            id=2, image_path="b.jpg", text="老板又让加班", speaker="小红", tags=["加班"]
+        ),
+        3: MemeEntry(
+            id=3,
+            image_path="c.jpg",
+            text="周末加班通知",
+            speaker="小明",
+            tags=["通知", "加班"],
+        ),
+        4: MemeEntry(
+            id=4, image_path="d.jpg", text="猫在睡觉", speaker=None, tags=["萌宠"]
+        ),
+        5: MemeEntry(
+            id=5, image_path="e.jpg", text="Cat", speaker="Tom", tags=["animal"]
+        ),
     }
 
 
@@ -89,7 +107,9 @@ class TestWithKeyword:
         assert results[0].entry_id == 1
         assert results[0].similarity == 100.0
 
-    def test_keyword_subset_excludes_filtered_out(self, combined: CombinedSearcher) -> None:
+    def test_keyword_subset_excludes_filtered_out(
+        self, combined: CombinedSearcher
+    ) -> None:
         """关键词只在过滤子集上匹配，不召回被过滤掉的条目。"""
         results = combined.search("加班", ["小明"], [])
         assert {r.entry_id for r in results} == {1, 3}  # entry 2(小红) 被过滤
@@ -197,9 +217,7 @@ class TestShuffleWithinSimilarityGroups:
         assert {r.entry_id for r in out[2:4]} == {3, 4}
         assert out[4].entry_id == 5
 
-    def test_randomizes_within_group(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_randomizes_within_group(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from bot.engine.combined_searcher import _shuffle_within_similarity_groups
 
         monkeypatch.setattr(

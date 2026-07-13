@@ -87,7 +87,7 @@ class TestResolveSelection:
         from bot.plugins._search_utils import resolve_selection
 
         candidates = [_make_search_result()]
-        result = resolve_selection(candidates,"abc")
+        result = resolve_selection(candidates, "abc")
 
         assert isinstance(result, str)
         assert "无效编号" in result
@@ -97,7 +97,7 @@ class TestResolveSelection:
         from bot.plugins._search_utils import resolve_selection
 
         candidates = [_make_search_result(), _make_search_result()]
-        result = resolve_selection(candidates,"0")
+        result = resolve_selection(candidates, "0")
 
         assert isinstance(result, str)
         assert "无效编号" in result
@@ -107,7 +107,7 @@ class TestResolveSelection:
         from bot.plugins._search_utils import resolve_selection
 
         candidates = [_make_search_result()]
-        result = resolve_selection(candidates,"5")
+        result = resolve_selection(candidates, "5")
 
         assert isinstance(result, str)
         assert "无效编号" in result
@@ -123,7 +123,9 @@ class TestResolveSelection:
 
 
 def _make_index_manager(
-    *, results: list[SearchResult] | None = None, search_side_effect: Exception | None = None
+    *,
+    results: list[SearchResult] | None = None,
+    search_side_effect: Exception | None = None,
 ) -> MagicMock:
     im = MagicMock()
     if search_side_effect is not None:
@@ -154,9 +156,7 @@ class TestPresentCandidates:
         cmd = _make_matcher()
         cmd.state = {}
 
-        await present_candidates(
-            _make_bot(), _make_event("111"), cmd, candidates
-        )
+        await present_candidates(_make_bot(), _make_event("111"), cmd, candidates)
 
         assert "candidates" in cmd.state
         assert "selection_id" in cmd.state
@@ -372,13 +372,9 @@ class TestPresentCandidates:
         candidates = [_make_search_result(entry_id=1, text="甲")]
         cmd = _make_matcher()
         cmd.state = {}
-        event = _make_event(
-            "111", message_id=42, message_type="group", group_id=67890
-        )
+        event = _make_event("111", message_id=42, message_type="group", group_id=67890)
 
-        await present_candidates(
-            _make_bot(), event, cmd, candidates
-        )
+        await present_candidates(_make_bot(), event, cmd, candidates)
 
         sent = cmd.send.call_args[0][0]
         assert isinstance(sent, Message)
@@ -416,14 +412,13 @@ class TestDispatchSearchResults:
         cmd = _make_matcher()
         event = _make_event("111")
 
-        with patch(
-            "bot.plugins._search_utils.session_manager.deactivate_chat"
-        ) as mock_deactivate, patch(
-            "bot.plugins._search_utils.MessageSegment"
-        ) as mock_segment:
-            await dispatch_search_results(
-                _make_bot(), event, cmd, [result]
-            )
+        with (
+            patch(
+                "bot.plugins._search_utils.session_manager.deactivate_chat"
+            ) as mock_deactivate,
+            patch("bot.plugins._search_utils.MessageSegment") as mock_segment,
+        ):
+            await dispatch_search_results(_make_bot(), event, cmd, [result])
 
             cmd.send.assert_awaited_once()
             cmd.finish.assert_awaited_once()
@@ -431,22 +426,16 @@ class TestDispatchSearchResults:
             mock_segment.image.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch(
-        "bot.plugins._search_utils.present_candidates", new_callable=AsyncMock
-    )
+    @patch("bot.plugins._search_utils.present_candidates", new_callable=AsyncMock)
     async def test_multiple_results_calls_present_candidates(
         self, mock_present: AsyncMock
     ) -> None:
         """多结果时应存分页状态、切第 1 页并传 options/prompt_suffix。"""
         from bot.plugins._search_utils import dispatch_search_results, PresentOptions
 
-        results = [
-            _make_search_result(entry_id=i, text=f"甲{i}") for i in range(1, 4)
-        ]
+        results = [_make_search_result(entry_id=i, text=f"甲{i}") for i in range(1, 4)]
         cmd = _make_matcher()
-        event = _make_event(
-            "111", message_id=42, message_type="group", group_id=67890
-        )
+        event = _make_event("111", message_id=42, message_type="group", group_id=67890)
         opts = PresentOptions(
             show_similarity=True, similarity_scale="score", next_trigger="n"
         )
@@ -473,9 +462,7 @@ class TestDispatchSearchResults:
         assert cmd.state["total_pages"] == 1
 
     @pytest.mark.asyncio
-    @patch(
-        "bot.plugins._search_utils.present_candidates", new_callable=AsyncMock
-    )
+    @patch("bot.plugins._search_utils.present_candidates", new_callable=AsyncMock)
     async def test_multiple_results_paginates_when_over_page_size(
         self, mock_present: AsyncMock
     ) -> None:
@@ -503,9 +490,7 @@ class TestExecuteSearch:
 
     @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.get_index_manager")
-    async def test_timeout_replies(
-        self, mock_get_im: MagicMock
-    ) -> None:
+    async def test_timeout_replies(self, mock_get_im: MagicMock) -> None:
         """等待读锁超时应回复提示。"""
         import asyncio
         from bot.plugins._search_utils import execute_search
@@ -577,9 +562,7 @@ class TestExecuteSearch:
         mock_deactivate.assert_called_once_with(ChatScope.from_event(event))
 
     @pytest.mark.asyncio
-    @patch(
-        "bot.plugins._search_utils.dispatch_search_results", new_callable=AsyncMock
-    )
+    @patch("bot.plugins._search_utils.dispatch_search_results", new_callable=AsyncMock)
     @patch("bot.plugins._search_utils.get_index_manager")
     async def test_multiple_results_delegates_to_dispatch(
         self, mock_get_im: MagicMock, mock_dispatch: AsyncMock
@@ -601,15 +584,11 @@ class TestExecuteSearch:
 
         await execute_search(bot, event, cmd, "加班", options=opts)
 
-        mock_dispatch.assert_awaited_once_with(
-            bot, event, cmd, results, options=opts
-        )
+        mock_dispatch.assert_awaited_once_with(bot, event, cmd, results, options=opts)
 
     @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.get_index_manager")
-    async def test_search_exception_replies_error(
-        self, mock_get_im: MagicMock
-    ) -> None:
+    async def test_search_exception_replies_error(self, mock_get_im: MagicMock) -> None:
         """search() 抛异常时应回复服务不可用。"""
         from bot.plugins._search_utils import execute_search
 
@@ -651,9 +630,7 @@ class TestExecuteSearch:
         _cmd = MagicMock()
         _cmd.finish = AsyncMock()
 
-        await execute_search(
-            _make_bot(), _make_event(str(user_id)), _cmd, "加班"
-        )
+        await execute_search(_make_bot(), _make_event(str(user_id)), _cmd, "加班")
 
         # 错误分支应 deactivate，会话不再活跃
         assert session_manager.get_or_create_chat(scope).active is False
@@ -677,9 +654,7 @@ class TestExecuteSearch:
         _cmd = MagicMock()
         _cmd.finish = AsyncMock()
 
-        await execute_search(
-            _make_bot(), _make_event(str(user_id)), _cmd, "加班"
-        )
+        await execute_search(_make_bot(), _make_event(str(user_id)), _cmd, "加班")
 
         assert session_manager.get_or_create_chat(scope).active is False
 
@@ -704,9 +679,7 @@ class TestExecuteSearch:
         _cmd = MagicMock()
         _cmd.finish = AsyncMock()
 
-        await execute_search(
-            _make_bot(), _make_event(str(user_id)), _cmd, "加班"
-        )
+        await execute_search(_make_bot(), _make_event(str(user_id)), _cmd, "加班")
 
         assert session_manager.get_or_create_chat(scope).active is False
 
@@ -783,21 +756,27 @@ class TestFormatMetadataLine:
     def test_with_speaker_and_tags(self) -> None:
         """同时存在 speaker 和 tags 时格式化正确。"""
         from bot.plugins._search_utils import format_metadata_line
-        assert format_metadata_line(3, "小明", ["吐槽", "加班"]) == "3, 小明, 吐槽, 加班"
+
+        assert (
+            format_metadata_line(3, "小明", ["吐槽", "加班"]) == "3, 小明, 吐槽, 加班"
+        )
 
     def test_missing_speaker(self) -> None:
         """speaker 缺失时显示为"无"。"""
         from bot.plugins._search_utils import format_metadata_line
+
         assert format_metadata_line(7, None, ["吐槽"]) == "7, 无, 吐槽"
 
     def test_empty_tags_omitted(self) -> None:
         """tags 为空时省略 tags 段。"""
         from bot.plugins._search_utils import format_metadata_line
+
         assert format_metadata_line(7, "小明", []) == "7, 小明"
 
     def test_both_empty(self) -> None:
         """speaker 和 tags 都为空时只显示 id 和"无"。"""
         from bot.plugins._search_utils import format_metadata_line
+
         assert format_metadata_line(12, None, []) == "12, 无"
 
 
@@ -807,6 +786,7 @@ class TestSimilarityPercent:
     def test_ratio_to_percent(self) -> None:
         """ratio 量纲 0–1 乘 100 后取整。"""
         from bot.plugins._search_utils import _similarity_percent
+
         assert _similarity_percent(0.82, "ratio") == 82
         assert _similarity_percent(1.0, "ratio") == 100
         assert _similarity_percent(0.0, "ratio") == 0
@@ -814,6 +794,7 @@ class TestSimilarityPercent:
     def test_score_to_percent(self) -> None:
         """score 量纲 0–100 直接取整。"""
         from bot.plugins._search_utils import _similarity_percent
+
         assert _similarity_percent(82.0, "score") == 82
         assert _similarity_percent(100.0, "score") == 100
         assert _similarity_percent(60.0, "score") == 60
@@ -821,6 +802,7 @@ class TestSimilarityPercent:
     def test_clamp_out_of_range(self) -> None:
         """越界值 clamp 到 [0, 100]。"""
         from bot.plugins._search_utils import _similarity_percent
+
         assert _similarity_percent(1.05, "ratio") == 100  # 浮点越界 clamp
         assert _similarity_percent(-0.1, "ratio") == 0
         assert _similarity_percent(105.0, "score") == 100  # score 量纲越界 clamp
@@ -831,7 +813,12 @@ class TestPresentOptionsDefaults:
 
     def test_defaults(self) -> None:
         """PresentOptions 默认值匹配 /rand 零回归行为。"""
-        from bot.plugins._search_utils import PresentOptions, PAGE_SIZE, NEXT_PAGE_TRIGGER
+        from bot.plugins._search_utils import (
+            PresentOptions,
+            PAGE_SIZE,
+            NEXT_PAGE_TRIGGER,
+        )
+
         opts = PresentOptions()
         assert opts.show_similarity is False
         assert opts.similarity_scale == "score"
@@ -874,9 +861,7 @@ class TestHandleGotSelectionPagination:
             "total_pages": 3,
             "candidates": all_results[0:10],
         }
-        event = _make_event(
-            "111", message_id=42, message_type="group", group_id=67890
-        )
+        event = _make_event("111", message_id=42, message_type="group", group_id=67890)
         event.get_plaintext.return_value = "n"
         msg = MagicMock()
         msg.extract_plain_text.return_value = "n"
@@ -928,9 +913,7 @@ class TestHandleGotSelectionPagination:
             "total_pages": 1,
             "candidates": all_results,
         }
-        event = _make_event(
-            "111", message_id=42, message_type="group", group_id=67890
-        )
+        event = _make_event("111", message_id=42, message_type="group", group_id=67890)
         event.get_plaintext.return_value = "n"
         msg = MagicMock()
         msg.extract_plain_text.return_value = "n"
@@ -1027,8 +1010,12 @@ class TestExecuteCombinedSearch:
         event = _make_event("123")
 
         await execute_combined_search(
-            MagicMock(), event, _make_matcher(),
-            keyword="加班", speakers=["小明"], tags=["吐槽"],
+            MagicMock(),
+            event,
+            _make_matcher(),
+            keyword="加班",
+            speakers=["小明"],
+            tags=["吐槽"],
         )
 
         mock_get_im.return_value.search_combined.assert_awaited_once_with(
@@ -1055,8 +1042,12 @@ class TestExecuteCombinedSearch:
         matcher = _make_matcher()
 
         await execute_combined_search(
-            MagicMock(), event, matcher,
-            keyword="加班", speakers=[], tags=[],
+            MagicMock(),
+            event,
+            matcher,
+            keyword="加班",
+            speakers=[],
+            tags=[],
         )
 
         matcher.finish.assert_awaited_once()
@@ -1077,8 +1068,12 @@ class TestExecuteCombinedSearch:
         matcher = _make_matcher()
 
         await execute_combined_search(
-            MagicMock(), event, matcher,
-            keyword="加班", speakers=[], tags=[],
+            MagicMock(),
+            event,
+            matcher,
+            keyword="加班",
+            speakers=[],
+            tags=[],
         )
 
         matcher.finish.assert_awaited_once_with("服务未就绪，请稍后再试")

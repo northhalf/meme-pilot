@@ -59,7 +59,9 @@ class TestUpsertAndQuery:
         assert hits[0].entry_id == 42
         assert isinstance(hits[0].entry_id, int)
 
-    async def test_query_empty_collection_returns_empty(self, store: VectorStore) -> None:
+    async def test_query_empty_collection_returns_empty(
+        self, store: VectorStore
+    ) -> None:
         assert await store.query([1.0, 0.0], n_results=10) == []
 
     async def test_query_n_results_limits(self, store: VectorStore) -> None:

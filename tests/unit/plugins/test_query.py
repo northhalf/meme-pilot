@@ -4,6 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from tests.conftest import _assert_has_reply, _assert_no_reply, extract_message_text
+
 _mock_cmd = MagicMock()
 _mock_cmd.handle.return_value = lambda fn: fn
 _mock_cmd.got.return_value = lambda fn: fn
@@ -11,8 +13,6 @@ _mock_cmd.got.return_value = lambda fn: fn
 with patch("nonebot.on_command", return_value=_mock_cmd):
     from bot.plugins import query
     from bot.plugins.query import _parse_args, handle_query
-
-from tests.conftest import _assert_has_reply, _assert_no_reply, extract_message_text
 
 
 def _make_event(

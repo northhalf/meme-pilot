@@ -29,10 +29,10 @@ with patch("nonebot.on_command", return_value=_mock_cmd):
 # ---------------------------------------------------------------------------
 
 
-
 def _make_test_scope(user_id: str = "1001") -> ChatScope:
     """构造测试用私聊 ChatScope。"""
     return ChatScope(user_id=int(user_id), chat_type="private", chat_id=int(user_id))
+
 
 def _make_event(user_id: str = "12345", message_type: str = "private") -> MagicMock:
     """创建模拟的 MessageEvent。"""
@@ -87,9 +87,7 @@ class TestHandleInfoAuth:
 
     @pytest.mark.asyncio
     @patch.object(info, "is_authorized", return_value=False)
-    async def test_unauthorized_user_ignored(
-        self, mock_auth: MagicMock
-    ) -> None:
+    async def test_unauthorized_user_ignored(self, mock_auth: MagicMock) -> None:
         """非授权用户应被静默忽略。"""
         matcher = _make_matcher()
         bot = _make_bot()
@@ -372,9 +370,7 @@ class TestHandleInfoDetail:
         mock_get_index_manager.return_value = mock_index_manager
 
         matcher = _make_matcher()
-        await handle_info(
-            _make_bot(), _make_event(), matcher, args=_make_message("1")
-        )
+        await handle_info(_make_bot(), _make_event(), matcher, args=_make_message("1"))
 
         matcher.finish.assert_awaited_once()
         reply = matcher.finish.call_args[0][0]
@@ -552,7 +548,9 @@ class TestHandleInfoStatusOverride:
             assert session_manager.has_active_session() is True
 
             matcher = _make_matcher()
-            await handle_info(_make_bot(), _make_event("1001"), matcher, args=_make_message(""))
+            await handle_info(
+                _make_bot(), _make_event("1001"), matcher, args=_make_message("")
+            )
 
             matcher.finish.assert_awaited_once()
             reply = matcher.finish.call_args[0][0]
@@ -601,7 +599,9 @@ class TestHandleInfoStatusOverride:
             assert session_manager.has_active_session() is False
 
             matcher = _make_matcher()
-            await handle_info(_make_bot(), _make_event("1001"), matcher, args=_make_message(""))
+            await handle_info(
+                _make_bot(), _make_event("1001"), matcher, args=_make_message("")
+            )
 
             matcher.finish.assert_awaited_once()
             reply = matcher.finish.call_args[0][0]

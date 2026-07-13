@@ -346,9 +346,7 @@ class TestDownloadImageRetry:
 
         with patch("httpx.AsyncClient", return_value=mock_client):
             with pytest.raises(add.DownloadServerError):
-                await add._download_image(
-                    "https://img.example.com/a.jpg"
-                )
+                await add._download_image("https://img.example.com/a.jpg")
 
         # api_retry 默认最多 3 次尝试
         assert mock_client.get.await_count == 3
@@ -372,9 +370,7 @@ class TestDownloadImageRetry:
 
         with patch("httpx.AsyncClient", return_value=mock_client):
             with pytest.raises(HTTPStatusError):
-                await add._download_image(
-                    "https://img.example.com/a.jpg"
-                )
+                await add._download_image("https://img.example.com/a.jpg")
 
         assert mock_client.get.await_count == 1
 
@@ -444,7 +440,9 @@ class TestHandleAdd:
             _make_bot(), _make_event("111"), matcher, args=_make_message("")
         )
 
-        mock_sm.activate_chat.assert_called_once_with(_make_scope("111"), "add", matcher)
+        mock_sm.activate_chat.assert_called_once_with(
+            _make_scope("111"), "add", matcher
+        )
 
     @pytest.mark.asyncio
     @patch.object(add, "is_authorized", return_value=True)

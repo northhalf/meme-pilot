@@ -203,9 +203,7 @@ class TestHandleSetspeaker:
             event = _make_event(text="/setspeaker 999 张三")
             matcher = _make_matcher()
 
-            await handle_setspeaker(
-                bot, event, matcher, args=_make_message("999 张三")
-            )
+            await handle_setspeaker(bot, event, matcher, args=_make_message("999 张三"))
 
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
@@ -311,9 +309,7 @@ class TestGotConfirm:
                 state={"entry_id": 3, "speaker": "张三", "old_speaker": None}
             )
 
-            await got_confirm(
-                bot, event, matcher, _make_message(event.get_plaintext())
-            )
+            await got_confirm(bot, event, matcher, _make_message(event.get_plaintext()))
 
             im.set_speaker.assert_awaited_once_with(3, "张三")
             matcher.finish.assert_awaited_once()
@@ -344,9 +340,7 @@ class TestGotConfirm:
                 state={"entry_id": 3, "speaker": "张三", "old_speaker": None}
             )
 
-            await got_confirm(
-                bot, event, matcher, _make_message(event.get_plaintext())
-            )
+            await got_confirm(bot, event, matcher, _make_message(event.get_plaintext()))
 
             im.set_speaker.assert_awaited_once_with(3, "张三")
 
@@ -363,9 +357,7 @@ class TestGotConfirm:
                 state={"entry_id": 3, "speaker": "张三", "old_speaker": None}
             )
 
-            await got_confirm(
-                bot, event, matcher, _make_message(event.get_plaintext())
-            )
+            await got_confirm(bot, event, matcher, _make_message(event.get_plaintext()))
 
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
@@ -395,9 +387,7 @@ class TestGotConfirm:
                 state={"entry_id": 3, "speaker": None, "old_speaker": "李四"}
             )
 
-            await got_confirm(
-                bot, event, matcher, _make_message(event.get_plaintext())
-            )
+            await got_confirm(bot, event, matcher, _make_message(event.get_plaintext()))
 
             im.set_speaker.assert_awaited_once_with(3, None)
             matcher.finish.assert_awaited_once()
@@ -422,9 +412,7 @@ class TestGotConfirm:
             event = _make_event(text="/cancel")
             matcher = _make_matcher()
 
-            await got_confirm(
-                bot, event, matcher, _make_message(event.get_plaintext())
-            )
+            await got_confirm(bot, event, matcher, _make_message(event.get_plaintext()))
 
             mock_bypass.assert_awaited_once()
 
@@ -494,14 +482,18 @@ class TestTimeoutSession:
         selection = MagicMock()
         selection.selection_id = selection_id
 
-        with patch(
-            "bot.plugins.setspeaker.session_manager.get_selection",
-            return_value=selection,
-        ) as mock_get_selection, patch(
-            "bot.plugins.setspeaker.session_manager.remove_selection"
-        ) as mock_remove_selection, patch(
-            "bot.plugins.setspeaker.session_manager.deactivate_chat"
-        ) as mock_deactivate_chat:
+        with (
+            patch(
+                "bot.plugins.setspeaker.session_manager.get_selection",
+                return_value=selection,
+            ) as mock_get_selection,
+            patch(
+                "bot.plugins.setspeaker.session_manager.remove_selection"
+            ) as mock_remove_selection,
+            patch(
+                "bot.plugins.setspeaker.session_manager.deactivate_chat"
+            ) as mock_deactivate_chat,
+        ):
             await timeout_session(
                 bot,
                 event,

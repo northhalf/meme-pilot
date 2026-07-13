@@ -106,9 +106,7 @@ class FakeVectorStore:
     async def remove_many(self, entry_ids: list[int]) -> None:
         pass
 
-    async def query(
-        self, query_embedding: list[float], n_results: int = 10
-    ) -> list:
+    async def query(self, query_embedding: list[float], n_results: int = 10) -> list:
         return []
 
     async def get_all_ids(self) -> set[int]:

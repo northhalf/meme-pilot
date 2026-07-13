@@ -62,7 +62,11 @@ def _parse_speaker_file(
             line = raw_line.rstrip("\n")
             stripped = line.strip()
             # 跳过空行、注释行、TODO 等
-            if not stripped or stripped.startswith("#") or stripped.upper().startswith("TODO"):
+            if (
+                not stripped
+                or stripped.startswith("#")
+                or stripped.upper().startswith("TODO")
+            ):
                 if stripped:
                     skipped_lines.append(line)
                 continue

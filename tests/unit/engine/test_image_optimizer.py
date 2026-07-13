@@ -28,7 +28,7 @@ class TestOptimizeResult:
     def test_frozen(self) -> None:
         r = OptimizeResult(original_size=1000, optimized_size=800, saved=200)
         with pytest.raises(AttributeError):
-            r.original_size = 500  # type: ignore[misc]
+            r.original_size = 500  # type: ignore[misc, ty:invalid-assignment]
 
     def test_output_path_default_empty(self) -> None:
         r = OptimizeResult(original_size=1000, optimized_size=800, saved=200)
@@ -236,7 +236,7 @@ class TestImageOptimizerSemaphore:
             time.sleep(10)
             return 100
 
-        service._compress_jpeg = slow_compress  # type: ignore[method-assign]
+        service._compress_jpeg = slow_compress  # type: ignore[method-assign, ty:invalid-assignment]
 
         task1 = asyncio.create_task(service.optimize(str(img1)))
         await asyncio.sleep(0.05)
@@ -340,7 +340,7 @@ class TestConvertToWebp:
             raise RuntimeError("convert fail")
 
         optimizer = ImageOptimizer(should_convert_to_webp=True)
-        optimizer._convert_image_to_webp = fail  # type: ignore[method-assign]
+        optimizer._convert_image_to_webp = fail  # type: ignore[method-assign, ty:invalid-assignment]
         with pytest.raises(RuntimeError, match="convert fail"):
             asyncio.run(optimizer.optimize(jpg))
         assert jpg.exists()

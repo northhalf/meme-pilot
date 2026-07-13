@@ -4,7 +4,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from bot.engine.google_embedding import GoogleEmbeddingService, create_google_embedding_service
+from bot.engine.google_embedding import (
+    GoogleEmbeddingService,
+    create_google_embedding_service,
+)
 
 
 @pytest.mark.asyncio
