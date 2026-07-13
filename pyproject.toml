@@ -41,3 +41,6 @@ pythonVersion = "3.12"
 
 [tool.ty.src]
 include = ["bot", "tests"]
+
+[tool.ty.environment]
+extra-paths = ["./typings"]

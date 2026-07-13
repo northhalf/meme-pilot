@@ -109,6 +109,7 @@ class AIMatcher:
         self._rerank_provider = rerank_provider
         self._limit = limit
 
+    @timed(logger, "AI 语义匹配")
     async def match_with_vector(
         self,
         description: str,
@@ -126,45 +127,44 @@ class AIMatcher:
         Raises:
             ValueError: query_vector 为零向量。
         """
-        async with timed(logger, "AI 语义匹配"):
-            description = description.strip()
-            if not description:
-                logger.debug("AI 匹配描述为空，返回空结果")
-                return None
+        description = description.strip()
+        if not description:
+            logger.debug("AI 匹配描述为空，返回空结果")
+            return None
 
-            logger.info("AI 匹配描述: %r, top_k=%d", description, self._limit)
+        logger.info("AI 匹配描述: %r, top_k=%d", description, self._limit)
 
-            if vector_norm(query_vector) == 0:
-                raise ValueError("用户描述 embedding 不能是零向量")
+        if vector_norm(query_vector) == 0:
+            raise ValueError("用户描述 embedding 不能是零向量")
 
-            if self._vector_store.count() == 0:
-                logger.debug("向量库为空，返回空结果")
-                return None
+        if self._vector_store.count() == 0:
+            logger.debug("向量库为空，返回空结果")
+            return None
 
-            hits = await self._vector_store.query(query_vector, n_results=self._limit)
-            candidates = self._build_candidates(hits)
-            logger.info("向量召回 %d 个候选", len(candidates))
-            if not candidates:
-                logger.info("AI 召回无候选：description=%r", description)
-                return None
+        hits = await self._vector_store.query(query_vector, n_results=self._limit)
+        candidates = self._build_candidates(hits)
+        logger.info("向量召回 %d 个候选", len(candidates))
+        if not candidates:
+            logger.info("AI 召回无候选：description=%r", description)
+            return None
 
-            if self._rerank_provider is None:
-                return _candidate_to_result(candidates[0], source="embedding")
+        if self._rerank_provider is None:
+            return _candidate_to_result(candidates[0], source="embedding")
 
-            rank = await self._rerank(description, candidates)
-            if rank is None:
-                return _candidate_to_result(candidates[0], source="embedding")
+        rank = await self._rerank(description, candidates)
+        if rank is None:
+            return _candidate_to_result(candidates[0], source="embedding")
 
-            reranked = _candidate_to_result(candidates[rank - 1], source="rerank")
-            logger.info("rerank 后返回 %d 个结果", 1 if reranked else 0)
-            return reranked
+        reranked = _candidate_to_result(candidates[rank - 1], source="rerank")
+        logger.info("rerank 后返回 %d 个结果", 1 if reranked else 0)
+        return reranked
 
     async def _rerank(
         self, description: str, candidates: list[AIMatchCandidate]
     ) -> int | None:
         """调用 reranker 精排，失败或返回不可用时返回 None。"""
         try:
-            rank = await self._rerank_provider.rerank(description, candidates)  # type: ignore[union-attr]
+            rank = await self._rerank_provider.rerank(description, candidates)  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
         except Exception:
             logger.warning("AI 精排调用失败，回退 embedding Top 1", exc_info=True)
             return None

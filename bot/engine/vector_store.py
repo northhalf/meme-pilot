@@ -128,6 +128,7 @@ class VectorStore:
                 embeddings=[embedding],
             )
 
+    @timed(logger, "VectorStore upsert")
     async def upsert(self, entry_id: int, embedding: list[float]) -> None:
         """插入或覆盖一条向量（id 内部转 str）。
 
@@ -135,9 +136,8 @@ class VectorStore:
             entry_id: 索引 id。
             embedding: 与 entry_id 对应的向量。
         """
-        async with timed(logger, "VectorStore upsert"):
-            logger.debug("upsert 向量 id=%d, 维度=%d", entry_id, len(embedding))
-            await asyncio.to_thread(self._upsert_sync, entry_id, embedding)
+        logger.debug("upsert 向量 id=%d, 维度=%d", entry_id, len(embedding))
+        await asyncio.to_thread(self._upsert_sync, entry_id, embedding)
 
     def _remove_sync(self, entry_id: int) -> None:
         """同步删除一条向量（内部持 _lock，id 转 str，不存在静默）。
@@ -167,15 +167,15 @@ class VectorStore:
         with self._lock:
             self._require_collection().delete(ids=[str(i) for i in entry_ids])
 
+    @timed(logger, "VectorStore 批量删除")
     async def remove_many(self, entry_ids: list[int]) -> None:
         """批量删除向量，不存在的静默（chromadb delete 本身即静默）。
 
         Args:
             entry_ids: 要删除的索引 id 列表；为空时 no-op。
         """
-        async with timed(logger, "VectorStore 批量删除"):
-            logger.debug("删除向量: %s", entry_ids)
-            await asyncio.to_thread(self._remove_many_sync, entry_ids)
+        logger.debug("删除向量: %s", entry_ids)
+        await asyncio.to_thread(self._remove_many_sync, entry_ids)
 
     def _query_sync(
         self, query_embedding: list[float], n_results: int | None

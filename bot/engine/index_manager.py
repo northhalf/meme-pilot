@@ -859,6 +859,7 @@ class IndexManager:
         async with self._rwlock.read(timeout=self.read_timeout):
             return await asyncio.to_thread(self._metadata_store.get_entry, entry_id)
 
+    @timed(logger, "索引刷新")
     async def refresh(self) -> SyncResult:
         """独占执行索引同步（refresh）。
 
@@ -868,35 +869,34 @@ class IndexManager:
         Raises:
             RefreshInProgressError: 已有刷新任务在运行或 Bot 正在关闭。
         """
-        async with timed(logger, "索引刷新"):
-            logger.info("开始刷新索引...")
-            if self._shutting_down:
-                raise RefreshInProgressError("Bot 正在关闭")
-            if self._refresh_active:
-                raise RefreshInProgressError("已有刷新任务在运行")
+        logger.info("开始刷新索引...")
+        if self._shutting_down:
+            raise RefreshInProgressError("Bot 正在关闭")
+        if self._refresh_active:
+            raise RefreshInProgressError("已有刷新任务在运行")
 
-            self._refresh_active = True
-            self._refresh_task = asyncio.current_task()
-            try:
-                if not self._write_queue.empty():
-                    self._write_drained.clear()
-                    await self._write_drained.wait()
+        self._refresh_active = True
+        self._refresh_task = asyncio.current_task()
+        try:
+            if not self._write_queue.empty():
+                self._write_drained.clear()
+                await self._write_drained.wait()
 
-                async with self._rwlock.write():
-                    result = await self._run_sync_internal()
-                    logger.info(
-                        "索引刷新完成: 新增=%d, 删除=%d, 去重=%d, 无文字移走=%d, 失败=%d",
-                        result.added,
-                        result.deleted,
-                        result.deduped,
-                        result.no_text_moved,
-                        len(result.failed),
-                    )
-                    return result
-            finally:
-                self._refresh_active = False
-                if self._refresh_task is asyncio.current_task():
-                    self._refresh_task = None
+            async with self._rwlock.write():
+                result = await self._run_sync_internal()
+                logger.info(
+                    "索引刷新完成: 新增=%d, 删除=%d, 去重=%d, 无文字移走=%d, 失败=%d",
+                    result.added,
+                    result.deleted,
+                    result.deduped,
+                    result.no_text_moved,
+                    len(result.failed),
+                )
+                return result
+        finally:
+            self._refresh_active = False
+            if self._refresh_task is asyncio.current_task():
+                self._refresh_task = None
 
     def _ensure_write_worker(self) -> None:
         """确保 Write Worker task 已启动（延迟启动）。"""
@@ -1235,6 +1235,7 @@ class IndexManager:
             failed=failed,
         )
 
+    @timed(logger, "索引刷新-阶段0")
     async def _sync_phase0_consistency(self, failed: list[str]) -> None:
         """阶段0：对齐 sqlite ↔ chroma 的 id 集合。
 
@@ -1245,37 +1246,36 @@ class IndexManager:
         Args:
             failed: 失败文件名收集列表，阶段0 重 embed 失败的 image_path 追加至此。
         """
-        async with timed(logger, "索引刷新-阶段0"):
-            entries = await asyncio.to_thread(self._metadata_store.get_all_entries)
-            sqlite_ids = set(entries)
-            vs_count = self._vector_store.count()
-            chroma_ids = await self._get_chroma_ids()
+        entries = await asyncio.to_thread(self._metadata_store.get_all_entries)
+        sqlite_ids = set(entries)
+        vs_count = self._vector_store.count()
+        chroma_ids = await self._get_chroma_ids()
 
-            # chroma 损坏/为空、sqlite 有数据 → rebuild_all 全量重 embed
-            if vs_count == 0 and sqlite_ids:
-                await self._rebuild_all_from_sqlite(entries, failed)
-                return
+        # chroma 损坏/为空、sqlite 有数据 → rebuild_all 全量重 embed
+        if vs_count == 0 and sqlite_ids:
+            await self._rebuild_all_from_sqlite(entries, failed)
+            return
 
-            # sqlite 有、chroma 无 → 重 embed upsert
-            missing = sqlite_ids - chroma_ids
-            for idx, eid in enumerate(missing):
-                text = entries[eid].text
-                if not text:
-                    continue
-                try:
-                    vec = await self._embedding_provider.embed(text)  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
-                except Exception as exc:
-                    logger.error("阶段0 重 embed 失败: id=%s, error=%s", eid, exc)
-                    failed.append(entries[eid].image_path)
-                    continue
-                await self._vector_store.upsert(eid, vec)
-                logger.debug("已处理 %d/%d 张图片", idx + 1, len(missing))
+        # sqlite 有、chroma 无 → 重 embed upsert
+        missing = sqlite_ids - chroma_ids
+        for idx, eid in enumerate(missing):
+            text = entries[eid].text
+            if not text:
+                continue
+            try:
+                vec = await self._embedding_provider.embed(text)  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
+            except Exception as exc:
+                logger.error("阶段0 重 embed 失败: id=%s, error=%s", eid, exc)
+                failed.append(entries[eid].image_path)
+                continue
+            await self._vector_store.upsert(eid, vec)
+            logger.debug("已处理 %d/%d 张图片", idx + 1, len(missing))
 
-            # chroma 有、sqlite 无 → 删孤儿向量
-            orphans = chroma_ids - sqlite_ids
-            if orphans:
-                logger.info("阶段0 清理孤儿向量: %s", orphans)
-                await self._vector_store.remove_many(list(orphans))
+        # chroma 有、sqlite 无 → 删孤儿向量
+        orphans = chroma_ids - sqlite_ids
+        if orphans:
+            logger.info("阶段0 清理孤儿向量: %s", orphans)
+            await self._vector_store.remove_many(list(orphans))
 
     async def _get_chroma_ids(self) -> set[int]:
         """获取 chroma 当前所有 id（用 collection.get() 取全量，与 embedding 维度无关）。
@@ -1308,6 +1308,7 @@ class IndexManager:
             logger.debug("已处理 %d/%d 张图片", idx + 1, len(entries))
         await self._vector_store.rebuild_all(items)
 
+    @timed(logger, "索引刷新-阶段1")
     async def _sync_phase1_delete(self, existing: set[str]) -> int:
         """阶段1：删除 memes/ 已不存在的图片对应记录。先 sqlite 后 chroma。
 
@@ -1317,21 +1318,21 @@ class IndexManager:
         Returns:
             本次删除的图片数量。
         """
-        async with timed(logger, "索引刷新-阶段1"):
-            entries = await asyncio.to_thread(self._metadata_store.get_all_entries)
-            deleted = 0
-            for eid, entry in entries.items():
-                if entry.image_path not in existing:
-                    logger.info(
-                        "图片已删除，移除索引: id=%s, image_path=%s",
-                        eid,
-                        entry.image_path,
-                    )
-                    await asyncio.to_thread(self._metadata_store.remove, eid)
-                    await self._vector_store.remove(eid)
-                    deleted += 1
-            return deleted
+        entries = await asyncio.to_thread(self._metadata_store.get_all_entries)
+        deleted = 0
+        for eid, entry in entries.items():
+            if entry.image_path not in existing:
+                logger.info(
+                    "图片已删除，移除索引: id=%s, image_path=%s",
+                    eid,
+                    entry.image_path,
+                )
+                await asyncio.to_thread(self._metadata_store.remove, eid)
+                await self._vector_store.remove(eid)
+                deleted += 1
+        return deleted
 
+    @timed(logger, "索引刷新-阶段2")
     async def _sync_phase2_add(
         self, existing: set[str], failed: list[str]
     ) -> tuple[int, int, int]:
@@ -1344,95 +1345,90 @@ class IndexManager:
         Returns:
             (added, deduped, no_text_moved) 三元组：新增、去重删除、无文字移走数量。
         """
-        async with timed(logger, "索引刷新-阶段2"):
-            entries = await asyncio.to_thread(self._metadata_store.get_all_entries)
-            existing_paths = {e.image_path for e in entries.values()}
-            new_files = sorted(f for f in existing if f not in existing_paths)
-            if not new_files:
-                return (0, 0, 0)
+        entries = await asyncio.to_thread(self._metadata_store.get_all_entries)
+        existing_paths = {e.image_path for e in entries.values()}
+        new_files = sorted(f for f in existing if f not in existing_paths)
+        if not new_files:
+            return (0, 0, 0)
 
-            logger.info("开始并行处理 %d 张新增图片", len(new_files))
-            raw = await asyncio.gather(
-                *(self._process_image_pipeline(fn) for fn in new_files),
-                return_exceptions=True,
-            )
+        logger.info("开始并行处理 %d 张新增图片", len(new_files))
+        raw = await asyncio.gather(
+            *(self._process_image_pipeline(fn) for fn in new_files),
+            return_exceptions=True,
+        )
 
-            success: dict[str, tuple[str, list[float]]] = {}
-            for idx, (filename, result) in enumerate(zip(new_files, raw)):
-                if isinstance(result, BaseException):
-                    logger.error(
-                        "处理图片失败: filename=%s, error=%s", filename, result
-                    )
-                    failed.append(filename)
-                    continue
-                final_filename, text, embedding = result
-                # 并发同名去重：多张新增图转 webp 后可能产出同名 final_filename
-                # （_convert_image_to_webp 并行 resolve 的 TOCTOU 竞态兜底）。
-                # 基于 success dict 已有 key 去重，不依赖文件存在性。
-                if final_filename in success:
-                    stem = Path(final_filename).stem
-                    suffix = Path(final_filename).suffix
-                    old_path = self._memes_dir / final_filename
-                    n = 1
-                    while (
-                        f"{stem}_{n}{suffix}" in success
-                        or (self._memes_dir / f"{stem}_{n}{suffix}").exists()
-                    ):
-                        n += 1
-                    final_filename = f"{stem}_{n}{suffix}"
-                    new_path = self._memes_dir / final_filename
-                    if old_path.exists():
-                        shutil.move(str(old_path), str(new_path))
-                    logger.info("并发同名去重 rename: %s", final_filename)
-                success[final_filename] = (text, embedding)
-                logger.debug("已处理 %d/%d 张图片", idx + 1, len(new_files))
+        success: dict[str, tuple[str, list[float]]] = {}
+        for idx, (filename, result) in enumerate(zip(new_files, raw)):
+            if isinstance(result, BaseException):
+                logger.error("处理图片失败: filename=%s, error=%s", filename, result)
+                failed.append(filename)
+                continue
+            final_filename, text, embedding = result
+            # 并发同名去重：多张新增图转 webp 后可能产出同名 final_filename
+            # （_convert_image_to_webp 并行 resolve 的 TOCTOU 竞态兜底）。
+            # 基于 success dict 已有 key 去重，不依赖文件存在性。
+            if final_filename in success:
+                stem = Path(final_filename).stem
+                suffix = Path(final_filename).suffix
+                old_path = self._memes_dir / final_filename
+                n = 1
+                while (
+                    f"{stem}_{n}{suffix}" in success
+                    or (self._memes_dir / f"{stem}_{n}{suffix}").exists()
+                ):
+                    n += 1
+                final_filename = f"{stem}_{n}{suffix}"
+                new_path = self._memes_dir / final_filename
+                if old_path.exists():
+                    shutil.move(str(old_path), str(new_path))
+                logger.info("并发同名去重 rename: %s", final_filename)
+            success[final_filename] = (text, embedding)
+            logger.debug("已处理 %d/%d 张图片", idx + 1, len(new_files))
 
-            # winner_keys 初始 = 已有条目的 text 集合
-            winner_keys: set[str] = {e.text for e in entries.values() if e.text}
+        # winner_keys 初始 = 已有条目的 text 集合
+        winner_keys: set[str] = {e.text for e in entries.values() if e.text}
 
-            added = deduped = no_text_moved = 0
-            for filename in sorted(success):
-                text, embedding = success[filename]
-                if not text:
-                    await asyncio.to_thread(self._move_to_no_text, filename)
-                    no_text_moved += 1
-                    continue
-                if text in winner_keys:
-                    try:
-                        archived_path = await asyncio.to_thread(
-                            self._move_to_replaced, filename
-                        )
-                    except Exception as exc:
-                        logger.error(
-                            "去重新图归档失败，跳过该文件: filename=%s, error=%s",
-                            filename,
-                            exc,
-                        )
-                        failed.append(filename)
-                        continue
-                    logger.info(
-                        "新图与已有索引去重，已归档新图: filename=%s, archived=%s",
-                        filename,
-                        archived_path,
-                    )
-                    deduped += 1
-                    continue
-                # 正常新增：先 sqlite 后 chroma；upsert 失败回滚 sqlite
-                eid = await asyncio.to_thread(self._metadata_store.add, filename, text)
+        added = deduped = no_text_moved = 0
+        for filename in sorted(success):
+            text, embedding = success[filename]
+            if not text:
+                await asyncio.to_thread(self._move_to_no_text, filename)
+                no_text_moved += 1
+                continue
+            if text in winner_keys:
                 try:
-                    await self._vector_store.upsert(eid, embedding)
+                    archived_path = await asyncio.to_thread(
+                        self._move_to_replaced, filename
+                    )
                 except Exception as exc:
                     logger.error(
-                        "新增 upsert 失败，回滚 sqlite: id=%s, error=%s", eid, exc
+                        "去重新图归档失败，跳过该文件: filename=%s, error=%s",
+                        filename,
+                        exc,
                     )
-                    await asyncio.to_thread(self._metadata_store.remove, eid)
                     failed.append(filename)
                     continue
-                winner_keys.add(text)
-                added += 1
-                logger.info("新增图片已加入索引: id=%s, filename=%s", eid, filename)
+                logger.info(
+                    "新图与已有索引去重，已归档新图: filename=%s, archived=%s",
+                    filename,
+                    archived_path,
+                )
+                deduped += 1
+                continue
+            # 正常新增：先 sqlite 后 chroma；upsert 失败回滚 sqlite
+            eid = await asyncio.to_thread(self._metadata_store.add, filename, text)
+            try:
+                await self._vector_store.upsert(eid, embedding)
+            except Exception as exc:
+                logger.error("新增 upsert 失败，回滚 sqlite: id=%s, error=%s", eid, exc)
+                await asyncio.to_thread(self._metadata_store.remove, eid)
+                failed.append(filename)
+                continue
+            winner_keys.add(text)
+            added += 1
+            logger.info("新增图片已加入索引: id=%s, filename=%s", eid, filename)
 
-            return (added, deduped, no_text_moved)
+        return (added, deduped, no_text_moved)
 
     async def _write_entry(
         self,
@@ -1550,19 +1546,19 @@ class IndexManager:
     # 管道与工具
     # ------------------------------------------------------------------
 
+    @timed(logger, "扫描 memes/ 目录")
     def _scan_meme_files(self) -> set[str]:
         """扫描 memes/，返回受支持扩展名的文件名集合。
 
         Returns:
             memes/ 下所有受支持图片扩展名的文件名集合（仅文件名，不含路径）。
         """
-        with timed(logger, "扫描 memes/ 目录"):
-            return {
-                entry.name
-                for entry in os.scandir(self._memes_dir)
-                if entry.is_file()
-                and os.path.splitext(entry.name)[1].lower() in self.SUPPORTED_EXTENSIONS
-            }
+        return {
+            entry.name
+            for entry in os.scandir(self._memes_dir)
+            if entry.is_file()
+            and os.path.splitext(entry.name)[1].lower() in self.SUPPORTED_EXTENSIONS
+        }
 
     async def _process_image_pipeline(
         self, filename: str

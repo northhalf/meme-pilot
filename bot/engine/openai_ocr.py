@@ -15,6 +15,7 @@ import openai
 from openai import AsyncOpenAI
 
 from bot.log_context import timed
+
 from .retry_config import api_retry
 
 logger = logging.getLogger(__name__)
@@ -109,6 +110,7 @@ class OpenAIOcrService:
             openai.InternalServerError,
         )
     )
+    @timed(logger, "OpenAI OCR")
     async def ocr(self, image_path: str) -> str:
         """对图片执行 OCR 识别。
 
@@ -126,53 +128,52 @@ class OpenAIOcrService:
             ValueError: 不支持的图片格式（不在 MIME_MAP 中）。
             RuntimeError: API 调用失败或返回为空。
         """
-        async with timed(logger, "OpenAI OCR"):
-            path = Path(image_path)
-            if not path.exists():
-                raise FileNotFoundError(f"图片文件不存在: {image_path}")
+        path = Path(image_path)
+        if not path.exists():
+            raise FileNotFoundError(f"图片文件不存在: {image_path}")
 
-            suffix = path.suffix.lower()
-            mime_type = self.MIME_MAP.get(suffix)
-            if mime_type is None:
-                raise ValueError(f"不支持的图片格式: {suffix}")
+        suffix = path.suffix.lower()
+        mime_type = self.MIME_MAP.get(suffix)
+        if mime_type is None:
+            raise ValueError(f"不支持的图片格式: {suffix}")
 
-            # 读取并编码图片
-            image_data = path.read_bytes()
-            base64_data = base64.b64encode(image_data).decode("utf-8")
-            data_url = f"data:{mime_type};base64,{base64_data}"
+        # 读取并编码图片
+        image_data = path.read_bytes()
+        base64_data = base64.b64encode(image_data).decode("utf-8")
+        data_url = f"data:{mime_type};base64,{base64_data}"
 
-            # 调用 vision API
-            async with self._semaphore:
-                logger.debug("调用 OCR API: %s", path.name)
-                try:
-                    response = await self._client.chat.completions.create(
-                        model=self._model,
-                        messages=[
-                            {
-                                "role": "user",
-                                "content": [
-                                    {
-                                        "type": "image_url",
-                                        "image_url": {"url": data_url},
-                                    },
-                                    {
-                                        "type": "text",
-                                        "text": self.OCR_PROMPT,
-                                    },
-                                ],
-                            }
-                        ],
-                    )
-                except openai.APIError:
-                    # 让 tenacity 重试可重试的 OpenAI API 异常
-                    raise
-                except Exception as exc:
-                    raise RuntimeError(f"OCR API 调用失败: {exc}") from exc
+        # 调用 vision API
+        async with self._semaphore:
+            logger.debug("调用 OCR API: %s", path.name)
+            try:
+                response = await self._client.chat.completions.create(
+                    model=self._model,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "image_url",
+                                    "image_url": {"url": data_url},
+                                },
+                                {
+                                    "type": "text",
+                                    "text": self.OCR_PROMPT,
+                                },
+                            ],
+                        }
+                    ],
+                )
+            except openai.APIError:
+                # 让 tenacity 重试可重试的 OpenAI API 异常
+                raise
+            except Exception as exc:
+                raise RuntimeError(f"OCR API 调用失败: {exc}") from exc
 
-                raw = response.choices[0].message.content or ""
-                text = "".join(_clean_ocr_result(raw).split())
-                logger.debug("OCR 完成: %s → %d 字符", path.name, len(text))
-                return text
+            raw = response.choices[0].message.content or ""
+            text = "".join(_clean_ocr_result(raw).split())
+            logger.debug("OCR 完成: %s → %d 字符", path.name, len(text))
+            return text
 
     async def close(self) -> None:
         """释放 AsyncOpenAI HTTP 客户端会话。"""

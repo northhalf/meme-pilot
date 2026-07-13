@@ -46,6 +46,7 @@ class RapidOcrService:
         self._semaphore = asyncio.Semaphore(c)
         self._engine = RapidOCR(params={"Global.text_score": text_score})
 
+    @timed(logger, "RapidOCR")
     async def ocr(self, image_path: str) -> str:
         """对图片执行 OCR 识别。
 
@@ -62,52 +63,49 @@ class RapidOcrService:
             FileNotFoundError: 图片文件不存在。
             RuntimeError: 推理异常。
         """
-        async with timed(logger, "RapidOCR"):
-            if not os.path.exists(image_path):
-                raise FileNotFoundError(f"图片文件不存在: {image_path}")
+        if not os.path.exists(image_path):
+            raise FileNotFoundError(f"图片文件不存在: {image_path}")
 
-            async with self._semaphore:
-                logger.debug("调用 RapidOCR: %s", image_path)
-                try:
-                    result = await asyncio.to_thread(
-                        self._engine,
-                        image_path,
-                        use_det=True,
-                        use_cls=False,
-                        use_rec=True,
-                    )
-                except Exception as exc:
-                    raise RuntimeError(f"RapidOCR 推理失败: {exc}") from exc
-
-                if result is None:
-                    return ""
-
-                txts = getattr(result, "txts", None)
-                scores = getattr(result, "scores", None)
-                if not isinstance(txts, (tuple, list)):
-                    logger.debug("RapidOCR 返回结果无识别文本: %s", image_path)
-                    return ""
-
-                scores_seq: tuple[object, ...] | list[object] | None = (
-                    scores if isinstance(scores, (tuple, list)) else None
+        async with self._semaphore:
+            logger.debug("调用 RapidOCR: %s", image_path)
+            try:
+                result = await asyncio.to_thread(
+                    self._engine,
+                    image_path,
+                    use_det=True,
+                    use_cls=False,
+                    use_rec=True,
                 )
+            except Exception as exc:
+                raise RuntimeError(f"RapidOCR 推理失败: {exc}") from exc
 
-                lines: list[str] = []
-                for i, text in enumerate(txts):
-                    if not text:
+            if result is None:
+                return ""
+
+            txts = getattr(result, "txts", None)
+            scores = getattr(result, "scores", None)
+            if not isinstance(txts, (tuple, list)):
+                logger.debug("RapidOCR 返回结果无识别文本: %s", image_path)
+                return ""
+
+            scores_seq: tuple[object, ...] | list[object] | None = (
+                scores if isinstance(scores, (tuple, list)) else None
+            )
+
+            lines: list[str] = []
+            for i, text in enumerate(txts):
+                if not text:
+                    continue
+                if scores_seq is not None and i < len(scores_seq):
+                    score = scores_seq[i]
+                    if isinstance(score, (int, float)) and score < self._text_score:
+                        logger.debug("过滤低置信度文本: text=%s, score=%s", text, score)
                         continue
-                    if scores_seq is not None and i < len(scores_seq):
-                        score = scores_seq[i]
-                        if isinstance(score, (int, float)) and score < self._text_score:
-                            logger.debug(
-                                "过滤低置信度文本: text=%s, score=%s", text, score
-                            )
-                            continue
-                    lines.append(str(text))
+                lines.append(str(text))
 
-                full_text = "".join(" ".join(lines).split())
-                logger.debug("RapidOCR 完成: %s -> %s", image_path, full_text)
-                return full_text
+            full_text = "".join(" ".join(lines).split())
+            logger.debug("RapidOCR 完成: %s -> %s", image_path, full_text)
+            return full_text
 
     async def close(self) -> None:
         """本地引擎无需释放网络会话。"""

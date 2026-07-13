@@ -3,6 +3,7 @@
 import logging
 
 from bot.log_context import timed
+
 from .protocols import MetadataStoreProvider, VectorQueryProvider
 from .types import SearchResult
 
@@ -23,6 +24,7 @@ class SemanticSearcher:
         self.metadata_store = metadata_store
         self.vector_store = vector_store
 
+    @timed(logger, "语义搜索")
     async def search_semantic(
         self,
         query_vector: list[float],
@@ -37,27 +39,26 @@ class SemanticSearcher:
         Returns:
             与向量最相似的 SearchResult 列表；metadata 缺失的命中会被跳过。
         """
-        async with timed(logger, "语义搜索"):
-            logger.debug("语义搜索入口: limit=%s", limit)
-            hits = await self.vector_store.query(query_vector, n_results=limit)
-            entries = self.metadata_store.get_all_entries()
-            results: list[SearchResult] = []
-            for hit in hits:
-                entry = entries.get(hit.entry_id)
-                if entry is None:
-                    logger.warning(
-                        "召回 hit 的 metadata 缺失，跳过：entry_id=%s", hit.entry_id
-                    )
-                    continue
-                results.append(
-                    SearchResult(
-                        entry_id=entry.id,
-                        image_path=entry.image_path,
-                        text=entry.text,
-                        similarity=hit.similarity,
-                        speaker=entry.speaker,
-                        tags=entry.tags,
-                    )
+        logger.debug("语义搜索入口: limit=%s", limit)
+        hits = await self.vector_store.query(query_vector, n_results=limit)
+        entries = self.metadata_store.get_all_entries()
+        results: list[SearchResult] = []
+        for hit in hits:
+            entry = entries.get(hit.entry_id)
+            if entry is None:
+                logger.warning(
+                    "召回 hit 的 metadata 缺失，跳过：entry_id=%s", hit.entry_id
                 )
-            logger.info("语义搜索返回 %d 个结果", len(results))
-            return results
+                continue
+            results.append(
+                SearchResult(
+                    entry_id=entry.id,
+                    image_path=entry.image_path,
+                    text=entry.text,
+                    similarity=hit.similarity,
+                    speaker=entry.speaker,
+                    tags=entry.tags,
+                )
+            )
+        logger.info("语义搜索返回 %d 个结果", len(results))
+        return results

@@ -10,6 +10,7 @@ import random
 from itertools import groupby
 
 from bot.log_context import timed
+
 from .keyword_searcher import KeywordSearcher
 from .metadata_store import MemeEntry
 from .protocols import MetadataStoreProvider
@@ -67,6 +68,7 @@ class CombinedSearcher:
             result[eid] = entry
         return result
 
+    @timed(logger, "组合搜索")
     def search(
         self,
         keyword: str | None,
@@ -86,57 +88,54 @@ class CombinedSearcher:
         Returns:
             有关键词时按相似度降序；无关键词时按 entry_id 升序。无匹配返回空列表。
         """
-        with timed(logger, "组合搜索"):
-            tags = tags or []
-            logger.debug(
-                "组合检索入口: keyword=%r, speakers=%r, tags=%r",
-                keyword,
-                speakers,
-                tags,
-            )
-            entries = self._metadata_store.get_all_entries()
-            if not entries:
-                logger.debug("索引为空，返回空结果")
-                return []
+        tags = tags or []
+        logger.debug(
+            "组合检索入口: keyword=%r, speakers=%r, tags=%r",
+            keyword,
+            speakers,
+            tags,
+        )
+        entries = self._metadata_store.get_all_entries()
+        if not entries:
+            logger.debug("索引为空，返回空结果")
+            return []
 
-            filtered = self._filter_entries(entries, speakers, tags)
-            if not filtered:
-                logger.info(
-                    "组合检索过滤后子集为空: speakers=%r, tags=%r", speakers, tags
-                )
-                return []
+        filtered = self._filter_entries(entries, speakers, tags)
+        if not filtered:
+            logger.info("组合检索过滤后子集为空: speakers=%r, tags=%r", speakers, tags)
+            return []
 
-            if keyword:
-                results = self._keyword_searcher.search_in(filtered, keyword)
-                results = _shuffle_within_similarity_groups(results)
-                logger.info(
-                    "组合检索（含关键词）: keyword=%r, speakers=%r, tags=%r, 命中=%d",
-                    keyword,
-                    speakers,
-                    tags,
-                    len(results),
-                )
-                return results
-
-            results = [
-                SearchResult(
-                    entry_id=entry.id,
-                    image_path=entry.image_path,
-                    text=entry.text,
-                    similarity=0.0,
-                    speaker=entry.speaker,
-                    tags=entry.tags,
-                )
-                for entry in filtered.values()
-            ]
-            random.shuffle(results)
+        if keyword:
+            results = self._keyword_searcher.search_in(filtered, keyword)
+            results = _shuffle_within_similarity_groups(results)
             logger.info(
-                "组合检索（纯过滤）: speakers=%r, tags=%r, 命中=%d",
+                "组合检索（含关键词）: keyword=%r, speakers=%r, tags=%r, 命中=%d",
+                keyword,
                 speakers,
                 tags,
                 len(results),
             )
             return results
+
+        results = [
+            SearchResult(
+                entry_id=entry.id,
+                image_path=entry.image_path,
+                text=entry.text,
+                similarity=0.0,
+                speaker=entry.speaker,
+                tags=entry.tags,
+            )
+            for entry in filtered.values()
+        ]
+        random.shuffle(results)
+        logger.info(
+            "组合检索（纯过滤）: speakers=%r, tags=%r, 命中=%d",
+            speakers,
+            tags,
+            len(results),
+        )
+        return results
 
 
 def _shuffle_within_similarity_groups(
