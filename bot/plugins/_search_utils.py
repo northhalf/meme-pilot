@@ -1,7 +1,7 @@
 """搜索核心逻辑模块。
 
 提供 execute_search、resolve_selection、present_candidates 和 dispatch_search_results，
-供 meme_rand、meme_sim、meme_plain_text 等插件复用。
+供 rand、sim、plain_text 等插件复用。
 以下划线开头避免 NoneBot2 自动加载为插件。
 """
 
@@ -391,7 +391,7 @@ async def handle_got_selection(
 ) -> None:
     """处理 got 选择编号的共享逻辑（含分页翻页）。
 
-    供 meme_sim.py、meme_plain_text.py 的 got("selection") 包装器调用。
+    供 sim.py、plain_text.py 的 got("selection") 包装器调用。
 
     Args:
         bot: OneBot V11 Bot 实例。

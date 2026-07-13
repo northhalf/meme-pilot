@@ -32,8 +32,8 @@ with (
     patch("nonebot.on_command", return_value=_mock_cmd),
     patch("nonebot.params.Arg", return_value="IMAGE_ARG_SENTINEL"),
 ):
-    from bot.plugins import meme_add
-    from bot.plugins.meme_add import (
+    from bot.plugins import add
+    from bot.plugins.add import (
         _get_extension,
         got_image,
         handle_add,
@@ -106,9 +106,9 @@ class TestParseAddArgs:
     """/add 参数解析测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "get_index_manager")
-    @patch.object(meme_add, "is_authorized", return_value=True)
-    @patch.object(meme_add, "session_manager")
+    @patch.object(add, "get_index_manager")
+    @patch.object(add, "is_authorized", return_value=True)
+    @patch.object(add, "session_manager")
     async def test_no_args(self, mock_sm, mock_auth, mock_get_im) -> None:
         mock_sm.activate_chat.return_value = True
         mock_get_im.return_value = _make_index_manager()
@@ -120,9 +120,9 @@ class TestParseAddArgs:
         assert matcher.state["tags"] == []
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "get_index_manager")
-    @patch.object(meme_add, "is_authorized", return_value=True)
-    @patch.object(meme_add, "session_manager")
+    @patch.object(add, "get_index_manager")
+    @patch.object(add, "is_authorized", return_value=True)
+    @patch.object(add, "session_manager")
     async def test_speaker_only(self, mock_sm, mock_auth, mock_get_im) -> None:
         mock_sm.activate_chat.return_value = True
         mock_get_im.return_value = _make_index_manager()
@@ -137,9 +137,9 @@ class TestParseAddArgs:
         assert matcher.state["tags"] == []
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "get_index_manager")
-    @patch.object(meme_add, "is_authorized", return_value=True)
-    @patch.object(meme_add, "session_manager")
+    @patch.object(add, "get_index_manager")
+    @patch.object(add, "is_authorized", return_value=True)
+    @patch.object(add, "session_manager")
     async def test_speaker_and_tags(self, mock_sm, mock_auth, mock_get_im) -> None:
         mock_sm.activate_chat.return_value = True
         mock_get_im.return_value = _make_index_manager()
@@ -154,9 +154,9 @@ class TestParseAddArgs:
         assert matcher.state["tags"] == ["吐槽", "加班"]
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "get_index_manager")
-    @patch.object(meme_add, "is_authorized", return_value=True)
-    @patch.object(meme_add, "session_manager")
+    @patch.object(add, "get_index_manager")
+    @patch.object(add, "is_authorized", return_value=True)
+    @patch.object(add, "session_manager")
     async def test_short_command_extracts_speaker_and_tags(
         self, mock_sm, mock_auth, mock_get_im
     ) -> None:
@@ -223,22 +223,22 @@ class TestFormatOcrText:
 
     def test_short_text_returned_as_is(self) -> None:
         """短于等于 50 字的文本原样返回。"""
-        assert meme_add._format_ocr_text("心好累啊") == "心好累啊"
+        assert add._format_ocr_text("心好累啊") == "心好累啊"
 
     def test_exactly_50_chars(self) -> None:
         """刚好 50 字不截断。"""
         text = "a" * 50
-        assert meme_add._format_ocr_text(text) == text
+        assert add._format_ocr_text(text) == text
 
     def test_long_text_truncated(self) -> None:
         """超过 50 字截断并标注总长度。"""
         text = "a" * 60
         expected = "a" * 50 + "...（总文本长度60）"
-        assert meme_add._format_ocr_text(text) == expected
+        assert add._format_ocr_text(text) == expected
 
     def test_empty_string(self) -> None:
         """空字符串不截断。"""
-        assert meme_add._format_ocr_text("") == ""
+        assert add._format_ocr_text("") == ""
 
 
 # ===========================================================================
@@ -267,7 +267,7 @@ class TestDownloadImageRetry:
         mock_client.get = AsyncMock(side_effect=[bad_response, good_response])
 
         with patch("httpx.AsyncClient", return_value=mock_client):
-            content, response = await meme_add._download_image(
+            content, response = await add._download_image(
                 "https://img.example.com/a.jpg"
             )
 
@@ -291,7 +291,7 @@ class TestDownloadImageRetry:
         )
 
         with patch("httpx.AsyncClient", return_value=mock_client):
-            content, response = await meme_add._download_image(
+            content, response = await add._download_image(
                 "https://img.example.com/a.jpg"
             )
 
@@ -324,7 +324,7 @@ class TestDownloadImageRetry:
         )
 
         with patch("httpx.AsyncClient", return_value=mock_client):
-            content, response = await meme_add._download_image(
+            content, response = await add._download_image(
                 "https://img.example.com/a.jpg"
             )
 
@@ -345,8 +345,8 @@ class TestDownloadImageRetry:
         mock_client.get = AsyncMock(return_value=bad_response)
 
         with patch("httpx.AsyncClient", return_value=mock_client):
-            with pytest.raises(meme_add.DownloadServerError):
-                await meme_add._download_image(
+            with pytest.raises(add.DownloadServerError):
+                await add._download_image(
                     "https://img.example.com/a.jpg"
                 )
 
@@ -372,7 +372,7 @@ class TestDownloadImageRetry:
 
         with patch("httpx.AsyncClient", return_value=mock_client):
             with pytest.raises(HTTPStatusError):
-                await meme_add._download_image(
+                await add._download_image(
                     "https://img.example.com/a.jpg"
                 )
 
@@ -388,7 +388,7 @@ class TestHandleAdd:
     """handle_add 处理函数测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "is_authorized", return_value=False)
+    @patch.object(add, "is_authorized", return_value=False)
     async def test_unauthorized_rejected(
         self,
         mock_auth: MagicMock,
@@ -403,8 +403,8 @@ class TestHandleAdd:
         matcher.send.assert_not_awaited()
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "get_index_manager")
-    @patch.object(meme_add, "is_authorized", return_value=True)
+    @patch.object(add, "get_index_manager")
+    @patch.object(add, "is_authorized", return_value=True)
     async def test_group_chat_rejected(
         self, mock_auth: MagicMock, mock_get_im: MagicMock
     ) -> None:
@@ -426,9 +426,9 @@ class TestHandleAdd:
         mock_get_im.assert_not_called()
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "get_index_manager")
-    @patch.object(meme_add, "is_authorized", return_value=True)
-    @patch.object(meme_add, "session_manager")
+    @patch.object(add, "get_index_manager")
+    @patch.object(add, "is_authorized", return_value=True)
+    @patch.object(add, "session_manager")
     async def test_authorized_proceeds(
         self,
         mock_sm: MagicMock,
@@ -447,8 +447,8 @@ class TestHandleAdd:
         mock_sm.activate_chat.assert_called_once_with(_make_scope("111"), "add", matcher)
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "is_authorized", return_value=True)
-    @patch.object(meme_add, "session_manager")
+    @patch.object(add, "is_authorized", return_value=True)
+    @patch.object(add, "session_manager")
     async def test_existing_session_rejected(
         self,
         mock_sm: MagicMock,
@@ -476,8 +476,8 @@ class TestGotImage:
     """got_image 处理函数测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "session_manager")
-    @patch.object(meme_add, "got_intercept_bypass", return_value=True)
+    @patch.object(add, "session_manager")
+    @patch.object(add, "got_intercept_bypass", return_value=True)
     async def test_cancel_intercepted(
         self,
         mock_bypass: MagicMock,
@@ -491,8 +491,8 @@ class TestGotImage:
         mock_bypass.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "session_manager")
-    @patch.object(meme_add, "got_intercept_bypass", return_value=True)
+    @patch.object(add, "session_manager")
+    @patch.object(add, "got_intercept_bypass", return_value=True)
     async def test_help_intercepted(
         self,
         mock_bypass: MagicMock,
@@ -506,9 +506,9 @@ class TestGotImage:
         mock_sm.deactivate_chat.assert_not_called()
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "session_manager")
-    @patch.object(meme_add, "got_intercept_bypass", return_value=False)
-    @patch.object(meme_add, "extract_image_urls", return_value=[])
+    @patch.object(add, "session_manager")
+    @patch.object(add, "got_intercept_bypass", return_value=False)
+    @patch.object(add, "extract_image_urls", return_value=[])
     async def test_no_image_rejects(
         self,
         mock_extract: MagicMock,
@@ -526,10 +526,10 @@ class TestGotImage:
         mock_sm.deactivate_chat.assert_not_called()  # reject 后不反激活
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "session_manager")
-    @patch.object(meme_add, "got_intercept_bypass", return_value=False)
-    @patch.object(meme_add, "get_index_manager", side_effect=RuntimeError("未初始化"))
-    @patch.object(meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
+    @patch.object(add, "session_manager")
+    @patch.object(add, "got_intercept_bypass", return_value=False)
+    @patch.object(add, "get_index_manager", side_effect=RuntimeError("未初始化"))
+    @patch.object(add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
     async def test_get_index_manager_error(
         self,
         mock_extract: MagicMock,
@@ -547,14 +547,14 @@ class TestGotImage:
         mock_sm.deactivate_chat.assert_called_once_with(_make_scope("111"))
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "session_manager")
-    @patch.object(meme_add, "got_intercept_bypass", return_value=False)
-    @patch.object(meme_add, "resolve_unique_filename")
-    @patch.object(meme_add, "_auto_filename", return_value="a")
-    @patch.object(meme_add, "_get_extension", return_value=".jpg")
-    @patch.object(meme_add, "_download_image")
-    @patch.object(meme_add, "get_index_manager")
-    @patch.object(meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
+    @patch.object(add, "session_manager")
+    @patch.object(add, "got_intercept_bypass", return_value=False)
+    @patch.object(add, "resolve_unique_filename")
+    @patch.object(add, "_auto_filename", return_value="a")
+    @patch.object(add, "_get_extension", return_value=".jpg")
+    @patch.object(add, "_download_image")
+    @patch.object(add, "get_index_manager")
+    @patch.object(add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
     async def test_success(
         self,
         mock_extract: MagicMock,
@@ -592,14 +592,14 @@ class TestGotImage:
         assert "id：1" in extract_message_text(msg)
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "session_manager")
-    @patch.object(meme_add, "got_intercept_bypass", return_value=False)
-    @patch.object(meme_add, "resolve_unique_filename")
-    @patch.object(meme_add, "_auto_filename", return_value="meme")
-    @patch.object(meme_add, "_get_extension", return_value=".jpg")
-    @patch.object(meme_add, "_download_image")
-    @patch.object(meme_add, "get_index_manager")
-    @patch.object(meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
+    @patch.object(add, "session_manager")
+    @patch.object(add, "got_intercept_bypass", return_value=False)
+    @patch.object(add, "resolve_unique_filename")
+    @patch.object(add, "_auto_filename", return_value="meme")
+    @patch.object(add, "_get_extension", return_value=".jpg")
+    @patch.object(add, "_download_image")
+    @patch.object(add, "get_index_manager")
+    @patch.object(add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
     async def test_success_with_speaker_and_tags(
         self,
         mock_extract: MagicMock,
@@ -637,11 +637,11 @@ class TestGotImage:
         assert "id：1" in extract_message_text(msg)
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "session_manager")
-    @patch.object(meme_add, "got_intercept_bypass", return_value=False)
-    @patch.object(meme_add, "_download_image", side_effect=RuntimeError("下载失败"))
-    @patch.object(meme_add, "get_index_manager")
-    @patch.object(meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
+    @patch.object(add, "session_manager")
+    @patch.object(add, "got_intercept_bypass", return_value=False)
+    @patch.object(add, "_download_image", side_effect=RuntimeError("下载失败"))
+    @patch.object(add, "get_index_manager")
+    @patch.object(add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
     async def test_download_error_replies(
         self,
         mock_extract: MagicMock,
@@ -662,14 +662,14 @@ class TestGotImage:
         mock_sm.deactivate_chat.assert_called_once_with(_make_scope("12345"))
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "session_manager")
-    @patch.object(meme_add, "got_intercept_bypass", return_value=False)
-    @patch.object(meme_add, "resolve_unique_filename")
-    @patch.object(meme_add, "_auto_filename", return_value="a")
-    @patch.object(meme_add, "_get_extension", return_value=".jpg")
-    @patch.object(meme_add, "_download_image")
-    @patch.object(meme_add, "get_index_manager")
-    @patch.object(meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
+    @patch.object(add, "session_manager")
+    @patch.object(add, "got_intercept_bypass", return_value=False)
+    @patch.object(add, "resolve_unique_filename")
+    @patch.object(add, "_auto_filename", return_value="a")
+    @patch.object(add, "_get_extension", return_value=".jpg")
+    @patch.object(add, "_download_image")
+    @patch.object(add, "get_index_manager")
+    @patch.object(add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
     async def test_unsupported_extension_replies(
         self,
         mock_extract: MagicMock,
@@ -696,14 +696,14 @@ class TestGotImage:
         mock_sm.deactivate_chat.assert_called_once_with(_make_scope("12345"))
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "session_manager")
-    @patch.object(meme_add, "got_intercept_bypass", return_value=False)
-    @patch.object(meme_add, "resolve_unique_filename")
-    @patch.object(meme_add, "_auto_filename", return_value="a")
-    @patch.object(meme_add, "_get_extension", return_value=".jpg")
-    @patch.object(meme_add, "_download_image")
-    @patch.object(meme_add, "get_index_manager")
-    @patch.object(meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
+    @patch.object(add, "session_manager")
+    @patch.object(add, "got_intercept_bypass", return_value=False)
+    @patch.object(add, "resolve_unique_filename")
+    @patch.object(add, "_auto_filename", return_value="a")
+    @patch.object(add, "_get_extension", return_value=".jpg")
+    @patch.object(add, "_download_image")
+    @patch.object(add, "get_index_manager")
+    @patch.object(add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
     async def test_compression_error_replies(
         self,
         mock_extract: MagicMock,
@@ -737,14 +737,14 @@ class TestGotImage:
         mock_sm.deactivate_chat.assert_called_once_with(_make_scope("12345"))
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "session_manager")
-    @patch.object(meme_add, "got_intercept_bypass", return_value=False)
-    @patch.object(meme_add, "resolve_unique_filename")
-    @patch.object(meme_add, "_auto_filename", return_value="a")
-    @patch.object(meme_add, "_get_extension", return_value=".jpg")
-    @patch.object(meme_add, "_download_image")
-    @patch.object(meme_add, "get_index_manager")
-    @patch.object(meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
+    @patch.object(add, "session_manager")
+    @patch.object(add, "got_intercept_bypass", return_value=False)
+    @patch.object(add, "resolve_unique_filename")
+    @patch.object(add, "_auto_filename", return_value="a")
+    @patch.object(add, "_get_extension", return_value=".jpg")
+    @patch.object(add, "_download_image")
+    @patch.object(add, "get_index_manager")
+    @patch.object(add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
     async def test_ocr_error_replies(
         self,
         mock_extract: MagicMock,
@@ -778,14 +778,14 @@ class TestGotImage:
         mock_sm.deactivate_chat.assert_called_once_with(_make_scope("12345"))
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "session_manager")
-    @patch.object(meme_add, "got_intercept_bypass", return_value=False)
-    @patch.object(meme_add, "resolve_unique_filename")
-    @patch.object(meme_add, "_auto_filename", return_value="a")
-    @patch.object(meme_add, "_get_extension", return_value=".jpg")
-    @patch.object(meme_add, "_download_image")
-    @patch.object(meme_add, "get_index_manager")
-    @patch.object(meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
+    @patch.object(add, "session_manager")
+    @patch.object(add, "got_intercept_bypass", return_value=False)
+    @patch.object(add, "resolve_unique_filename")
+    @patch.object(add, "_auto_filename", return_value="a")
+    @patch.object(add, "_get_extension", return_value=".jpg")
+    @patch.object(add, "_download_image")
+    @patch.object(add, "get_index_manager")
+    @patch.object(add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
     async def test_embedding_error_replies(
         self,
         mock_extract: MagicMock,
@@ -819,14 +819,14 @@ class TestGotImage:
         mock_sm.deactivate_chat.assert_called_once_with(_make_scope("12345"))
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "session_manager")
-    @patch.object(meme_add, "got_intercept_bypass", return_value=False)
-    @patch.object(meme_add, "resolve_unique_filename")
-    @patch.object(meme_add, "_auto_filename", return_value="a")
-    @patch.object(meme_add, "_get_extension", return_value=".jpg")
-    @patch.object(meme_add, "_download_image")
-    @patch.object(meme_add, "get_index_manager")
-    @patch.object(meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
+    @patch.object(add, "session_manager")
+    @patch.object(add, "got_intercept_bypass", return_value=False)
+    @patch.object(add, "resolve_unique_filename")
+    @patch.object(add, "_auto_filename", return_value="a")
+    @patch.object(add, "_get_extension", return_value=".jpg")
+    @patch.object(add, "_download_image")
+    @patch.object(add, "get_index_manager")
+    @patch.object(add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
     async def test_generic_error_replies(
         self,
         mock_extract: MagicMock,
@@ -859,14 +859,14 @@ class TestGotImage:
         mock_sm.deactivate_chat.assert_called_once_with(_make_scope("12345"))
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "session_manager")
-    @patch.object(meme_add, "got_intercept_bypass", return_value=False)
-    @patch.object(meme_add, "resolve_unique_filename")
-    @patch.object(meme_add, "_auto_filename", return_value="a")
-    @patch.object(meme_add, "_get_extension", return_value=".jpg")
-    @patch.object(meme_add, "_download_image")
-    @patch.object(meme_add, "get_index_manager")
-    @patch.object(meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
+    @patch.object(add, "session_manager")
+    @patch.object(add, "got_intercept_bypass", return_value=False)
+    @patch.object(add, "resolve_unique_filename")
+    @patch.object(add, "_auto_filename", return_value="a")
+    @patch.object(add, "_get_extension", return_value=".jpg")
+    @patch.object(add, "_download_image")
+    @patch.object(add, "get_index_manager")
+    @patch.object(add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
     async def test_lock_contention_in_got(
         self,
         mock_extract: MagicMock,
@@ -898,14 +898,14 @@ class TestGotImage:
         mock_sm.deactivate_chat.assert_called_once_with(_make_scope("12345"))
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "session_manager")
-    @patch.object(meme_add, "got_intercept_bypass", return_value=False)
-    @patch.object(meme_add, "resolve_unique_filename")
-    @patch.object(meme_add, "_auto_filename", return_value="a")
-    @patch.object(meme_add, "_get_extension", return_value=".jpg")
-    @patch.object(meme_add, "_download_image")
-    @patch.object(meme_add, "get_index_manager")
-    @patch.object(meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
+    @patch.object(add, "session_manager")
+    @patch.object(add, "got_intercept_bypass", return_value=False)
+    @patch.object(add, "resolve_unique_filename")
+    @patch.object(add, "_auto_filename", return_value="a")
+    @patch.object(add, "_get_extension", return_value=".jpg")
+    @patch.object(add, "_download_image")
+    @patch.object(add, "get_index_manager")
+    @patch.object(add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
     async def test_add_cancelled_replies(
         self,
         mock_extract: MagicMock,
@@ -937,14 +937,14 @@ class TestGotImage:
         mock_sm.deactivate_chat.assert_called_once_with(_make_scope("12345"))
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "session_manager")
-    @patch.object(meme_add, "got_intercept_bypass", return_value=False)
-    @patch.object(meme_add, "resolve_unique_filename")
-    @patch.object(meme_add, "_auto_filename", return_value="a")
-    @patch.object(meme_add, "_get_extension", return_value=".jpg")
-    @patch.object(meme_add, "_download_image")
-    @patch.object(meme_add, "get_index_manager")
-    @patch.object(meme_add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
+    @patch.object(add, "session_manager")
+    @patch.object(add, "got_intercept_bypass", return_value=False)
+    @patch.object(add, "resolve_unique_filename")
+    @patch.object(add, "_auto_filename", return_value="a")
+    @patch.object(add, "_get_extension", return_value=".jpg")
+    @patch.object(add, "_download_image")
+    @patch.object(add, "get_index_manager")
+    @patch.object(add, "extract_image_urls", return_value=["https://img.com/a.jpg"])
     async def test_add_timeout_replies(
         self,
         mock_extract: MagicMock,
@@ -976,9 +976,9 @@ class TestGotImage:
         mock_sm.deactivate_chat.assert_called_once_with(_make_scope("12345"))
 
     @pytest.mark.asyncio
-    @patch.object(meme_add, "session_manager")
-    @patch.object(meme_add, "got_intercept_bypass", return_value=False)
-    @patch.object(meme_add, "extract_image_urls", side_effect=ValueError("解析失败"))
+    @patch.object(add, "session_manager")
+    @patch.object(add, "got_intercept_bypass", return_value=False)
+    @patch.object(add, "extract_image_urls", side_effect=ValueError("解析失败"))
     async def test_extract_urls_exception(
         self,
         mock_extract: MagicMock,

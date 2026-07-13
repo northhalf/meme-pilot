@@ -19,8 +19,8 @@ _mock_cmd.handle.return_value = lambda fn: fn
 _mock_cmd.got.return_value = lambda fn: fn
 
 with patch("nonebot.on_command", return_value=_mock_cmd):
-    from bot.plugins import meme_rand
-    from bot.plugins.meme_rand import got_rand_selection, handle_rand
+    from bot.plugins import rand
+    from bot.plugins.rand import got_rand_selection, handle_rand
 
 
 # ---------------------------------------------------------------------------
@@ -93,14 +93,14 @@ class TestHandleRandAuth:
     """授权校验测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_rand.session_manager, "activate_chat", return_value=True)
-    @patch.object(meme_rand, "is_authorized", return_value=True)
-    @patch.object(meme_rand, "dispatch_search_results", new_callable=AsyncMock)
+    @patch.object(rand.session_manager, "activate_chat", return_value=True)
+    @patch.object(rand, "is_authorized", return_value=True)
+    @patch.object(rand, "dispatch_search_results", new_callable=AsyncMock)
     async def test_authorized_user_proceeds(
         self, mock_dispatch: AsyncMock, mock_auth: MagicMock, mock_activate: MagicMock
     ) -> None:
         """授权用户应正常调用 dispatch_search_results。"""
-        with patch.object(meme_rand, "get_index_manager") as mock_get_im:
+        with patch.object(rand, "get_index_manager") as mock_get_im:
             mock_get_im.return_value.random_search = AsyncMock(return_value=[_make_search_result()])
             await handle_rand(_make_bot(), _make_event(), _make_matcher())
             mock_dispatch.assert_awaited_once()
@@ -110,13 +110,13 @@ class TestHandleRandDelegation:
     """参数委托测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_rand.session_manager, "activate_chat", return_value=True)
-    @patch.object(meme_rand, "is_authorized", return_value=True)
+    @patch.object(rand.session_manager, "activate_chat", return_value=True)
+    @patch.object(rand, "is_authorized", return_value=True)
     async def test_keyword_passed_to_random_search(
         self, mock_auth: MagicMock, mock_activate: MagicMock
     ) -> None:
         """有关键词时应传给 random_search。"""
-        with patch.object(meme_rand, "get_index_manager") as mock_get_im:
+        with patch.object(rand, "get_index_manager") as mock_get_im:
             mock_random = AsyncMock(return_value=[_make_search_result()])
             mock_get_im.return_value.random_search = mock_random
 
@@ -125,13 +125,13 @@ class TestHandleRandDelegation:
             mock_random.assert_awaited_once_with("加班")
 
     @pytest.mark.asyncio
-    @patch.object(meme_rand.session_manager, "activate_chat", return_value=True)
-    @patch.object(meme_rand, "is_authorized", return_value=True)
+    @patch.object(rand.session_manager, "activate_chat", return_value=True)
+    @patch.object(rand, "is_authorized", return_value=True)
     async def test_empty_keyword_passed_as_none(
         self, mock_auth: MagicMock, mock_activate: MagicMock
     ) -> None:
         """无关键词时应以 None 调用 random_search。"""
-        with patch.object(meme_rand, "get_index_manager") as mock_get_im:
+        with patch.object(rand, "get_index_manager") as mock_get_im:
             mock_random = AsyncMock(return_value=[_make_search_result()])
             mock_get_im.return_value.random_search = mock_random
 
@@ -144,9 +144,9 @@ class TestHandleRandEmptyResults:
     """空结果处理测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_rand.session_manager, "activate_chat", return_value=True)
-    @patch.object(meme_rand.session_manager, "deactivate_chat")
-    @patch.object(meme_rand, "is_authorized", return_value=True)
+    @patch.object(rand.session_manager, "activate_chat", return_value=True)
+    @patch.object(rand.session_manager, "deactivate_chat")
+    @patch.object(rand, "is_authorized", return_value=True)
     async def test_keyword_no_match_replies_no_results(
         self,
         mock_auth: MagicMock,
@@ -154,7 +154,7 @@ class TestHandleRandEmptyResults:
         mock_activate: MagicMock,
     ) -> None:
         """关键词无匹配时应回复没有匹配到。"""
-        with patch.object(meme_rand, "get_index_manager") as mock_get_im:
+        with patch.object(rand, "get_index_manager") as mock_get_im:
             mock_get_im.return_value.random_search = AsyncMock(return_value=[])
             matcher = _make_matcher()
 
@@ -166,9 +166,9 @@ class TestHandleRandEmptyResults:
             _assert_no_reply(msg)
 
     @pytest.mark.asyncio
-    @patch.object(meme_rand.session_manager, "activate_chat", return_value=True)
-    @patch.object(meme_rand.session_manager, "deactivate_chat")
-    @patch.object(meme_rand, "is_authorized", return_value=True)
+    @patch.object(rand.session_manager, "activate_chat", return_value=True)
+    @patch.object(rand.session_manager, "deactivate_chat")
+    @patch.object(rand, "is_authorized", return_value=True)
     async def test_keyword_no_match_replies_no_results_group_reply(
         self,
         mock_auth: MagicMock,
@@ -176,7 +176,7 @@ class TestHandleRandEmptyResults:
         mock_activate: MagicMock,
     ) -> None:
         """群聊中关键词无匹配时应带 reply。"""
-        with patch.object(meme_rand, "get_index_manager") as mock_get_im:
+        with patch.object(rand, "get_index_manager") as mock_get_im:
             mock_get_im.return_value.random_search = AsyncMock(return_value=[])
             matcher = _make_matcher()
 
@@ -190,9 +190,9 @@ class TestHandleRandEmptyResults:
             assert "没有匹配到" in extract_message_text(reply)
 
     @pytest.mark.asyncio
-    @patch.object(meme_rand.session_manager, "activate_chat", return_value=True)
-    @patch.object(meme_rand.session_manager, "deactivate_chat")
-    @patch.object(meme_rand, "is_authorized", return_value=True)
+    @patch.object(rand.session_manager, "activate_chat", return_value=True)
+    @patch.object(rand.session_manager, "deactivate_chat")
+    @patch.object(rand, "is_authorized", return_value=True)
     async def test_empty_index_replies_empty_dir(
         self,
         mock_auth: MagicMock,
@@ -200,7 +200,7 @@ class TestHandleRandEmptyResults:
         mock_activate: MagicMock,
     ) -> None:
         """全库随机但目录为空时应提示目录为空。"""
-        with patch.object(meme_rand, "get_index_manager") as mock_get_im:
+        with patch.object(rand, "get_index_manager") as mock_get_im:
             mock_get_im.return_value.random_search = AsyncMock(return_value=[])
             matcher = _make_matcher()
 
@@ -212,9 +212,9 @@ class TestHandleRandEmptyResults:
             _assert_no_reply(msg)
 
     @pytest.mark.asyncio
-    @patch.object(meme_rand.session_manager, "activate_chat", return_value=True)
-    @patch.object(meme_rand.session_manager, "deactivate_chat")
-    @patch.object(meme_rand, "is_authorized", return_value=True)
+    @patch.object(rand.session_manager, "activate_chat", return_value=True)
+    @patch.object(rand.session_manager, "deactivate_chat")
+    @patch.object(rand, "is_authorized", return_value=True)
     async def test_empty_index_replies_empty_dir_group_reply(
         self,
         mock_auth: MagicMock,
@@ -222,7 +222,7 @@ class TestHandleRandEmptyResults:
         mock_activate: MagicMock,
     ) -> None:
         """群聊中全库随机但目录为空时应带 reply。"""
-        with patch.object(meme_rand, "get_index_manager") as mock_get_im:
+        with patch.object(rand, "get_index_manager") as mock_get_im:
             mock_get_im.return_value.random_search = AsyncMock(return_value=[])
             matcher = _make_matcher()
 
@@ -245,7 +245,7 @@ class TestGotRandSelection:
     """got_rand_selection 处理函数测试。"""
 
     @pytest.mark.asyncio
-    @patch("bot.plugins.meme_rand.present_candidates")
+    @patch("bot.plugins.rand.present_candidates")
     @patch("bot.plugins._search_utils.session_manager.remove_selection")
     @patch("bot.plugins._search_utils.session_manager.activate_chat")
     @patch("bot.plugins._search_utils.session_manager.get_selection")
@@ -261,7 +261,7 @@ class TestGotRandSelection:
         """回复 0 应换一批并重新展示候选。"""
         mock_get_sel.return_value = MagicMock()
         new_results = [_make_search_result(entry_id=2, text="乙")]
-        with patch.object(meme_rand, "get_index_manager") as mock_get_im:
+        with patch.object(rand, "get_index_manager") as mock_get_im:
             mock_get_im.return_value.random_search = AsyncMock(return_value=new_results)
             matcher = _make_matcher(state={"candidates": [_make_search_result()], "keyword": None})
 
@@ -298,7 +298,7 @@ class TestGotRandSelection:
         candidates = [result]
         matcher = _make_matcher(state={"candidates": candidates})
 
-        with patch("bot.plugins.meme_rand.MessageSegment") as _:
+        with patch("bot.plugins.rand.MessageSegment") as _:
             await got_rand_selection(
                 _make_bot(), _make_event(text="1"), matcher, _make_message("1")
             )
@@ -344,9 +344,9 @@ class TestHandleRandOptions:
     """/rand 传参 options 测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_rand.session_manager, "activate_chat", return_value=True)
-    @patch.object(meme_rand, "is_authorized", return_value=True)
-    @patch.object(meme_rand, "dispatch_search_results", new_callable=AsyncMock)
+    @patch.object(rand.session_manager, "activate_chat", return_value=True)
+    @patch.object(rand, "is_authorized", return_value=True)
+    @patch.object(rand, "dispatch_search_results", new_callable=AsyncMock)
     async def test_rand_uses_default_options(
         self,
         mock_dispatch: AsyncMock,
@@ -364,7 +364,7 @@ class TestHandleRandOptions:
             mock_auth: is_authorized 的 mock。
             mock_activate: activate_chat 的 mock。
         """
-        with patch.object(meme_rand, "get_index_manager") as mock_get_im:
+        with patch.object(rand, "get_index_manager") as mock_get_im:
             mock_get_im.return_value.random_search = AsyncMock(
                 return_value=[_make_search_result()]
             )

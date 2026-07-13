@@ -18,8 +18,8 @@ _mock_cmd.handle.return_value = lambda fn: fn  # 透传 decorator
 with (
     patch("nonebot.on_command", return_value=_mock_cmd),
 ):
-    from bot.plugins import meme_ai
-    from bot.plugins.meme_ai import handle_ai
+    from bot.plugins import ai
+    from bot.plugins.ai import handle_ai
 
 
 # ---------------------------------------------------------------------------
@@ -87,8 +87,8 @@ class TestHandleAiAuth:
     """授权校验测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_ai, "get_index_manager")
-    @patch.object(meme_ai, "is_authorized", return_value=True)
+    @patch.object(ai, "get_index_manager")
+    @patch.object(ai, "is_authorized", return_value=True)
     async def test_authorized_user_proceeds(
         self, mock_auth: MagicMock, mock_get_im: MagicMock
     ) -> None:
@@ -101,8 +101,8 @@ class TestHandleAiAuth:
         mock_get_im.return_value.ai_match.assert_awaited_once()
 
     @pytest.mark.asyncio
-    @patch.object(meme_ai, "get_index_manager")
-    @patch.object(meme_ai, "is_authorized", return_value=False)
+    @patch.object(ai, "get_index_manager")
+    @patch.object(ai, "is_authorized", return_value=False)
     async def test_unauthorized_user_ignored(
         self, mock_auth: MagicMock, mock_get_im: MagicMock
     ) -> None:
@@ -117,8 +117,8 @@ class TestHandleAiAuth:
         bot.send.assert_not_awaited()
 
     @pytest.mark.asyncio
-    @patch.object(meme_ai, "get_index_manager")
-    @patch.object(meme_ai, "is_authorized", return_value=True)
+    @patch.object(ai, "get_index_manager")
+    @patch.object(ai, "is_authorized", return_value=True)
     async def test_group_chat_rejected(
         self, mock_auth: MagicMock, mock_get_im: MagicMock
     ) -> None:
@@ -149,8 +149,8 @@ class TestHandleAiTimeout:
     """读锁超时测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_ai, "get_index_manager")
-    @patch.object(meme_ai, "is_authorized", return_value=True)
+    @patch.object(ai, "get_index_manager")
+    @patch.object(ai, "is_authorized", return_value=True)
     async def test_timeout_replies_slow_index(
         self, mock_auth: MagicMock, mock_get_im: MagicMock
     ) -> None:
@@ -178,8 +178,8 @@ class TestHandleAiEmptyDesc:
     """描述为空测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_ai, "get_index_manager")
-    @patch.object(meme_ai, "is_authorized", return_value=True)
+    @patch.object(ai, "get_index_manager")
+    @patch.object(ai, "is_authorized", return_value=True)
     async def test_empty_description_replies_usage(
         self, mock_auth: MagicMock, mock_get_im: MagicMock
     ) -> None:
@@ -203,9 +203,9 @@ class TestHandleAiSuccess:
     """匹配成功测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_ai, "MessageSegment")
-    @patch.object(meme_ai, "get_index_manager")
-    @patch.object(meme_ai, "is_authorized", return_value=True)
+    @patch.object(ai, "MessageSegment")
+    @patch.object(ai, "get_index_manager")
+    @patch.object(ai, "is_authorized", return_value=True)
     async def test_match_sends_image_then_metadata(
         self,
         mock_auth: MagicMock,
@@ -227,9 +227,9 @@ class TestHandleAiSuccess:
         assert "吐槽" in finished_text
 
     @pytest.mark.asyncio
-    @patch.object(meme_ai, "MessageSegment")
-    @patch.object(meme_ai, "get_index_manager")
-    @patch.object(meme_ai, "is_authorized", return_value=True)
+    @patch.object(ai, "MessageSegment")
+    @patch.object(ai, "get_index_manager")
+    @patch.object(ai, "is_authorized", return_value=True)
     async def test_image_path_correct(
         self,
         mock_auth: MagicMock,
@@ -256,8 +256,8 @@ class TestHandleAiNoMatch:
     """无候选测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_ai, "get_index_manager")
-    @patch.object(meme_ai, "is_authorized", return_value=True)
+    @patch.object(ai, "get_index_manager")
+    @patch.object(ai, "is_authorized", return_value=True)
     async def test_none_result_replies_no_match(
         self, mock_auth: MagicMock, mock_get_im: MagicMock
     ) -> None:
@@ -281,8 +281,8 @@ class TestHandleAiServiceError:
     """服务异常测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_ai, "get_index_manager")
-    @patch.object(meme_ai, "is_authorized", return_value=True)
+    @patch.object(ai, "get_index_manager")
+    @patch.object(ai, "is_authorized", return_value=True)
     async def test_value_error_replies_unavailable(
         self, mock_auth: MagicMock, mock_get_im: MagicMock
     ) -> None:
@@ -299,8 +299,8 @@ class TestHandleAiServiceError:
         assert "AI 服务暂时不可用" in extract_message_text(msg)
 
     @pytest.mark.asyncio
-    @patch.object(meme_ai, "get_index_manager")
-    @patch.object(meme_ai, "is_authorized", return_value=True)
+    @patch.object(ai, "get_index_manager")
+    @patch.object(ai, "is_authorized", return_value=True)
     async def test_generic_error_replies_unavailable(
         self, mock_auth: MagicMock, mock_get_im: MagicMock
     ) -> None:

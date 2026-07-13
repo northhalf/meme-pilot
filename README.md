@@ -403,20 +403,20 @@ meme-pilot/
     ├── logging_config.py    # 日志滚动配置
     ├── log_context.py       # request_id 传播与耗时统计工具
     ├── plugins/
-    │   ├── meme_query.py        # /query 命令
-    │   ├── meme_rand.py         # /rand 命令
-    │   ├── meme_sim.py          # /sim 命令
-    │   ├── meme_ai.py           # /ai 命令
-    │   ├── meme_add.py          # /add 命令
-    │   ├── meme_addtag.py       # /addtag 命令
-    │   ├── meme_delete.py       # /del 命令
-    │   ├── meme_edit.py         # /edittext 命令
-    │   ├── meme_setspeaker.py   # /setspeaker 命令
-    │   ├── meme_refresh.py      # /refresh 命令
-    │   ├── meme_info.py         # /info 命令
-    │   ├── meme_help.py         # /help 命令
-    │   ├── meme_cancel.py       # /cancel 命令
-    │   ├── meme_plain_text.py   # 兜底：普通文本/未知命令
+    │   ├── query.py        # /query 命令
+    │   ├── rand.py         # /rand 命令
+    │   ├── sim.py          # /sim 命令
+    │   ├── ai.py           # /ai 命令
+    │   ├── add.py          # /add 命令
+    │   ├── addtag.py       # /addtag 命令
+    │   ├── delete.py       # /del 命令
+    │   ├── edit.py         # /edittext 命令
+    │   ├── setspeaker.py   # /setspeaker 命令
+    │   ├── refresh.py      # /refresh 命令
+    │   ├── info.py         # /info 命令
+    │   ├── help.py         # /help 命令
+    │   ├── cancel.py       # /cancel 命令
+    │   ├── plain_text.py   # 兜底：普通文本/未知命令
     │   ├── _help_text.py        # 帮助文本常量（共享模块）
     │   └── _search_utils.py     # 搜索核心逻辑（共享模块）
     └── engine/

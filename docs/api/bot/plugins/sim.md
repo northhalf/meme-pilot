@@ -1,4 +1,4 @@
-# bot/plugins/meme_sim.py — /sim 命令插件
+# bot/plugins/sim.py — /sim 命令插件
 
 > NoneBot2 命令插件，无对外 Python API。核心搜索逻辑委托 `IndexManager.semantic_search`，结果分发委托 `_search_utils.py`。
 

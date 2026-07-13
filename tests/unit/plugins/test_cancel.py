@@ -1,4 +1,4 @@
-"""meme_cancel 插件测试。"""
+"""cancel 插件测试。"""
 
 from typing import Any, Generator
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -18,7 +18,7 @@ _mock_cmd = MagicMock()
 _mock_cmd.handle.return_value = lambda fn: fn
 
 with patch("nonebot.on_command", return_value=_mock_cmd):
-    from bot.plugins.meme_cancel import handle_cancel
+    from bot.plugins.cancel import handle_cancel
 
 
 @pytest.fixture(autouse=True)
@@ -56,7 +56,7 @@ class TestCancelCommand:
         bot = AsyncMock()
         event = _make_event("1001")
 
-        with patch("bot.plugins.meme_cancel.is_authorized", return_value=True):
+        with patch("bot.plugins.cancel.is_authorized", return_value=True):
             await handle_cancel(bot, event, matcher)
 
         # 验证会话已取消
@@ -70,7 +70,7 @@ class TestCancelCommand:
         bot = AsyncMock()
         event = _make_event("1001")
 
-        with patch("bot.plugins.meme_cancel.is_authorized", return_value=True):
+        with patch("bot.plugins.cancel.is_authorized", return_value=True):
             await handle_cancel(bot, event, matcher)
 
         # 应调用 matcher.finish 且内容包含"没有活跃"
@@ -86,7 +86,7 @@ class TestCancelCommand:
         event.message_type = "group"
         event.message_id = 123456
 
-        with patch("bot.plugins.meme_cancel.is_authorized", return_value=True):
+        with patch("bot.plugins.cancel.is_authorized", return_value=True):
             await handle_cancel(bot, event, matcher)
 
         msg = matcher.finish.await_args[0][0]
@@ -101,7 +101,7 @@ class TestCancelCommand:
         bot = AsyncMock()
         event = _make_event("9999")
 
-        with patch("bot.plugins.meme_cancel.is_authorized", return_value=False), \
+        with patch("bot.plugins.cancel.is_authorized", return_value=False), \
              patch.object(session_manager, "execute_cancel", new=AsyncMock()) as mock_exec:
             await handle_cancel(bot, event, matcher)
 

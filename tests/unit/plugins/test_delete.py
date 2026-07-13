@@ -17,7 +17,7 @@ with (
     patch("nonebot.on_command", return_value=_mock_cmd),
     patch("nonebot.params.Arg", return_value="CONFIRM_ARG_SENTINEL"),
 ):
-    from bot.plugins.meme_delete import got_confirm, handle_delete
+    from bot.plugins.delete import got_confirm, handle_delete
 
 
 def _make_event(user_id: str = "12345", text: str = "/del") -> MagicMock:
@@ -72,8 +72,8 @@ class TestHandleDelete:
     def test_unauthorized(self) -> None:
         """非授权用户应调用 finish(None) 结束匹配。"""
         with (
-            patch("bot.plugins.meme_delete.is_authorized", return_value=False),
-            patch("bot.plugins.meme_delete.log_unauthorized") as mock_log,
+            patch("bot.plugins.delete.is_authorized", return_value=False),
+            patch("bot.plugins.delete.log_unauthorized") as mock_log,
         ):
             bot = _make_bot()
             event = _make_event()
@@ -87,7 +87,7 @@ class TestHandleDelete:
 
     def test_group_chat(self) -> None:
         """群聊中 @bot → 回复仅限私聊。"""
-        with patch("bot.plugins.meme_delete.is_authorized", return_value=True):
+        with patch("bot.plugins.delete.is_authorized", return_value=True):
             bot = _make_bot()
             event = _make_event()
             event.message_type = "group"
@@ -105,9 +105,9 @@ class TestHandleDelete:
     def test_missing_args(self) -> None:
         """无参数 → 回复用法提示。"""
         with (
-            patch("bot.plugins.meme_delete.is_authorized", return_value=True),
+            patch("bot.plugins.delete.is_authorized", return_value=True),
             patch(
-                "bot.plugins.meme_delete.session_manager.activate_chat",
+                "bot.plugins.delete.session_manager.activate_chat",
                 return_value=True,
             ),
         ):
@@ -124,9 +124,9 @@ class TestHandleDelete:
     def test_invalid_id(self) -> None:
         """非数字 id → 回复 id 必须为数字。"""
         with (
-            patch("bot.plugins.meme_delete.is_authorized", return_value=True),
+            patch("bot.plugins.delete.is_authorized", return_value=True),
             patch(
-                "bot.plugins.meme_delete.session_manager.activate_chat",
+                "bot.plugins.delete.session_manager.activate_chat",
                 return_value=True,
             ),
         ):
@@ -143,14 +143,14 @@ class TestHandleDelete:
     def test_all_ids_not_found(self) -> None:
         """所有 id 都不存在 → 回复未找到任何表情包。"""
         with (
-            patch("bot.plugins.meme_delete.is_authorized", return_value=True),
+            patch("bot.plugins.delete.is_authorized", return_value=True),
             patch(
-                "bot.plugins.meme_delete.session_manager.activate_chat",
+                "bot.plugins.delete.session_manager.activate_chat",
                 return_value=True,
             ),
-            patch("bot.plugins.meme_delete.get_metadata_store") as mock_get_store,
+            patch("bot.plugins.delete.get_metadata_store") as mock_get_store,
             patch(
-                "bot.plugins.meme_delete.session_manager.deactivate_chat"
+                "bot.plugins.delete.session_manager.deactivate_chat"
             ) as mock_deactivate,
         ):
             store = MagicMock()
@@ -171,17 +171,17 @@ class TestHandleDelete:
     def test_summary_sent_correctly(self) -> None:
         """找到部分 id → 发送正确的摘要确认消息。"""
         with (
-            patch("bot.plugins.meme_delete.is_authorized", return_value=True),
+            patch("bot.plugins.delete.is_authorized", return_value=True),
             patch(
-                "bot.plugins.meme_delete.session_manager.activate_chat",
+                "bot.plugins.delete.session_manager.activate_chat",
                 return_value=True,
             ),
-            patch("bot.plugins.meme_delete.get_metadata_store") as mock_get_store,
+            patch("bot.plugins.delete.get_metadata_store") as mock_get_store,
             patch(
-                "bot.plugins.meme_delete.session_manager.create_selection"
+                "bot.plugins.delete.session_manager.create_selection"
             ) as mock_create_selection,
             patch(
-                "bot.plugins.meme_delete.session_manager.reset_current_task"
+                "bot.plugins.delete.session_manager.reset_current_task"
             ) as mock_reset,
         ):
             store = MagicMock()
@@ -225,9 +225,9 @@ class TestGotConfirm:
     def test_confirm_yes(self) -> None:
         """用户回复确认 → 调用 delete，回复成功摘要。"""
         with (
-            patch("bot.plugins.meme_delete.session_manager.handler_context"),
-            patch("bot.plugins.meme_delete.session_manager.deactivate_chat"),
-            patch("bot.plugins.meme_delete.get_index_manager") as mock_get_im,
+            patch("bot.plugins.delete.session_manager.handler_context"),
+            patch("bot.plugins.delete.session_manager.deactivate_chat"),
+            patch("bot.plugins.delete.get_index_manager") as mock_get_im,
         ):
             im = MagicMock()
             im.delete = AsyncMock(
@@ -258,9 +258,9 @@ class TestGotConfirm:
     def test_confirm_yes_english(self) -> None:
         """用户回复 yes → 调用 delete。"""
         with (
-            patch("bot.plugins.meme_delete.session_manager.handler_context"),
-            patch("bot.plugins.meme_delete.session_manager.deactivate_chat"),
-            patch("bot.plugins.meme_delete.get_index_manager") as mock_get_im,
+            patch("bot.plugins.delete.session_manager.handler_context"),
+            patch("bot.plugins.delete.session_manager.deactivate_chat"),
+            patch("bot.plugins.delete.get_index_manager") as mock_get_im,
         ):
             im = MagicMock()
             im.delete = AsyncMock(
@@ -284,9 +284,9 @@ class TestGotConfirm:
     def test_confirm_failed_ids(self) -> None:
         """删除结果包含失败 id → 摘要中显示失败原因。"""
         with (
-            patch("bot.plugins.meme_delete.session_manager.handler_context"),
-            patch("bot.plugins.meme_delete.session_manager.deactivate_chat"),
-            patch("bot.plugins.meme_delete.get_index_manager") as mock_get_im,
+            patch("bot.plugins.delete.session_manager.handler_context"),
+            patch("bot.plugins.delete.session_manager.deactivate_chat"),
+            patch("bot.plugins.delete.get_index_manager") as mock_get_im,
         ):
             im = MagicMock()
             im.delete = AsyncMock(
@@ -311,8 +311,8 @@ class TestGotConfirm:
     def test_cancel(self) -> None:
         """用户回复其他内容 → 回复已取消删除。"""
         with (
-            patch("bot.plugins.meme_delete.session_manager.handler_context"),
-            patch("bot.plugins.meme_delete.session_manager.deactivate_chat"),
+            patch("bot.plugins.delete.session_manager.handler_context"),
+            patch("bot.plugins.delete.session_manager.deactivate_chat"),
         ):
             bot = _make_bot()
             event = _make_event(text="不")
@@ -329,10 +329,10 @@ class TestGotConfirm:
     def test_cancel_intercept(self) -> None:
         """等待确认时 /cancel → 旁路取消。"""
         with (
-            patch("bot.plugins.meme_delete.session_manager.handler_context"),
-            patch("bot.plugins.meme_delete.session_manager.deactivate_chat"),
+            patch("bot.plugins.delete.session_manager.handler_context"),
+            patch("bot.plugins.delete.session_manager.deactivate_chat"),
             patch(
-                "bot.plugins.meme_delete.got_intercept_bypass",
+                "bot.plugins.delete.got_intercept_bypass",
                 new_callable=AsyncMock,
             ) as mock_bypass,
         ):
@@ -351,9 +351,9 @@ class TestGotConfirm:
         from bot.engine.index_manager import RefreshInProgressError
 
         with (
-            patch("bot.plugins.meme_delete.session_manager.handler_context"),
-            patch("bot.plugins.meme_delete.session_manager.deactivate_chat"),
-            patch("bot.plugins.meme_delete.get_index_manager") as mock_get_im,
+            patch("bot.plugins.delete.session_manager.handler_context"),
+            patch("bot.plugins.delete.session_manager.deactivate_chat"),
+            patch("bot.plugins.delete.get_index_manager") as mock_get_im,
         ):
             im = MagicMock()
             im.delete = AsyncMock(side_effect=RefreshInProgressError())
@@ -382,20 +382,20 @@ class TestShortCommandDelete:
     def test_short_command_extracts_ids(self) -> None:
         """短命令 /d 的参数经 CommandArg 提取后应与 /del 一致。"""
         with (
-            patch("bot.plugins.meme_delete.is_authorized", return_value=True),
+            patch("bot.plugins.delete.is_authorized", return_value=True),
             patch(
-                "bot.plugins.meme_delete.session_manager.activate_chat",
+                "bot.plugins.delete.session_manager.activate_chat",
                 return_value=True,
             ),
-            patch("bot.plugins.meme_delete.get_metadata_store") as mock_store,
+            patch("bot.plugins.delete.get_metadata_store") as mock_store,
             patch(
-                "bot.plugins.meme_delete.session_manager.create_selection"
+                "bot.plugins.delete.session_manager.create_selection"
             ),
             patch(
-                "bot.plugins.meme_delete.session_manager.reset_current_task"
+                "bot.plugins.delete.session_manager.reset_current_task"
             ),
-            patch("bot.plugins.meme_delete.timeout_session", new_callable=MagicMock),
-            patch("bot.plugins.meme_delete.asyncio.create_task"),
+            patch("bot.plugins.delete.timeout_session", new_callable=MagicMock),
+            patch("bot.plugins.delete.asyncio.create_task"),
         ):
             entry = MagicMock()
             entry.text = "文本"

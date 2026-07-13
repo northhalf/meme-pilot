@@ -19,7 +19,7 @@ with (
     patch("nonebot.on_command", return_value=_mock_cmd),
     patch("nonebot.params.Arg", return_value="CONFIRM_ARG_SENTINEL"),
 ):
-    from bot.plugins.meme_setspeaker import (
+    from bot.plugins.setspeaker import (
         got_confirm,
         handle_setspeaker,
         timeout_session,
@@ -85,8 +85,8 @@ class TestHandleSetspeaker:
     async def test_unauthorized(self) -> None:
         """非授权用户应调用 finish(None) 结束匹配。"""
         with (
-            patch("bot.plugins.meme_setspeaker.is_authorized", return_value=False),
-            patch("bot.plugins.meme_setspeaker.log_unauthorized") as mock_log,
+            patch("bot.plugins.setspeaker.is_authorized", return_value=False),
+            patch("bot.plugins.setspeaker.log_unauthorized") as mock_log,
         ):
             bot = _make_bot()
             event = _make_event()
@@ -102,9 +102,9 @@ class TestHandleSetspeaker:
     async def test_group_chat(self) -> None:
         """群聊中 @bot → 回复仅限私聊。"""
         with (
-            patch("bot.plugins.meme_setspeaker.is_authorized", return_value=True),
+            patch("bot.plugins.setspeaker.is_authorized", return_value=True),
             patch(
-                "bot.plugins.meme_setspeaker.session_manager.activate_chat",
+                "bot.plugins.setspeaker.session_manager.activate_chat",
                 return_value=True,
             ),
         ):
@@ -125,9 +125,9 @@ class TestHandleSetspeaker:
     async def test_active_session_conflict(self) -> None:
         """已有活跃会话 → 提示 /cancel。"""
         with (
-            patch("bot.plugins.meme_setspeaker.is_authorized", return_value=True),
+            patch("bot.plugins.setspeaker.is_authorized", return_value=True),
             patch(
-                "bot.plugins.meme_setspeaker.session_manager.activate_chat",
+                "bot.plugins.setspeaker.session_manager.activate_chat",
                 return_value=False,
             ),
         ):
@@ -146,9 +146,9 @@ class TestHandleSetspeaker:
     async def test_missing_entry_id(self) -> None:
         """无参数 → 回复用法提示。"""
         with (
-            patch("bot.plugins.meme_setspeaker.is_authorized", return_value=True),
+            patch("bot.plugins.setspeaker.is_authorized", return_value=True),
             patch(
-                "bot.plugins.meme_setspeaker.session_manager.activate_chat",
+                "bot.plugins.setspeaker.session_manager.activate_chat",
                 return_value=True,
             ),
         ):
@@ -167,9 +167,9 @@ class TestHandleSetspeaker:
     async def test_invalid_entry_id(self) -> None:
         """非数字 entry_id → 回复 entry_id 必须为数字。"""
         with (
-            patch("bot.plugins.meme_setspeaker.is_authorized", return_value=True),
+            patch("bot.plugins.setspeaker.is_authorized", return_value=True),
             patch(
-                "bot.plugins.meme_setspeaker.session_manager.activate_chat",
+                "bot.plugins.setspeaker.session_manager.activate_chat",
                 return_value=True,
             ),
         ):
@@ -188,12 +188,12 @@ class TestHandleSetspeaker:
     async def test_entry_not_found(self) -> None:
         """entry_id 不存在 → 回复未找到。"""
         with (
-            patch("bot.plugins.meme_setspeaker.is_authorized", return_value=True),
+            patch("bot.plugins.setspeaker.is_authorized", return_value=True),
             patch(
-                "bot.plugins.meme_setspeaker.session_manager.activate_chat",
+                "bot.plugins.setspeaker.session_manager.activate_chat",
                 return_value=True,
             ),
-            patch("bot.plugins.meme_setspeaker.get_metadata_store") as mock_get_store,
+            patch("bot.plugins.setspeaker.get_metadata_store") as mock_get_store,
         ):
             store = MagicMock()
             store.get_entry.return_value = None
@@ -219,14 +219,14 @@ class TestHandleSetspeaker:
         img_file.touch()
 
         with (
-            patch("bot.plugins.meme_setspeaker.is_authorized", return_value=True),
+            patch("bot.plugins.setspeaker.is_authorized", return_value=True),
             patch(
-                "bot.plugins.meme_setspeaker.session_manager.activate_chat",
+                "bot.plugins.setspeaker.session_manager.activate_chat",
                 return_value=True,
             ),
-            patch("bot.plugins.meme_setspeaker.get_metadata_store") as mock_get_store,
-            patch("bot.plugins.meme_setspeaker.get_index_manager"),
-            patch("bot.plugins.meme_setspeaker.MEMES_DIR", new=tmp_path),
+            patch("bot.plugins.setspeaker.get_metadata_store") as mock_get_store,
+            patch("bot.plugins.setspeaker.get_index_manager"),
+            patch("bot.plugins.setspeaker.MEMES_DIR", new=tmp_path),
             patch("bot.config.MEMES_DIR", new=tmp_path),  # 修复 import
         ):
             store = MagicMock()
@@ -256,14 +256,14 @@ class TestHandleSetspeaker:
         img_file.touch()
 
         with (
-            patch("bot.plugins.meme_setspeaker.is_authorized", return_value=True),
+            patch("bot.plugins.setspeaker.is_authorized", return_value=True),
             patch(
-                "bot.plugins.meme_setspeaker.session_manager.activate_chat",
+                "bot.plugins.setspeaker.session_manager.activate_chat",
                 return_value=True,
             ),
-            patch("bot.plugins.meme_setspeaker.get_metadata_store") as mock_get_store,
-            patch("bot.plugins.meme_setspeaker.get_index_manager"),
-            patch("bot.plugins.meme_setspeaker.MEMES_DIR", new=tmp_path),
+            patch("bot.plugins.setspeaker.get_metadata_store") as mock_get_store,
+            patch("bot.plugins.setspeaker.get_index_manager"),
+            patch("bot.plugins.setspeaker.MEMES_DIR", new=tmp_path),
             patch("bot.config.MEMES_DIR", new=tmp_path),
         ):
             store = MagicMock()
@@ -292,9 +292,9 @@ class TestGotConfirm:
     async def test_confirm_yes(self) -> None:
         """用户回复确认 → 调用 set_speaker，回复成功。"""
         with (
-            patch("bot.plugins.meme_setspeaker.session_manager.handler_context"),
-            patch("bot.plugins.meme_setspeaker.session_manager.deactivate_chat"),
-            patch("bot.plugins.meme_setspeaker.get_index_manager") as mock_get_im,
+            patch("bot.plugins.setspeaker.session_manager.handler_context"),
+            patch("bot.plugins.setspeaker.session_manager.deactivate_chat"),
+            patch("bot.plugins.setspeaker.get_index_manager") as mock_get_im,
         ):
             im = MagicMock()
             im.set_speaker = AsyncMock(
@@ -325,9 +325,9 @@ class TestGotConfirm:
     async def test_confirm_yes_english(self) -> None:
         """用户回复 yes → 调用 set_speaker。"""
         with (
-            patch("bot.plugins.meme_setspeaker.session_manager.handler_context"),
-            patch("bot.plugins.meme_setspeaker.session_manager.deactivate_chat"),
-            patch("bot.plugins.meme_setspeaker.get_index_manager") as mock_get_im,
+            patch("bot.plugins.setspeaker.session_manager.handler_context"),
+            patch("bot.plugins.setspeaker.session_manager.deactivate_chat"),
+            patch("bot.plugins.setspeaker.get_index_manager") as mock_get_im,
         ):
             im = MagicMock()
             im.set_speaker = AsyncMock(
@@ -354,8 +354,8 @@ class TestGotConfirm:
     async def test_cancel(self) -> None:
         """用户回复其他内容 → 回复已取消。"""
         with (
-            patch("bot.plugins.meme_setspeaker.session_manager.handler_context"),
-            patch("bot.plugins.meme_setspeaker.session_manager.deactivate_chat"),
+            patch("bot.plugins.setspeaker.session_manager.handler_context"),
+            patch("bot.plugins.setspeaker.session_manager.deactivate_chat"),
         ):
             bot = _make_bot()
             event = _make_event(text="不")
@@ -376,9 +376,9 @@ class TestGotConfirm:
     async def test_clear_speaker_confirmation(self) -> None:
         """清空 speaker 场景的确认。"""
         with (
-            patch("bot.plugins.meme_setspeaker.session_manager.handler_context"),
-            patch("bot.plugins.meme_setspeaker.session_manager.deactivate_chat"),
-            patch("bot.plugins.meme_setspeaker.get_index_manager") as mock_get_im,
+            patch("bot.plugins.setspeaker.session_manager.handler_context"),
+            patch("bot.plugins.setspeaker.session_manager.deactivate_chat"),
+            patch("bot.plugins.setspeaker.get_index_manager") as mock_get_im,
         ):
             im = MagicMock()
             im.set_speaker = AsyncMock(
@@ -409,10 +409,10 @@ class TestGotConfirm:
     async def test_cancel_intercept(self) -> None:
         """等待确认时 /cancel → 旁路取消。"""
         with (
-            patch("bot.plugins.meme_setspeaker.session_manager.handler_context"),
-            patch("bot.plugins.meme_setspeaker.session_manager.deactivate_chat"),
+            patch("bot.plugins.setspeaker.session_manager.handler_context"),
+            patch("bot.plugins.setspeaker.session_manager.deactivate_chat"),
             patch(
-                "bot.plugins.meme_setspeaker.got_intercept_bypass",
+                "bot.plugins.setspeaker.got_intercept_bypass",
                 new_callable=AsyncMock,
             ) as mock_bypass,
         ):
@@ -441,16 +441,16 @@ class TestShortCommandSetspeaker:
     async def test_short_command_extracts_id_and_speaker(self) -> None:
         """短命令 /sp 的参数经 CommandArg 提取后应与 /setspeaker 一致。"""
         with (
-            patch("bot.plugins.meme_setspeaker.is_authorized", return_value=True),
+            patch("bot.plugins.setspeaker.is_authorized", return_value=True),
             patch(
-                "bot.plugins.meme_setspeaker.session_manager.activate_chat",
+                "bot.plugins.setspeaker.session_manager.activate_chat",
                 return_value=True,
             ),
-            patch("bot.plugins.meme_setspeaker.get_metadata_store") as mock_store,
-            patch("bot.plugins.meme_setspeaker.session_manager.create_selection"),
-            patch("bot.plugins.meme_setspeaker.session_manager.reset_current_task"),
-            patch("bot.plugins.meme_setspeaker.timeout_session", new_callable=MagicMock),
-            patch("bot.plugins.meme_setspeaker.asyncio.create_task"),
+            patch("bot.plugins.setspeaker.get_metadata_store") as mock_store,
+            patch("bot.plugins.setspeaker.session_manager.create_selection"),
+            patch("bot.plugins.setspeaker.session_manager.reset_current_task"),
+            patch("bot.plugins.setspeaker.timeout_session", new_callable=MagicMock),
+            patch("bot.plugins.setspeaker.asyncio.create_task"),
         ):
             entry = MagicMock()
             entry.image_path = "test.jpg"
@@ -495,12 +495,12 @@ class TestTimeoutSession:
         selection.selection_id = selection_id
 
         with patch(
-            "bot.plugins.meme_setspeaker.session_manager.get_selection",
+            "bot.plugins.setspeaker.session_manager.get_selection",
             return_value=selection,
         ) as mock_get_selection, patch(
-            "bot.plugins.meme_setspeaker.session_manager.remove_selection"
+            "bot.plugins.setspeaker.session_manager.remove_selection"
         ) as mock_remove_selection, patch(
-            "bot.plugins.meme_setspeaker.session_manager.deactivate_chat"
+            "bot.plugins.setspeaker.session_manager.deactivate_chat"
         ) as mock_deactivate_chat:
             await timeout_session(
                 bot,

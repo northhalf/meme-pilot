@@ -1,4 +1,4 @@
-# bot/plugins/meme_edit.py — /edittext OCR 文本编辑插件
+# bot/plugins/edit.py — /edittext OCR 文本编辑插件
 
 > 本文档记录 /edittext 命令插件的对外行为。模块内部 `_` 前缀函数和方法不在此列出。
 

@@ -20,8 +20,8 @@ with (
     patch("nonebot.on_command", return_value=_mock_cmd),
     patch("nonebot.on_message", return_value=MagicMock(handle=lambda fn: fn)),
 ):
-    from bot.plugins import meme_refresh
-    from bot.plugins.meme_refresh import handle_refresh
+    from bot.plugins import refresh
+    from bot.plugins.refresh import handle_refresh
 
 
 # ---------------------------------------------------------------------------
@@ -85,8 +85,8 @@ class TestHandleRefreshAuth:
     """授权校验测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_refresh, "is_authorized", return_value=True)
-    @patch.object(meme_refresh, "get_index_manager")
+    @patch.object(refresh, "is_authorized", return_value=True)
+    @patch.object(refresh, "get_index_manager")
     async def test_authorized_user_proceeds(
         self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
@@ -100,8 +100,8 @@ class TestHandleRefreshAuth:
         im.refresh.assert_awaited_once()
 
     @pytest.mark.asyncio
-    @patch.object(meme_refresh, "is_authorized", return_value=False)
-    @patch.object(meme_refresh, "get_index_manager")
+    @patch.object(refresh, "is_authorized", return_value=False)
+    @patch.object(refresh, "get_index_manager")
     async def test_unauthorized_user_ignored(
         self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
@@ -116,8 +116,8 @@ class TestHandleRefreshAuth:
         bot.send.assert_not_called()
 
     @pytest.mark.asyncio
-    @patch.object(meme_refresh, "is_authorized", return_value=True)
-    @patch.object(meme_refresh, "get_index_manager")
+    @patch.object(refresh, "is_authorized", return_value=True)
+    @patch.object(refresh, "get_index_manager")
     async def test_group_chat_rejected(
         self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
@@ -147,8 +147,8 @@ class TestHandleRefreshLock:
     """刷新冲突测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_refresh, "is_authorized", return_value=True)
-    @patch.object(meme_refresh, "get_index_manager")
+    @patch.object(refresh, "is_authorized", return_value=True)
+    @patch.object(refresh, "get_index_manager")
     async def test_refresh_in_progress_replies(
         self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
@@ -176,8 +176,8 @@ class TestHandleRefreshSync:
     """同步执行测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_refresh, "is_authorized", return_value=True)
-    @patch.object(meme_refresh, "get_index_manager")
+    @patch.object(refresh, "is_authorized", return_value=True)
+    @patch.object(refresh, "get_index_manager")
     async def test_sends_progress_message(
         self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
@@ -196,8 +196,8 @@ class TestHandleRefreshSync:
         _assert_no_reply(progress_msg)
 
     @pytest.mark.asyncio
-    @patch.object(meme_refresh, "is_authorized", return_value=True)
-    @patch.object(meme_refresh, "get_index_manager")
+    @patch.object(refresh, "is_authorized", return_value=True)
+    @patch.object(refresh, "get_index_manager")
     async def test_sync_exception_replies_error(
         self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
@@ -224,8 +224,8 @@ class TestHandleRefreshResult:
     """结果回复测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_refresh, "is_authorized", return_value=True)
-    @patch.object(meme_refresh, "get_index_manager")
+    @patch.object(refresh, "is_authorized", return_value=True)
+    @patch.object(refresh, "get_index_manager")
     async def test_empty_memes_replies_empty(
         self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
@@ -245,8 +245,8 @@ class TestHandleRefreshResult:
         _assert_no_reply(call_args)
 
     @pytest.mark.asyncio
-    @patch.object(meme_refresh, "is_authorized", return_value=True)
-    @patch.object(meme_refresh, "get_index_manager")
+    @patch.object(refresh, "is_authorized", return_value=True)
+    @patch.object(refresh, "get_index_manager")
     async def test_normal_result_replies_summary(
         self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
@@ -269,8 +269,8 @@ class TestHandleRefreshResult:
         _assert_no_reply(call_args)
 
     @pytest.mark.asyncio
-    @patch.object(meme_refresh, "is_authorized", return_value=True)
-    @patch.object(meme_refresh, "get_index_manager")
+    @patch.object(refresh, "is_authorized", return_value=True)
+    @patch.object(refresh, "get_index_manager")
     async def test_failed_files_shown(
         self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
@@ -292,8 +292,8 @@ class TestHandleRefreshResult:
         _assert_no_reply(call_args)
 
     @pytest.mark.asyncio
-    @patch.object(meme_refresh, "is_authorized", return_value=True)
-    @patch.object(meme_refresh, "get_index_manager")
+    @patch.object(refresh, "is_authorized", return_value=True)
+    @patch.object(refresh, "get_index_manager")
     async def test_failed_files_max_10(
         self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
@@ -325,8 +325,8 @@ class TestHandleRefreshInitError:
     """初始化错误测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_refresh, "is_authorized", return_value=True)
-    @patch.object(meme_refresh, "get_index_manager")
+    @patch.object(refresh, "is_authorized", return_value=True)
+    @patch.object(refresh, "get_index_manager")
     async def test_not_initialized_replies_error(
         self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:

@@ -1,4 +1,4 @@
-# bot/plugins/meme_refresh.py — /refresh 命令插件
+# bot/plugins/refresh.py — /refresh 命令插件
 
 > NoneBot2 命令插件，无对外 Python API。本文档记录命令行为与依赖。
 

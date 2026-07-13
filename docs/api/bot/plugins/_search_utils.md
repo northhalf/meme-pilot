@@ -110,7 +110,7 @@
 
 ### `handle_got_selection(bot, event, matcher, selection_msg, error_label="搜索", *, options=PresentOptions()) -> None`
 
-处理 got 选择编号的共享逻辑。供 `meme_search.py`、`meme_sim.py` 和 `meme_plain_text.py` 的 `got("selection")` 包装器调用。
+处理 got 选择编号的共享逻辑。供 `search.py`、`sim.py` 和 `plain_text.py` 的 `got("selection")` 包装器调用。
 
 | 参数 | 类型 | 说明 |
 |------|------|------|

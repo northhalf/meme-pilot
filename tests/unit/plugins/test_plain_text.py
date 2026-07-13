@@ -17,8 +17,8 @@ _mock_message.handle.return_value = lambda fn: fn
 _mock_message.got.return_value = lambda fn: fn
 
 with patch("nonebot.on_message", return_value=_mock_message):
-    from bot.plugins import meme_plain_text
-    from bot.plugins.meme_plain_text import handle_plain_text
+    from bot.plugins import plain_text
+    from bot.plugins.plain_text import handle_plain_text
 
 
 # ---------------------------------------------------------------------------
@@ -71,7 +71,7 @@ class TestHandleUnknownSlashCommand:
     """未知斜杠命令测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_plain_text, "is_authorized", return_value=True)
+    @patch.object(plain_text, "is_authorized", return_value=True)
     async def test_unknown_slash_command_replies_unknown(
         self, mock_auth: MagicMock
     ) -> None:
@@ -91,7 +91,7 @@ class TestHandleUnknownSlashCommand:
         _assert_no_reply(call_args)
 
     @pytest.mark.asyncio
-    @patch.object(meme_plain_text, "is_authorized", return_value=False)
+    @patch.object(plain_text, "is_authorized", return_value=False)
     async def test_unauthorized_slash_command_ignored(
         self, mock_auth: MagicMock
     ) -> None:
@@ -107,7 +107,7 @@ class TestHandleUnknownSlashCommand:
         bot.send.assert_not_called()
 
     @pytest.mark.asyncio
-    @patch.object(meme_plain_text, "is_authorized", return_value=True)
+    @patch.object(plain_text, "is_authorized", return_value=True)
     async def test_unknown_slash_command_group_reply(
         self, mock_auth: MagicMock
     ) -> None:
@@ -134,9 +134,9 @@ class TestHandlePlainTextAsSearch:
     """普通文本当作 /search 测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_plain_text, "execute_search", new_callable=AsyncMock)
-    @patch.object(meme_plain_text.session_manager, "activate_chat", return_value=True)
-    @patch.object(meme_plain_text, "is_authorized", return_value=True)
+    @patch.object(plain_text, "execute_search", new_callable=AsyncMock)
+    @patch.object(plain_text.session_manager, "activate_chat", return_value=True)
+    @patch.object(plain_text, "is_authorized", return_value=True)
     async def test_plain_text_calls_execute_search(
         self,
         mock_auth: MagicMock,
@@ -156,9 +156,9 @@ class TestHandlePlainTextAsSearch:
         assert call_args[0][3] == "加班"  # keyword 参数
 
     @pytest.mark.asyncio
-    @patch.object(meme_plain_text, "execute_search", new_callable=AsyncMock)
-    @patch.object(meme_plain_text.session_manager, "activate_chat", return_value=False)
-    @patch.object(meme_plain_text, "is_authorized", return_value=True)
+    @patch.object(plain_text, "execute_search", new_callable=AsyncMock)
+    @patch.object(plain_text.session_manager, "activate_chat", return_value=False)
+    @patch.object(plain_text, "is_authorized", return_value=True)
     async def test_plain_text_with_session_busy(
         self,
         mock_auth: MagicMock,
@@ -181,9 +181,9 @@ class TestHandlePlainTextAsSearch:
         mock_exec.assert_not_awaited()
 
     @pytest.mark.asyncio
-    @patch.object(meme_plain_text, "execute_search", new_callable=AsyncMock)
-    @patch.object(meme_plain_text.session_manager, "activate_chat", return_value=False)
-    @patch.object(meme_plain_text, "is_authorized", return_value=True)
+    @patch.object(plain_text, "execute_search", new_callable=AsyncMock)
+    @patch.object(plain_text.session_manager, "activate_chat", return_value=False)
+    @patch.object(plain_text, "is_authorized", return_value=True)
     async def test_plain_text_with_session_busy_group_reply(
         self,
         mock_auth: MagicMock,
@@ -205,7 +205,7 @@ class TestHandlePlainTextAsSearch:
         mock_exec.assert_not_awaited()
 
     @pytest.mark.asyncio
-    @patch.object(meme_plain_text, "is_authorized", return_value=False)
+    @patch.object(plain_text, "is_authorized", return_value=False)
     async def test_unauthorized_plain_text_ignored(
         self, mock_auth: MagicMock
     ) -> None:
@@ -230,9 +230,9 @@ class TestHandlePlainTextOptions:
     """兜底搜索传参 options 测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_plain_text, "execute_search", new_callable=AsyncMock)
-    @patch.object(meme_plain_text.session_manager, "activate_chat", return_value=True)
-    @patch.object(meme_plain_text, "is_authorized", return_value=True)
+    @patch.object(plain_text, "execute_search", new_callable=AsyncMock)
+    @patch.object(plain_text.session_manager, "activate_chat", return_value=True)
+    @patch.object(plain_text, "is_authorized", return_value=True)
     async def test_plain_text_passes_score_options(
         self,
         mock_auth: MagicMock,

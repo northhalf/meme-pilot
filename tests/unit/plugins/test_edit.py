@@ -18,7 +18,7 @@ with (
     patch("nonebot.on_command", return_value=_mock_cmd),
     patch("nonebot.params.Arg", return_value="CONFIRM_ARG_SENTINEL"),
 ):
-    from bot.plugins.meme_edit import (
+    from bot.plugins.edit import (
         got_confirm,
         handle_edit,
     )
@@ -77,8 +77,8 @@ class TestHandleEdit:
     def test_unauthorized(self) -> None:
         """非授权用户应调用 finish(None) 结束匹配。"""
         with (
-            patch("bot.plugins.meme_edit.is_authorized", return_value=False),
-            patch("bot.plugins.meme_edit.log_unauthorized") as mock_log,
+            patch("bot.plugins.edit.is_authorized", return_value=False),
+            patch("bot.plugins.edit.log_unauthorized") as mock_log,
         ):
             bot = _make_bot()
             event = _make_event()
@@ -93,9 +93,9 @@ class TestHandleEdit:
     def test_group_chat(self) -> None:
         """群聊中 @bot → 回复仅限私聊。"""
         with (
-            patch("bot.plugins.meme_edit.is_authorized", return_value=True),
+            patch("bot.plugins.edit.is_authorized", return_value=True),
             patch(
-                "bot.plugins.meme_edit.session_manager.activate_chat", return_value=True
+                "bot.plugins.edit.session_manager.activate_chat", return_value=True
             ),
         ):
             bot = _make_bot()
@@ -115,9 +115,9 @@ class TestHandleEdit:
     def test_invalid_args_no_text(self) -> None:
         """参数不足 → 用法提示。"""
         with (
-            patch("bot.plugins.meme_edit.is_authorized", return_value=True),
+            patch("bot.plugins.edit.is_authorized", return_value=True),
             patch(
-                "bot.plugins.meme_edit.session_manager.activate_chat", return_value=True
+                "bot.plugins.edit.session_manager.activate_chat", return_value=True
             ),
         ):
             bot = _make_bot()
@@ -133,9 +133,9 @@ class TestHandleEdit:
     def test_invalid_args_not_number(self) -> None:
         """entry_id 非数字 → 用法提示。"""
         with (
-            patch("bot.plugins.meme_edit.is_authorized", return_value=True),
+            patch("bot.plugins.edit.is_authorized", return_value=True),
             patch(
-                "bot.plugins.meme_edit.session_manager.activate_chat", return_value=True
+                "bot.plugins.edit.session_manager.activate_chat", return_value=True
             ),
         ):
             bot = _make_bot()
@@ -151,11 +151,11 @@ class TestHandleEdit:
     def test_entry_not_found(self) -> None:
         """entry_id 不存在 → 错误消息。"""
         with (
-            patch("bot.plugins.meme_edit.is_authorized", return_value=True),
+            patch("bot.plugins.edit.is_authorized", return_value=True),
             patch(
-                "bot.plugins.meme_edit.session_manager.activate_chat", return_value=True
+                "bot.plugins.edit.session_manager.activate_chat", return_value=True
             ),
-            patch("bot.plugins.meme_edit.get_metadata_store") as mock_store,
+            patch("bot.plugins.edit.get_metadata_store") as mock_store,
         ):
             store = MagicMock()
             store.get_entry.return_value = None
@@ -174,9 +174,9 @@ class TestHandleEdit:
     def test_active_session_conflict(self) -> None:
         """已有活跃会话 → 提示 /cancel。"""
         with (
-            patch("bot.plugins.meme_edit.is_authorized", return_value=True),
+            patch("bot.plugins.edit.is_authorized", return_value=True),
             patch(
-                "bot.plugins.meme_edit.session_manager.activate_chat",
+                "bot.plugins.edit.session_manager.activate_chat",
                 return_value=False,
             ),
         ):
@@ -193,15 +193,15 @@ class TestHandleEdit:
     def test_short_command_extracts_id_and_text(self) -> None:
         """短命令 /e 的参数经 CommandArg 提取后应与 /edittext 一致。"""
         with (
-            patch("bot.plugins.meme_edit.is_authorized", return_value=True),
+            patch("bot.plugins.edit.is_authorized", return_value=True),
             patch(
-                "bot.plugins.meme_edit.session_manager.activate_chat", return_value=True
+                "bot.plugins.edit.session_manager.activate_chat", return_value=True
             ),
-            patch("bot.plugins.meme_edit.get_metadata_store") as mock_store,
-            patch("bot.plugins.meme_edit.session_manager.create_selection"),
-            patch("bot.plugins.meme_edit.session_manager.reset_current_task"),
-            patch("bot.plugins.meme_edit.timeout_session", new_callable=MagicMock),
-            patch("bot.plugins.meme_edit.asyncio.create_task"),
+            patch("bot.plugins.edit.get_metadata_store") as mock_store,
+            patch("bot.plugins.edit.session_manager.create_selection"),
+            patch("bot.plugins.edit.session_manager.reset_current_task"),
+            patch("bot.plugins.edit.timeout_session", new_callable=MagicMock),
+            patch("bot.plugins.edit.asyncio.create_task"),
         ):
             store = MagicMock()
             store.get_entry.return_value = _make_entry(text="旧文本")
@@ -240,9 +240,9 @@ class TestGotConfirm:
     async def test_confirm_flow(self) -> None:
         """用户回复「确认」→ edit_text 被调用。"""
         with (
-            patch("bot.plugins.meme_edit.is_authorized", return_value=True),
-            patch("bot.plugins.meme_edit.session_manager") as mock_sm,
-            patch("bot.plugins.meme_edit.get_index_manager") as mock_im,
+            patch("bot.plugins.edit.is_authorized", return_value=True),
+            patch("bot.plugins.edit.session_manager") as mock_sm,
+            patch("bot.plugins.edit.get_index_manager") as mock_im,
         ):
             mock_sm.handler_context.return_value.__enter__ = MagicMock()
             mock_sm.handler_context.return_value.__exit__ = MagicMock()
@@ -271,8 +271,8 @@ class TestGotConfirm:
     async def test_cancel_flow(self) -> None:
         """用户回复其他内容 → 回复已取消。"""
         with (
-            patch("bot.plugins.meme_edit.is_authorized", return_value=True),
-            patch("bot.plugins.meme_edit.session_manager") as mock_sm,
+            patch("bot.plugins.edit.is_authorized", return_value=True),
+            patch("bot.plugins.edit.session_manager") as mock_sm,
         ):
             mock_sm.handler_context.return_value.__enter__ = MagicMock()
             mock_sm.handler_context.return_value.__exit__ = MagicMock()
@@ -291,8 +291,8 @@ class TestGotConfirm:
     async def test_help_bypass(self) -> None:
         """等待确认时 /help → 旁路，不取消。"""
         with (
-            patch("bot.plugins.meme_edit.is_authorized", return_value=True),
-            patch("bot.plugins.meme_edit.got_intercept_bypass") as mock_bypass,
+            patch("bot.plugins.edit.is_authorized", return_value=True),
+            patch("bot.plugins.edit.got_intercept_bypass") as mock_bypass,
         ):
             # Simulate bypass returning False (handled by bypass, so finish not called)
             async def bypass_side_effect(event, matcher, text, help_text):
@@ -321,8 +321,8 @@ class TestGotConfirm:
     async def test_cancel_bypass(self) -> None:
         """等待确认时 /cancel → 取消，不执行修改。"""
         with (
-            patch("bot.plugins.meme_edit.is_authorized", return_value=True),
-            patch("bot.plugins.meme_edit.got_intercept_bypass") as mock_bypass,
+            patch("bot.plugins.edit.is_authorized", return_value=True),
+            patch("bot.plugins.edit.got_intercept_bypass") as mock_bypass,
         ):
 
             async def bypass_side_effect(event, matcher, text, help_text):
@@ -350,9 +350,9 @@ class TestGotConfirm:
     async def test_timeout_handling(self) -> None:
         """edit_text 超时 → 回复超时消息。"""
         with (
-            patch("bot.plugins.meme_edit.is_authorized", return_value=True),
-            patch("bot.plugins.meme_edit.session_manager") as mock_sm,
-            patch("bot.plugins.meme_edit.get_index_manager") as mock_im,
+            patch("bot.plugins.edit.is_authorized", return_value=True),
+            patch("bot.plugins.edit.session_manager") as mock_sm,
+            patch("bot.plugins.edit.get_index_manager") as mock_im,
         ):
             mock_sm.handler_context.return_value.__enter__ = MagicMock()
             mock_sm.handler_context.return_value.__exit__ = MagicMock()

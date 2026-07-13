@@ -1,6 +1,6 @@
 """帮助文本常量。
 
-供 meme_help.py 和 meme_plain_text.py 共享。
+供 help.py 和 plain_text.py 共享。
 下划线开头避免 NoneBot2 自动加载为插件。
 """
 

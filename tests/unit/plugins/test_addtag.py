@@ -18,7 +18,7 @@ with (
     patch("nonebot.on_command", return_value=_mock_cmd),
     patch("nonebot.params.Arg", return_value="CONFIRM_ARG_SENTINEL"),
 ):
-    from bot.plugins.meme_addtag import (
+    from bot.plugins.addtag import (
         got_confirm,
         handle_addtag,
     )
@@ -83,8 +83,8 @@ class TestHandleAddtag:
     def test_unauthorized(self) -> None:
         """非授权用户应调用 finish(None) 结束匹配。"""
         with (
-            patch("bot.plugins.meme_addtag.is_authorized", return_value=False),
-            patch("bot.plugins.meme_addtag.log_unauthorized") as mock_log,
+            patch("bot.plugins.addtag.is_authorized", return_value=False),
+            patch("bot.plugins.addtag.log_unauthorized") as mock_log,
         ):
             bot = _make_bot()
             event = _make_event()
@@ -99,9 +99,9 @@ class TestHandleAddtag:
     def test_group_chat(self) -> None:
         """群聊中 @bot → 回复仅限私聊。"""
         with (
-            patch("bot.plugins.meme_addtag.is_authorized", return_value=True),
+            patch("bot.plugins.addtag.is_authorized", return_value=True),
             patch(
-                "bot.plugins.meme_addtag.session_manager.activate_chat",
+                "bot.plugins.addtag.session_manager.activate_chat",
                 return_value=True,
             ),
         ):
@@ -122,9 +122,9 @@ class TestHandleAddtag:
     def test_active_session_conflict(self) -> None:
         """已有活跃会话 → 提示 /cancel。"""
         with (
-            patch("bot.plugins.meme_addtag.is_authorized", return_value=True),
+            patch("bot.plugins.addtag.is_authorized", return_value=True),
             patch(
-                "bot.plugins.meme_addtag.session_manager.activate_chat",
+                "bot.plugins.addtag.session_manager.activate_chat",
                 return_value=False,
             ),
         ):
@@ -141,9 +141,9 @@ class TestHandleAddtag:
     def test_missing_args(self) -> None:
         """无参数 → 回复用法提示。"""
         with (
-            patch("bot.plugins.meme_addtag.is_authorized", return_value=True),
+            patch("bot.plugins.addtag.is_authorized", return_value=True),
             patch(
-                "bot.plugins.meme_addtag.session_manager.activate_chat",
+                "bot.plugins.addtag.session_manager.activate_chat",
                 return_value=True,
             ),
         ):
@@ -160,9 +160,9 @@ class TestHandleAddtag:
     def test_missing_tags(self) -> None:
         """只有 entry_id 无标签 → 回复用法提示。"""
         with (
-            patch("bot.plugins.meme_addtag.is_authorized", return_value=True),
+            patch("bot.plugins.addtag.is_authorized", return_value=True),
             patch(
-                "bot.plugins.meme_addtag.session_manager.activate_chat",
+                "bot.plugins.addtag.session_manager.activate_chat",
                 return_value=True,
             ),
         ):
@@ -179,9 +179,9 @@ class TestHandleAddtag:
     def test_invalid_entry_id(self) -> None:
         """非数字 entry_id → 回复 entry_id 必须为数字。"""
         with (
-            patch("bot.plugins.meme_addtag.is_authorized", return_value=True),
+            patch("bot.plugins.addtag.is_authorized", return_value=True),
             patch(
-                "bot.plugins.meme_addtag.session_manager.activate_chat",
+                "bot.plugins.addtag.session_manager.activate_chat",
                 return_value=True,
             ),
         ):
@@ -198,12 +198,12 @@ class TestHandleAddtag:
     def test_entry_not_found(self) -> None:
         """entry_id 不存在 → 回复未找到。"""
         with (
-            patch("bot.plugins.meme_addtag.is_authorized", return_value=True),
+            patch("bot.plugins.addtag.is_authorized", return_value=True),
             patch(
-                "bot.plugins.meme_addtag.session_manager.activate_chat",
+                "bot.plugins.addtag.session_manager.activate_chat",
                 return_value=True,
             ),
-            patch("bot.plugins.meme_addtag.get_metadata_store") as mock_get_store,
+            patch("bot.plugins.addtag.get_metadata_store") as mock_get_store,
         ):
             store = MagicMock()
             store.get_entry.return_value = None
@@ -222,13 +222,13 @@ class TestHandleAddtag:
     def test_confirmation_message(self) -> None:
         """参数合法 → 发送确认消息并保存 state。"""
         with (
-            patch("bot.plugins.meme_addtag.is_authorized", return_value=True),
+            patch("bot.plugins.addtag.is_authorized", return_value=True),
             patch(
-                "bot.plugins.meme_addtag.session_manager.activate_chat",
+                "bot.plugins.addtag.session_manager.activate_chat",
                 return_value=True,
             ),
-            patch("bot.plugins.meme_addtag.get_metadata_store") as mock_get_store,
-            patch("bot.plugins.meme_addtag.get_index_manager"),
+            patch("bot.plugins.addtag.get_metadata_store") as mock_get_store,
+            patch("bot.plugins.addtag.get_index_manager"),
         ):
             store = MagicMock()
             store.get_entry.return_value = _make_entry(tags=["已有"])
@@ -265,9 +265,9 @@ class TestGotConfirm:
     def test_confirm_yes(self) -> None:
         """用户回复确认 → 调用 add_tags，回复成功。"""
         with (
-            patch("bot.plugins.meme_addtag.session_manager.handler_context"),
-            patch("bot.plugins.meme_addtag.session_manager.deactivate_chat"),
-            patch("bot.plugins.meme_addtag.get_index_manager") as mock_get_im,
+            patch("bot.plugins.addtag.session_manager.handler_context"),
+            patch("bot.plugins.addtag.session_manager.deactivate_chat"),
+            patch("bot.plugins.addtag.get_index_manager") as mock_get_im,
         ):
             im = MagicMock()
             im.add_tags = AsyncMock(
@@ -298,9 +298,9 @@ class TestGotConfirm:
     def test_confirm_yes_english(self) -> None:
         """用户回复 yes → 调用 add_tags。"""
         with (
-            patch("bot.plugins.meme_addtag.session_manager.handler_context"),
-            patch("bot.plugins.meme_addtag.session_manager.deactivate_chat"),
-            patch("bot.plugins.meme_addtag.get_index_manager") as mock_get_im,
+            patch("bot.plugins.addtag.session_manager.handler_context"),
+            patch("bot.plugins.addtag.session_manager.deactivate_chat"),
+            patch("bot.plugins.addtag.get_index_manager") as mock_get_im,
         ):
             im = MagicMock()
             im.add_tags = AsyncMock(
@@ -324,8 +324,8 @@ class TestGotConfirm:
     def test_cancel(self) -> None:
         """用户回复其他内容 → 回复已取消。"""
         with (
-            patch("bot.plugins.meme_addtag.session_manager.handler_context"),
-            patch("bot.plugins.meme_addtag.session_manager.deactivate_chat"),
+            patch("bot.plugins.addtag.session_manager.handler_context"),
+            patch("bot.plugins.addtag.session_manager.deactivate_chat"),
         ):
             bot = _make_bot()
             event = _make_event(text="不")
@@ -342,10 +342,10 @@ class TestGotConfirm:
     def test_cancel_intercept(self) -> None:
         """等待确认时 /cancel → 旁路取消。"""
         with (
-            patch("bot.plugins.meme_addtag.session_manager.handler_context"),
-            patch("bot.plugins.meme_addtag.session_manager.deactivate_chat"),
+            patch("bot.plugins.addtag.session_manager.handler_context"),
+            patch("bot.plugins.addtag.session_manager.deactivate_chat"),
             patch(
-                "bot.plugins.meme_addtag.got_intercept_bypass",
+                "bot.plugins.addtag.got_intercept_bypass",
                 new_callable=AsyncMock,
             ) as mock_bypass,
         ):
@@ -371,13 +371,13 @@ class TestShortCommandAddtag:
     def test_short_command_extracts_id_and_tags(self) -> None:
         """短命令 /at 的参数经 CommandArg 提取后应与 /addtag 一致。"""
         with (
-            patch("bot.plugins.meme_addtag.is_authorized", return_value=True),
+            patch("bot.plugins.addtag.is_authorized", return_value=True),
             patch(
-                "bot.plugins.meme_addtag.session_manager.activate_chat",
+                "bot.plugins.addtag.session_manager.activate_chat",
                 return_value=True,
             ),
-            patch("bot.plugins.meme_addtag.get_metadata_store") as mock_store,
-            patch("bot.plugins.meme_addtag.get_index_manager"),
+            patch("bot.plugins.addtag.get_metadata_store") as mock_store,
+            patch("bot.plugins.addtag.get_index_manager"),
         ):
             entry = MagicMock()
             entry.tags = []

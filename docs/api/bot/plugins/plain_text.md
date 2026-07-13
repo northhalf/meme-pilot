@@ -1,4 +1,4 @@
-# bot/plugins/meme_plain_text.py — 兜底消息插件
+# bot/plugins/plain_text.py — 兜底消息插件
 
 > NoneBot2 兜底插件，处理普通文本和未知斜杠命令。无对外 Python API。
 

@@ -15,8 +15,8 @@ _mock_cmd = MagicMock()
 _mock_cmd.handle.return_value = lambda fn: fn  # 透传 decorator
 
 with patch("nonebot.on_command", return_value=_mock_cmd):
-    from bot.plugins import meme_help
-    from bot.plugins.meme_help import handle_help
+    from bot.plugins import help
+    from bot.plugins.help import handle_help
 
 
 # ---------------------------------------------------------------------------
@@ -62,7 +62,7 @@ class TestHandleHelp:
     """/help 命令测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_help, "is_authorized", return_value=True)
+    @patch.object(help, "is_authorized", return_value=True)
     async def test_authorized_user_receives_help(
         self, mock_auth: MagicMock
     ) -> None:
@@ -83,7 +83,7 @@ class TestHandleHelp:
         _assert_no_reply(call_args)
 
     @pytest.mark.asyncio
-    @patch.object(meme_help, "is_authorized", return_value=False)
+    @patch.object(help, "is_authorized", return_value=False)
     async def test_unauthorized_user_ignored(
         self, mock_auth: MagicMock
     ) -> None:
@@ -99,7 +99,7 @@ class TestHandleHelp:
         bot.send.assert_not_called()
 
     @pytest.mark.asyncio
-    @patch.object(meme_help, "is_authorized", return_value=True)
+    @patch.object(help, "is_authorized", return_value=True)
     async def test_group_chat_reply(
         self, mock_auth: MagicMock
     ) -> None:

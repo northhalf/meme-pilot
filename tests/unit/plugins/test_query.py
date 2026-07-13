@@ -9,8 +9,8 @@ _mock_cmd.handle.return_value = lambda fn: fn
 _mock_cmd.got.return_value = lambda fn: fn
 
 with patch("nonebot.on_command", return_value=_mock_cmd):
-    from bot.plugins import meme_query
-    from bot.plugins.meme_query import _parse_args, handle_query
+    from bot.plugins import query
+    from bot.plugins.query import _parse_args, handle_query
 
 from tests.conftest import _assert_has_reply, _assert_no_reply, extract_message_text
 
@@ -89,9 +89,9 @@ class TestParseArgs:
 
 class TestHandleQueryAuth:
     @pytest.mark.asyncio
-    @patch.object(meme_query.session_manager, "activate_chat", return_value=True)
-    @patch.object(meme_query, "is_authorized", return_value=True)
-    @patch.object(meme_query, "execute_combined_search", new_callable=AsyncMock)
+    @patch.object(query.session_manager, "activate_chat", return_value=True)
+    @patch.object(query, "is_authorized", return_value=True)
+    @patch.object(query, "execute_combined_search", new_callable=AsyncMock)
     async def test_authorized_proceeds(
         self, mock_exec: AsyncMock, mock_auth: MagicMock, mock_activate: MagicMock
     ) -> None:
@@ -101,8 +101,8 @@ class TestHandleQueryAuth:
         mock_exec.assert_awaited_once()
 
     @pytest.mark.asyncio
-    @patch.object(meme_query, "log_unauthorized")
-    @patch.object(meme_query, "is_authorized", return_value=False)
+    @patch.object(query, "log_unauthorized")
+    @patch.object(query, "is_authorized", return_value=False)
     async def test_unauthorized_silent(
         self, mock_auth: MagicMock, mock_log: MagicMock
     ) -> None:
@@ -113,9 +113,9 @@ class TestHandleQueryAuth:
 
 class TestHandleQueryEmptyArgs:
     @pytest.mark.asyncio
-    @patch.object(meme_query.session_manager, "activate_chat", return_value=True)
-    @patch.object(meme_query.session_manager, "deactivate_chat")
-    @patch.object(meme_query, "is_authorized", return_value=True)
+    @patch.object(query.session_manager, "activate_chat", return_value=True)
+    @patch.object(query.session_manager, "deactivate_chat")
+    @patch.object(query, "is_authorized", return_value=True)
     async def test_all_empty_replies_usage(
         self,
         mock_auth: MagicMock,
@@ -130,9 +130,9 @@ class TestHandleQueryEmptyArgs:
         _assert_no_reply(msg)
 
     @pytest.mark.asyncio
-    @patch.object(meme_query.session_manager, "activate_chat", return_value=True)
-    @patch.object(meme_query.session_manager, "deactivate_chat")
-    @patch.object(meme_query, "is_authorized", return_value=True)
+    @patch.object(query.session_manager, "activate_chat", return_value=True)
+    @patch.object(query.session_manager, "deactivate_chat")
+    @patch.object(query, "is_authorized", return_value=True)
     async def test_all_empty_replies_usage_group_reply(
         self,
         mock_auth: MagicMock,
@@ -152,9 +152,9 @@ class TestHandleQueryEmptyArgs:
 
 class TestHandleQueryOptions:
     @pytest.mark.asyncio
-    @patch.object(meme_query.session_manager, "activate_chat", return_value=True)
-    @patch.object(meme_query, "is_authorized", return_value=True)
-    @patch.object(meme_query, "execute_combined_search", new_callable=AsyncMock)
+    @patch.object(query.session_manager, "activate_chat", return_value=True)
+    @patch.object(query, "is_authorized", return_value=True)
+    @patch.object(query, "execute_combined_search", new_callable=AsyncMock)
     async def test_keyword_uses_kw_options(
         self, mock_exec: AsyncMock, mock_auth: MagicMock, mock_activate: MagicMock
     ) -> None:
@@ -166,9 +166,9 @@ class TestHandleQueryOptions:
         assert matcher.state["query_options"].show_similarity is True
 
     @pytest.mark.asyncio
-    @patch.object(meme_query.session_manager, "activate_chat", return_value=True)
-    @patch.object(meme_query, "is_authorized", return_value=True)
-    @patch.object(meme_query, "execute_combined_search", new_callable=AsyncMock)
+    @patch.object(query.session_manager, "activate_chat", return_value=True)
+    @patch.object(query, "is_authorized", return_value=True)
+    @patch.object(query, "execute_combined_search", new_callable=AsyncMock)
     async def test_no_keyword_uses_filter_options(
         self, mock_exec: AsyncMock, mock_auth: MagicMock, mock_activate: MagicMock
     ) -> None:
@@ -183,8 +183,8 @@ class TestHandleQueryOptions:
 
 class TestHandleQuerySession:
     @pytest.mark.asyncio
-    @patch.object(meme_query.session_manager, "activate_chat", return_value=False)
-    @patch.object(meme_query, "is_authorized", return_value=True)
+    @patch.object(query.session_manager, "activate_chat", return_value=False)
+    @patch.object(query, "is_authorized", return_value=True)
     async def test_busy_replies_cancel(
         self, mock_auth: MagicMock, mock_activate: MagicMock
     ) -> None:
@@ -196,8 +196,8 @@ class TestHandleQuerySession:
         _assert_no_reply(msg)
 
     @pytest.mark.asyncio
-    @patch.object(meme_query.session_manager, "activate_chat", return_value=False)
-    @patch.object(meme_query, "is_authorized", return_value=True)
+    @patch.object(query.session_manager, "activate_chat", return_value=False)
+    @patch.object(query, "is_authorized", return_value=True)
     async def test_busy_replies_cancel_group_reply(
         self, mock_auth: MagicMock, mock_activate: MagicMock
     ) -> None:

@@ -20,8 +20,8 @@ _mock_cmd.got.return_value = lambda fn: fn
 
 with patch("nonebot.on_command", return_value=_mock_cmd):
     from nonebot.adapters.onebot.v11 import Message
-    from bot.plugins import meme_info
-    from bot.plugins.meme_info import handle_info
+    from bot.plugins import info
+    from bot.plugins.info import handle_info
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +86,7 @@ class TestHandleInfoAuth:
     """授权校验测试。"""
 
     @pytest.mark.asyncio
-    @patch.object(meme_info, "is_authorized", return_value=False)
+    @patch.object(info, "is_authorized", return_value=False)
     async def test_unauthorized_user_ignored(
         self, mock_auth: MagicMock
     ) -> None:
@@ -109,11 +109,11 @@ class TestHandleInfoOverall:
     """无参数 /info 测试。"""
 
     @pytest.mark.asyncio
-    @patch("bot.plugins.meme_info.psutil.Process")
-    @patch("bot.plugins.meme_info.psutil.cpu_percent", return_value=12.5)
-    @patch("bot.plugins.meme_info.psutil.virtual_memory")
-    @patch("bot.plugins.meme_info.get_index_manager")
-    @patch.object(meme_info, "is_authorized", return_value=True)
+    @patch("bot.plugins.info.psutil.Process")
+    @patch("bot.plugins.info.psutil.cpu_percent", return_value=12.5)
+    @patch("bot.plugins.info.psutil.virtual_memory")
+    @patch("bot.plugins.info.get_index_manager")
+    @patch.object(info, "is_authorized", return_value=True)
     async def test_overall_includes_process_memory(
         self,
         mock_auth: MagicMock,
@@ -152,11 +152,11 @@ class TestHandleInfoOverall:
         _assert_no_reply(reply)
 
     @pytest.mark.asyncio
-    @patch("bot.plugins.meme_info.psutil.Process")
-    @patch("bot.plugins.meme_info.psutil.cpu_percent", return_value=12.5)
-    @patch("bot.plugins.meme_info.psutil.virtual_memory")
-    @patch("bot.plugins.meme_info.get_index_manager")
-    @patch.object(meme_info, "is_authorized", return_value=True)
+    @patch("bot.plugins.info.psutil.Process")
+    @patch("bot.plugins.info.psutil.cpu_percent", return_value=12.5)
+    @patch("bot.plugins.info.psutil.virtual_memory")
+    @patch("bot.plugins.info.get_index_manager")
+    @patch.object(info, "is_authorized", return_value=True)
     async def test_process_memory_failure_shows_fallback(
         self,
         mock_auth: MagicMock,
@@ -197,8 +197,8 @@ class TestHandleInfoDetail:
     """`/info <id>` 详情测试。"""
 
     @pytest.mark.asyncio
-    @patch("bot.plugins.meme_info.get_index_manager")
-    @patch.object(meme_info, "is_authorized", return_value=True)
+    @patch("bot.plugins.info.get_index_manager")
+    @patch.object(info, "is_authorized", return_value=True)
     async def test_valid_id_shows_detail(
         self,
         mock_auth: MagicMock,
@@ -209,7 +209,7 @@ class TestHandleInfoDetail:
         image_file = tmp_path / "test.jpg"
         image_file.write_bytes(b"x" * 1536)  # 1.50 KB
 
-        with patch("bot.plugins.meme_info.MEMES_DIR", tmp_path):
+        with patch("bot.plugins.info.MEMES_DIR", tmp_path):
             entry = MemeEntry(
                 id=42,
                 image_path="test.jpg",
@@ -241,8 +241,8 @@ class TestHandleInfoDetail:
             assert "标签：吐槽, 加班" in text
 
     @pytest.mark.asyncio
-    @patch("bot.plugins.meme_info.get_index_manager")
-    @patch.object(meme_info, "is_authorized", return_value=True)
+    @patch("bot.plugins.info.get_index_manager")
+    @patch.object(info, "is_authorized", return_value=True)
     async def test_valid_id_missing_file_shows_not_found(
         self,
         mock_auth: MagicMock,
@@ -250,7 +250,7 @@ class TestHandleInfoDetail:
         tmp_path: Path,
     ) -> None:
         """entry 存在但文件不存在时大小显示「文件不存在」。"""
-        with patch("bot.plugins.meme_info.MEMES_DIR", tmp_path):
+        with patch("bot.plugins.info.MEMES_DIR", tmp_path):
             entry = MemeEntry(
                 id=7,
                 image_path="missing.webp",
@@ -274,11 +274,11 @@ class TestHandleInfoDetail:
             _assert_no_reply(reply)
 
     @pytest.mark.asyncio
-    @patch("bot.plugins.meme_info.psutil.Process")
-    @patch("bot.plugins.meme_info.psutil.cpu_percent", return_value=0.0)
-    @patch("bot.plugins.meme_info.psutil.virtual_memory")
-    @patch("bot.plugins.meme_info.get_index_manager")
-    @patch.object(meme_info, "is_authorized", return_value=True)
+    @patch("bot.plugins.info.psutil.Process")
+    @patch("bot.plugins.info.psutil.cpu_percent", return_value=0.0)
+    @patch("bot.plugins.info.psutil.virtual_memory")
+    @patch("bot.plugins.info.get_index_manager")
+    @patch.object(info, "is_authorized", return_value=True)
     async def test_invalid_id_falls_back_to_overall(
         self,
         mock_auth: MagicMock,
@@ -315,11 +315,11 @@ class TestHandleInfoDetail:
         _assert_no_reply(reply)
 
     @pytest.mark.asyncio
-    @patch("bot.plugins.meme_info.psutil.Process")
-    @patch("bot.plugins.meme_info.psutil.cpu_percent", return_value=0.0)
-    @patch("bot.plugins.meme_info.psutil.virtual_memory")
-    @patch("bot.plugins.meme_info.get_index_manager")
-    @patch.object(meme_info, "is_authorized", return_value=True)
+    @patch("bot.plugins.info.psutil.Process")
+    @patch("bot.plugins.info.psutil.cpu_percent", return_value=0.0)
+    @patch("bot.plugins.info.psutil.virtual_memory")
+    @patch("bot.plugins.info.get_index_manager")
+    @patch.object(info, "is_authorized", return_value=True)
     async def test_nonexistent_id_falls_back_to_overall(
         self,
         mock_auth: MagicMock,
@@ -356,8 +356,8 @@ class TestHandleInfoDetail:
         _assert_no_reply(reply)
 
     @pytest.mark.asyncio
-    @patch("bot.plugins.meme_info.get_index_manager")
-    @patch.object(meme_info, "is_authorized", return_value=True)
+    @patch("bot.plugins.info.get_index_manager")
+    @patch.object(info, "is_authorized", return_value=True)
     async def test_detail_lock_timeout(
         self,
         mock_auth: MagicMock,
@@ -392,11 +392,11 @@ class TestHandleInfoGroupChat:
     """群聊场景测试。"""
 
     @pytest.mark.asyncio
-    @patch("bot.plugins.meme_info.psutil.Process")
-    @patch("bot.plugins.meme_info.psutil.cpu_percent", return_value=12.5)
-    @patch("bot.plugins.meme_info.psutil.virtual_memory")
-    @patch("bot.plugins.meme_info.get_index_manager")
-    @patch.object(meme_info, "is_authorized", return_value=True)
+    @patch("bot.plugins.info.psutil.Process")
+    @patch("bot.plugins.info.psutil.cpu_percent", return_value=12.5)
+    @patch("bot.plugins.info.psutil.virtual_memory")
+    @patch("bot.plugins.info.get_index_manager")
+    @patch.object(info, "is_authorized", return_value=True)
     async def test_group_chat_allowed(
         self,
         mock_auth: MagicMock,
@@ -440,11 +440,11 @@ class TestHandleInfoGroupChat:
         assert "当前机器人状态：空闲" in text
 
     @pytest.mark.asyncio
-    @patch("bot.plugins.meme_info.psutil.Process")
-    @patch("bot.plugins.meme_info.psutil.cpu_percent", return_value=0.0)
-    @patch("bot.plugins.meme_info.psutil.virtual_memory")
-    @patch("bot.plugins.meme_info.get_index_manager")
-    @patch.object(meme_info, "is_authorized", return_value=True)
+    @patch("bot.plugins.info.psutil.Process")
+    @patch("bot.plugins.info.psutil.cpu_percent", return_value=0.0)
+    @patch("bot.plugins.info.psutil.virtual_memory")
+    @patch("bot.plugins.info.get_index_manager")
+    @patch.object(info, "is_authorized", return_value=True)
     async def test_group_chat_without_message_id_fallback_to_plain_text(
         self,
         mock_auth: MagicMock,
@@ -486,8 +486,8 @@ class TestHandleInfoIndexFailure:
     """索引信息获取失败测试。"""
 
     @pytest.mark.asyncio
-    @patch("bot.plugins.meme_info.get_index_manager")
-    @patch.object(meme_info, "is_authorized", return_value=True)
+    @patch("bot.plugins.info.get_index_manager")
+    @patch.object(info, "is_authorized", return_value=True)
     async def test_info_failure_returns_error_message(
         self,
         mock_auth: MagicMock,
@@ -513,11 +513,11 @@ class TestHandleInfoStatusOverride:
     """状态覆写测试。"""
 
     @pytest.mark.asyncio
-    @patch("bot.plugins.meme_info.psutil.Process")
-    @patch("bot.plugins.meme_info.psutil.cpu_percent", return_value=12.5)
-    @patch("bot.plugins.meme_info.psutil.virtual_memory")
-    @patch("bot.plugins.meme_info.get_index_manager")
-    @patch.object(meme_info, "is_authorized", return_value=True)
+    @patch("bot.plugins.info.psutil.Process")
+    @patch("bot.plugins.info.psutil.cpu_percent", return_value=12.5)
+    @patch("bot.plugins.info.psutil.virtual_memory")
+    @patch("bot.plugins.info.get_index_manager")
+    @patch.object(info, "is_authorized", return_value=True)
     async def test_info_overrides_status_when_session_active(
         self,
         mock_auth: MagicMock,
@@ -563,11 +563,11 @@ class TestHandleInfoStatusOverride:
             session_manager.deactivate_chat(scope)
 
     @pytest.mark.asyncio
-    @patch("bot.plugins.meme_info.psutil.Process")
-    @patch("bot.plugins.meme_info.psutil.cpu_percent", return_value=12.5)
-    @patch("bot.plugins.meme_info.psutil.virtual_memory")
-    @patch("bot.plugins.meme_info.get_index_manager")
-    @patch.object(meme_info, "is_authorized", return_value=True)
+    @patch("bot.plugins.info.psutil.Process")
+    @patch("bot.plugins.info.psutil.cpu_percent", return_value=12.5)
+    @patch("bot.plugins.info.psutil.virtual_memory")
+    @patch("bot.plugins.info.get_index_manager")
+    @patch.object(info, "is_authorized", return_value=True)
     async def test_info_keeps_idle_when_no_session(
         self,
         mock_auth: MagicMock,

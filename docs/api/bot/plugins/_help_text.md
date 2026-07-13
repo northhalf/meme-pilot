@@ -1,6 +1,6 @@
 # bot/plugins/_help_text.py — 帮助文本常量模块
 
-> 以下划线开头避免 NoneBot2 自动加载为插件。供 `meme_help.py` 和 `meme_plain_text.py` 共享。
+> 以下划线开头避免 NoneBot2 自动加载为插件。供 `help.py` 和 `plain_text.py` 共享。
 
 ## 常量
 

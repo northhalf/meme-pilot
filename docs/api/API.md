@@ -39,21 +39,21 @@ api
     └── plugins
         ├── _help_text.md
         ├── _search_utils.md
-        ├── meme_help.md
-        ├── meme_refresh.md
-        ├── meme_add.md
-        ├── meme_addtag.md
-        ├── meme_delete.md
-        ├── meme_edit.md
-        ├── meme_setspeaker.md
-        ├── meme_info.md
-        ├── meme_ai.md
-        ├── meme_cancel.md
-        ├── meme_plain_text.md
-        ├── meme_rand.md
-        ├── meme_sim.md
-        ├── meme_search.md（已删除说明）
-        └── meme_query.md
+        ├── help.md
+        ├── refresh.md
+        ├── add.md
+        ├── addtag.md
+        ├── delete.md
+        ├── edit.md
+        ├── setspeaker.md
+        ├── info.md
+        ├── ai.md
+        ├── cancel.md
+        ├── plain_text.md
+        ├── rand.md
+        ├── sim.md
+        ├── search.md（已删除说明）
+        └── query.md
 ```
 
 ## API 文件索引
@@ -746,7 +746,7 @@ def get_combined_searcher() -> CombinedSearcher
 - `is_authorized(user_id: str) -> bool` — 校验用户是否在白名单中
 - `log_unauthorized(user_id: str, command: str) -> None` — 记录非授权访问日志
 
-### `bot/plugins/meme_refresh.py`
+### `bot/plugins/refresh.py`
 
 NoneBot2 命令插件，注册 `/refresh` 命令。
 
@@ -757,7 +757,7 @@ NoneBot2 命令插件，注册 `/refresh` 命令。
 
 ### `bot/plugins/_search_utils.py`
 
-搜索核心逻辑模块，以下划线开头避免 NoneBot2 自动加载为插件。提供 `format_metadata_line`、`resolve_selection`、`present_candidates`、`dispatch_search_results`、`execute_search`、`handle_got_selection`、`got_intercept_bypass` 供 `meme_rand`、`meme_sim`、`meme_plain_text` 等插件复用。
+搜索核心逻辑模块，以下划线开头避免 NoneBot2 自动加载为插件。提供 `format_metadata_line`、`resolve_selection`、`present_candidates`、`dispatch_search_results`、`execute_search`、`handle_got_selection`、`got_intercept_bypass` 供 `rand`、`sim`、`plain_text` 等插件复用。
 
 ```python
 PAGE_SIZE: int = 10
@@ -846,7 +846,7 @@ async def got_intercept_bypass(
 ```
 
 - 依赖：`app_state.get_index_manager()`、`bot.session.session_manager`、`bot.plugins._search_utils.got_intercept_bypass`、`bot.config.MEMES_DIR`、`bot.plugins._help_text.HELP_TEXT`
-- 供 `meme_rand.py`、`meme_sim.py`、`meme_plain_text.py` 共享
+- 供 `rand.py`、`sim.py`、`plain_text.py` 共享
 
 ### `bot/plugins/_help_text.py`
 
@@ -856,9 +856,9 @@ async def got_intercept_bypass(
 HELP_TEXT: str  # 命令帮助摘要文本
 ```
 
-- 供 `meme_help.py` 和 `meme_plain_text.py` 共享
+- 供 `help.py` 和 `plain_text.py` 共享
 
-### `bot/plugins/meme_help.py`
+### `bot/plugins/help.py`
 
 NoneBot2 命令插件，注册 `/help` 命令。
 
@@ -866,7 +866,7 @@ NoneBot2 命令插件，注册 `/help` 命令。
 - 依赖：`auth.is_authorized()`
 - 群聊：支持群聊 @bot 触发
 
-### `bot/plugins/meme_cancel.py`
+### `bot/plugins/cancel.py`
 
 NoneBot2 命令插件，注册 `/cancel` 命令。
 
@@ -875,7 +875,7 @@ NoneBot2 命令插件，注册 `/cancel` 命令。
 - 行为：授权用户私聊或群聊 @bot 调用 → `execute_cancel()` 取消活跃会话；无活跃会话时回复"当前没有活跃的会话"
 - 旁路：`/cancel` 在 `got` 等待阶段可通过 `got_intercept_bypass` 旁路触发，不受会话互斥影响
 
-### `bot/plugins/meme_plain_text.py`
+### `bot/plugins/plain_text.py`
 
 兜底消息插件，处理普通文本和未知斜杠命令。
 
@@ -923,7 +923,7 @@ async def bot_send(event: MessageEvent, bot: Bot, text: str) -> None
 - `finish/send/reject`：分别调用对应 `matcher.*` 方法发送已包装 reply 的文本
 - `bot_send`：调用 `bot.send(event, ...)`，用于超时任务等无 matcher 的场景
 
-### `bot/plugins/meme_add.py`
+### `bot/plugins/add.py`
 
 NoneBot2 命令插件，注册 `/add` 命令。
 
@@ -939,7 +939,7 @@ NoneBot2 命令插件，注册 `/add` 命令。
 - `/cancel` 和 `/help` 在 got 等待阶段可旁路触发（`got_intercept_bypass`）
 - 错误处理：`try/except/else` 模式，异常统一集中处理
 
-### `bot/plugins/meme_edit.py`
+### `bot/plugins/edit.py`
 
 NoneBot2 命令插件，注册 `/edittext` 命令。
 
@@ -950,7 +950,7 @@ NoneBot2 命令插件，注册 `/edittext` 命令。
 - 错误处理：索引刷新中抛 `RefreshInProgressError`，文本冲突抛 `DuplicateTextError`，id 不存在抛 `ValueError`
 - 群聊：授权用户群聊 @bot 调用时回复"此命令仅限私聊使用"
 
-### `bot/plugins/meme_setspeaker.py`
+### `bot/plugins/setspeaker.py`
 
 NoneBot2 命令插件，注册 `/setspeaker` 命令。
 
@@ -961,7 +961,7 @@ NoneBot2 命令插件，注册 `/setspeaker` 命令。
 - 错误处理：索引刷新中抛 `RefreshInProgressError`，id 不存在抛 `ValueError`
 - 群聊：授权用户群聊 @bot 调用时回复"此命令仅限私聊使用"
 
-### `bot/plugins/meme_addtag.py`
+### `bot/plugins/addtag.py`
 
 NoneBot2 命令插件，注册 `/addtag` 命令。
 
@@ -972,7 +972,7 @@ NoneBot2 命令插件，注册 `/addtag` 命令。
 - 错误处理：索引刷新中抛 `RefreshInProgressError`，id 不存在抛 `ValueError`
 - 群聊：授权用户群聊 @bot 调用时回复"此命令仅限私聊使用"
 
-### `bot/plugins/meme_delete.py`
+### `bot/plugins/delete.py`
 
 NoneBot2 命令插件，注册 `/del` 命令。
 
@@ -983,7 +983,7 @@ NoneBot2 命令插件，注册 `/del` 命令。
 - 错误处理：索引刷新中抛 `RefreshInProgressError`，处理超时抛 `asyncio.TimeoutError`
 - 群聊：授权用户群聊 @bot 调用时回复"此命令仅限私聊使用"
 
-### `bot/plugins/meme_info.py`
+### `bot/plugins/info.py`
 
 NoneBot2 命令插件，注册 `/info` 命令。
 
@@ -1000,7 +1000,7 @@ NoneBot2 命令插件，注册 `/info` 命令。
   - 读锁等待超时时回复 `索引更新较慢，请稍后再试`
 - 群聊：授权用户群聊 @bot 调用时同样返回状态信息或详情
 
-### `bot/plugins/meme_ai.py`
+### `bot/plugins/ai.py`
 
 NoneBot2 命令插件，注册 `/ai` 命令。
 
@@ -1011,7 +1011,7 @@ NoneBot2 命令插件，注册 `/ai` 命令。
 - 图片：`MessageSegment.image("file://" + str(image_path.resolve()))`
 - 群聊：授权用户群聊 @bot 调用时回复"此命令仅限私聊使用"
 
-### `bot/plugins/meme_rand.py`
+### `bot/plugins/rand.py`
 
 NoneBot2 命令插件，注册 `/rand` 命令（随机表情包选择）。
 
@@ -1022,7 +1022,7 @@ NoneBot2 命令插件，注册 `/rand` 命令（随机表情包选择）。
 - 群聊：支持群聊 @bot 触发
 - 错误处理：读锁等待超时回复"索引更新较慢，请稍后再试"；搜索异常回复"搜索服务暂时不可用，稍后重试"
 
-### `bot/plugins/meme_sim.py`
+### `bot/plugins/sim.py`
 
 NoneBot2 命令插件，注册 `/sim` 命令（语义相似度全库召回 + 分页选择）。
 
@@ -1032,13 +1032,13 @@ NoneBot2 命令插件，注册 `/sim` 命令（语义相似度全库召回 + 分
 - 群聊：支持群聊 @bot 触发
 - 错误处理：读锁等待超时回复"索引更新较慢，请稍后再试"；embedding/搜索异常回复"AI 服务暂时不可用，稍后重试"
 
-### `bot/plugins/meme_search.py`
+### `bot/plugins/search.py`
 
 已删除。
 
 原 `/search <关键词>`（短命令 `/s`）命令已移除；普通文本兜底搜索与 `/query` 继续提供关键词搜索能力。
 
-### `bot/plugins/meme_query.py`
+### `bot/plugins/query.py`
 
 NoneBot2 命令插件，注册 `/query` 命令。
 

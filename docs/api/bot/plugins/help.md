@@ -1,4 +1,4 @@
-# bot/plugins/meme_help.py — /help 命令插件
+# bot/plugins/help.py — /help 命令插件
 
 > NoneBot2 命令插件，无对外 Python API。本文档记录命令行为与依赖。
 
@@ -8,7 +8,7 @@
 |------|------|------|
 | `/help` | `/help` | 查看命令帮助 |
 
-普通文本和未知斜杠命令的兜底处理已移入 `bot/plugins/meme_plain_text.py`。授权用户发送普通文本（私聊或群聊 @bot）时等同执行 `/search`，未知斜杠命令时回复"未知命令"并附帮助摘要。
+普通文本和未知斜杠命令的兜底处理已移入 `bot/plugins/plain_text.py`。授权用户发送普通文本（私聊或群聊 @bot）时等同执行 `/search`，未知斜杠命令时回复"未知命令"并附帮助摘要。
 
 ## 依赖
 
