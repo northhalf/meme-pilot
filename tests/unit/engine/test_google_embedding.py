@@ -1,6 +1,6 @@
 """Google Embedding provider 单元测试。"""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -13,14 +13,14 @@ async def test_embed_returns_vector() -> None:
     fake_response = MagicMock()
     fake_response.embeddings = [MagicMock(values=[0.1, 0.2, 0.3])]
 
-    def _fake_embed(*args, **kwargs):
-        return fake_response
-
-    with patch.object(service._client.models, "embed_content", side_effect=_fake_embed) as mock_embed:
+    with patch("asyncio.to_thread", return_value=fake_response) as mock_to_thread:
         vector = await service.embed("hello")
         assert vector == [0.1, 0.2, 0.3]
-        assert mock_embed.call_args is not None
-        assert mock_embed.call_args.kwargs["config"].output_dimensionality == 1024
+        args, kwargs = mock_to_thread.call_args
+        assert args == (service._client.models.embed_content,)
+        assert kwargs["model"] == service._model
+        assert kwargs["contents"] == "hello"
+        assert kwargs["config"].output_dimensionality == 1024
 
 
 @pytest.mark.anyio
@@ -36,12 +36,20 @@ async def test_embed_empty_response_raises_runtime_error() -> None:
     fake_response = MagicMock()
     fake_response.embeddings = []
 
-    def _fake_embed(*args, **kwargs):
-        return fake_response
-
-    with patch.object(service._client.models, "embed_content", side_effect=_fake_embed):
+    with patch("asyncio.to_thread", return_value=fake_response):
         with pytest.raises(RuntimeError, match="Google Embedding API 返回为空"):
             await service.embed("hello")
+
+
+@pytest.mark.anyio
+async def test_close_passes_client_close_directly_to_thread() -> None:
+    """close 应直接把 SDK close 方法交给 asyncio.to_thread。"""
+    service = GoogleEmbeddingService(api_key="test", model="gemini-embedding-2")
+
+    with patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
+        await service.close()
+
+    mock_to_thread.assert_awaited_once_with(service._client.close)
 
 
 def test_create_google_embedding_service_uses_env() -> None:

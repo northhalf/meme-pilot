@@ -9,7 +9,8 @@ from google import genai
 from google.genai import errors as _genai_errors
 from google.genai import types
 
-from bot.log_context import get_request_id, set_request_id, timed
+from bot.log_context import timed
+
 from .retry_config import api_retry
 
 # Google GenAI SDK 异常类可能随版本变化，做防御性导入
@@ -84,15 +85,9 @@ class GoogleEmbeddingService:
 
             async with self._semaphore:
                 logger.debug("调用 Google Embedding API: model=%s", self._model)
-                rid = get_request_id()
-
-                def _call(*args: Any, **kwargs: Any) -> Any:
-                    with set_request_id(rid):
-                        return self._client.models.embed_content(*args, **kwargs)
-
                 try:
                     response = await asyncio.to_thread(
-                        _call,
+                        self._client.models.embed_content,
                         model=self._model,
                         contents=text,
                         config=types.EmbedContentConfig(output_dimensionality=1024),
@@ -119,13 +114,7 @@ class GoogleEmbeddingService:
         网络资源。由于 close() 是同步方法，通过 asyncio.to_thread 在线程池中
         执行，避免阻塞事件循环。
         """
-        rid = get_request_id()
-
-        def _close() -> None:
-            with set_request_id(rid):
-                self._client.close()
-
-        await asyncio.to_thread(_close)
+        await asyncio.to_thread(self._client.close)
 
 
 def create_google_embedding_service() -> GoogleEmbeddingService:

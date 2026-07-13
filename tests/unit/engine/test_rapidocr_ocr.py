@@ -22,8 +22,10 @@ async def test_ocr_returns_cleaned_text() -> None:
         text = await service.ocr("/tmp/fake.png")
         assert text == "helloworld第二行"
         mock_to_thread.assert_awaited_once()
+        # 直接把引擎交给 to_thread，由标准库传播 contextvars
+        args, kwargs = mock_to_thread.call_args
+        assert args == (service._engine, "/tmp/fake.png")
         # 关闭方向分类，仅做检测+识别
-        _, kwargs = mock_to_thread.call_args
         assert kwargs == {"use_det": True, "use_cls": False, "use_rec": True}
 
 

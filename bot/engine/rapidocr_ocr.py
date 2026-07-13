@@ -6,11 +6,11 @@
 import asyncio
 import logging
 import os
-from typing import Any
+
+from rapidocr import RapidOCR
 
 from bot.config import read_int_env
-from bot.log_context import get_request_id, set_request_id, timed
-from rapidocr import RapidOCR
+from bot.log_context import timed
 
 logger = logging.getLogger(__name__)
 
@@ -68,15 +68,9 @@ class RapidOcrService:
 
             async with self._semaphore:
                 logger.debug("调用 RapidOCR: %s", image_path)
-                rid = get_request_id()
-
-                def _call(*args: Any, **kwargs: Any) -> Any:
-                    with set_request_id(rid):
-                        return self._engine(*args, **kwargs)
-
                 try:
                     result = await asyncio.to_thread(
-                        _call,
+                        self._engine,
                         image_path,
                         use_det=True,
                         use_cls=False,
