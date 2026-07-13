@@ -5,6 +5,7 @@
 
 import logging
 
+import jieba
 import jieba.posseg as pseg
 import pylcs
 
@@ -76,6 +77,18 @@ class KeywordSearcher:
         self._metadata_store = metadata_store
         self._threshold = threshold
         self._limit = limit
+
+    @timed(logger, "关键词搜索预热")
+    def warm_up(self) -> None:
+        """预加载 jieba 默认词典。
+
+        在启动阶段加载 jieba 默认词典，避免首次模糊搜索产生初始化耗时。
+
+        Raises:
+            Exception: jieba 默认词典初始化失败时原样传播。
+        """
+        jieba.initialize()
+        logger.info("关键词搜索预热完成")
 
     @staticmethod
     def _compute_similarity(keyword: str, text: str) -> float:

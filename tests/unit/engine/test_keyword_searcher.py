@@ -1,5 +1,9 @@
 """KeywordSearcher 单元测试。"""
 
+import logging
+from unittest.mock import Mock
+
+import jieba
 import pytest
 
 from bot.engine.keyword_searcher import KeywordSearcher
@@ -80,6 +84,41 @@ class TestInit:
 
     def test_custom_limit(self) -> None:
         assert KeywordSearcher(MockMetadataStore(), limit=5)._limit == 5
+
+
+class TestWarmUp:
+    """warm_up：启动阶段预加载 jieba 默认词典。"""
+
+    def test_initializes_jieba_and_logs_success(
+        self,
+        searcher: KeywordSearcher,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """预热应初始化 jieba 并记录完成日志。"""
+        initialize = Mock()
+        monkeypatch.setattr(jieba, "initialize", initialize)
+        caplog.set_level(logging.INFO, logger="bot.engine.keyword_searcher")
+
+        searcher.warm_up()
+
+        initialize.assert_called_once_with()
+        assert "关键词搜索预热完成" in caplog.text
+
+    def test_propagates_initialization_error(
+        self,
+        searcher: KeywordSearcher,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """jieba 初始化失败时应原样传播异常。"""
+        error = RuntimeError("词典加载失败")
+        initialize = Mock(side_effect=error)
+        monkeypatch.setattr(jieba, "initialize", initialize)
+
+        with pytest.raises(RuntimeError) as exc_info:
+            searcher.warm_up()
+
+        assert exc_info.value is error
 
 
 class TestSearchExactSubstring:

@@ -2,7 +2,7 @@
 
 启动流程：
 1. 初始化 NoneBot2 框架（fastapi 驱动器 + OneBot V11 适配器）
-2. 注册 startup hook：初始化 engine 服务，后台执行首次索引同步
+2. 注册 startup hook：初始化 engine 服务并预热关键词搜索，后台执行首次索引同步
 3. 加载 bot/plugins/ 下所有命令插件
 4. 启动驱动器监听反向 WebSocket
 """
@@ -50,32 +50,40 @@ from bot.logging_config import setup_logging
 logger = logging.getLogger("bot")
 
 
-async def _background_sync(index_manager: IndexManager) -> None:
-    """后台索引同步任务，不阻塞启动。
+async def _background_sync() -> None:
+    """后台索引同步与关键词搜索预热任务。
 
-    Args:
-        index_manager: 已加载索引的 IndexManager 实例。
+    在 Bot 对外可用前并发完成：
+    - jieba 默认词典预热（避免首个模糊查询承担初始化耗时）
+    - 首次索引刷新
+
+    依赖 app_state 已注册 IndexManager 与 KeywordSearcher。
     """
+    from bot.app_state import get_index_manager, get_keyword_searcher
+
+    index_manager = get_index_manager()
+    keyword_searcher = get_keyword_searcher()
     with set_request_id("background"):
-        try:
-            result = await index_manager.refresh()
-            if result.failed:
-                logger.warning("同步失败文件（前 10 个）: %s", result.failed[:10])
-        except Exception:
-            logger.exception("后台索引同步失败，Bot 继续运行（用已有索引）")
+        result = await asyncio.gather(
+            asyncio.to_thread(keyword_searcher.warm_up),
+            index_manager.refresh(),
+        )
+        refresh_result = result[1]
+        if refresh_result.failed:
+            logger.warning("同步失败文件（前 10 个）: %s", refresh_result.failed[:10])
 
 
 async def _on_startup() -> None:
-    """NoneBot2 启动钩子 — 初始化引擎服务，后台执行首次索引同步。
+    """NoneBot2 启动钩子 — 初始化引擎服务，注册后等待预热与首次索引同步完成。
 
     流程：
     1. 配置日志
     2. 创建 OCR / Embedding / Rerank / ImageOptimizer 服务
     3. 创建 MetadataStore + VectorStore
-    4. 创建 AIMatcher / KeywordSearcher
+    4. 创建 AIMatcher / KeywordSearcher / RandomSearcher / SemanticSearcher / CombinedSearcher
     5. 创建 IndexManager 并加载索引
-    6. 注册到 app_state 供插件获取（Bot 立即可用）
-    7. 后台执行 refresh()（不阻塞启动）
+    6. 注册到 app_state 供插件获取
+    7. 并发执行 jieba 预热与首次索引刷新，等待完成后 Bot 才真正可用
     """
     # 1. 日志
     setup_logging("log")
@@ -151,10 +159,11 @@ async def _on_startup() -> None:
         semantic_searcher=semantic_searcher,
         combined_searcher=combined_searcher,
     )
-    logger.info("MemePilot 启动完成，后台索引同步进行中...")
+    logger.info("MemePilot 服务已注册，正在等待预热与索引同步完成...")
 
-    # 7. 后台执行首次索引同步（不阻塞启动）
-    asyncio.create_task(_background_sync(index_manager))
+    # 7. 并发执行 jieba 预热与首次索引刷新，等待完成后 Bot 对外可用
+    await _background_sync()
+    logger.info("MemePilot 启动完成")
 
 
 async def _on_shutdown() -> None:
