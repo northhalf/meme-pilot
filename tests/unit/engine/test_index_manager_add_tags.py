@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+import pytest_asyncio
 
 from bot.engine.index_manager import (
     IndexManager,
@@ -117,7 +118,7 @@ class FakeVectorStore:
         pass
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def index_manager(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """构造带 Fake Store 的 IndexManager。"""
     monkeypatch.setenv("READ_LOCK_TIMEOUT", "30")
@@ -145,7 +146,7 @@ async def index_manager(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 class TestAddTags:
     """IndexManager.add_tags() 单元测试。"""
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_add_tags_appends_new_tags(self, index_manager: IndexManager) -> None:
         """追加新标签到已有条目，返回新增标签与合并后全部标签。"""
         index_manager._metadata_store.add("a.jpg", "文本", tags=["旧标签"])
@@ -159,13 +160,13 @@ class TestAddTags:
         assert entry is not None
         assert set(entry.tags) == {"旧标签", "新标签1", "新标签2"}
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_add_tags_entry_not_found(self, index_manager: IndexManager) -> None:
         """entry_id 不存在时抛出 ValueError。"""
         with pytest.raises(ValueError, match="entry_id=999 不存在"):
             await index_manager.add_tags(999, ["标签"])
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_add_tags_all_existing(self, index_manager: IndexManager) -> None:
         """所有待添加标签都已存在时，added_tags 为空，不触发 update。"""
         index_manager._metadata_store.add("a.jpg", "文本", tags=["甲", "乙"])

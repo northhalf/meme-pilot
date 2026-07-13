@@ -57,7 +57,7 @@ class TestBuildReplyText:
 class TestReplySendHelpers:
     """finish/send/reject/bot_send 包装函数测试。"""
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_finish_sends_replied_text_in_group(self) -> None:
         """群聊下 finish 应发送带 reply 的 Message。"""
         event = _make_event(message_type="group", message_id=123)
@@ -71,7 +71,7 @@ class TestReplySendHelpers:
         assert message[1].type == "text"
         assert message[1].data["text"] == "hello"
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_send_passes_plain_text_in_private(self) -> None:
         """私聊下 send 应直接传递字符串。"""
         event = _make_event(message_type="private", message_id=42)
@@ -80,7 +80,7 @@ class TestReplySendHelpers:
         await send(event, matcher, "hello")
         matcher.send.assert_awaited_once_with("hello")
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_reject_passes_plain_text_in_private(self) -> None:
         """私聊下 reject 应直接传递字符串。"""
         event = _make_event(message_type="private", message_id=42)
@@ -89,7 +89,7 @@ class TestReplySendHelpers:
         await reject(event, matcher, "hello")
         matcher.reject.assert_awaited_once_with("hello")
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_bot_send_sends_replied_text_in_group(self) -> None:
         """群聊下 bot_send 应发送带 reply 的 Message。"""
         event = _make_event(message_type="group", message_id=123)

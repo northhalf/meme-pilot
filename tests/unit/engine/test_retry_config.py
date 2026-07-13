@@ -29,25 +29,25 @@ async def _network_operation(mock_call: mock.Mock) -> str:
     return "success"
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_api_retry_succeeds_after_transient_failures() -> None:
     assert await flaky_function([0]) == "ok"
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_api_retry_does_not_retry_value_error() -> None:
     with pytest.raises(ValueError, match="should not retry"):
         await no_retry_on_value_error()
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_api_retry_default_network_error_retries_twice_then_succeeds() -> None:
     mock_call = mock.Mock(side_effect=[httpx.NetworkError("fail 1"), httpx.NetworkError("fail 2"), None])
     assert await _network_operation(mock_call) == "success"
     assert mock_call.call_count == 3
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_api_retry_default_network_error_fails_after_three_attempts() -> None:
     mock_call = mock.Mock(side_effect=httpx.NetworkError("fail"))
     with pytest.raises(httpx.NetworkError, match="fail"):
@@ -55,7 +55,7 @@ async def test_api_retry_default_network_error_fails_after_three_attempts() -> N
     assert mock_call.call_count == 3
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_api_retry_non_retry_exception_called_once() -> None:
     mock_call = mock.Mock(side_effect=ValueError("business error"))
     with pytest.raises(ValueError, match="business error"):

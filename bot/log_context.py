@@ -188,11 +188,11 @@ class timed:
                 async with timed(self._logger, self._operation, self._level):
                     return await func(*args, **kwargs)
 
-            return async_wrapper  # type: ignore[return-value]
+            return async_wrapper  # type: ignore[return-value]  # ty:ignore[invalid-return-type]
 
         @functools.wraps(func)
         def sync_wrapper(*args: object, **kwargs: object) -> object:
             with timed(self._logger, self._operation, self._level):
                 return func(*args, **kwargs)
 
-        return sync_wrapper  # type: ignore[return-value]
+        return sync_wrapper  # type: ignore[return-value]  # ty:ignore[invalid-return-type]

@@ -105,7 +105,7 @@ def test_result_create() -> None:
     assert r.source == "embedding"
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_empty_description_returns_none_without_embedding_call() -> None:
     matcher = AIMatcher(
         MockMetadataStore(),
@@ -117,7 +117,7 @@ async def test_empty_description_returns_none_without_embedding_call() -> None:
     assert result is None
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_empty_vector_store_returns_none() -> None:
     """VectorStore.count()==0 时返回 None。"""
     matcher = AIMatcher(
@@ -129,7 +129,7 @@ async def test_empty_vector_store_returns_none() -> None:
     assert result is None
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_zero_vector_raises_value_error() -> None:
     matcher = AIMatcher(
         MockMetadataStore(_make_entries()),
@@ -141,7 +141,7 @@ async def test_zero_vector_raises_value_error() -> None:
 
 
 class TestEmbeddingRecall:
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_returns_top_hit(self) -> None:
         hits = [VectorHit(entry_id=2, similarity=0.9), VectorHit(entry_id=1, similarity=0.8)]
         matcher = AIMatcher(
@@ -155,7 +155,7 @@ class TestEmbeddingRecall:
             similarity=0.9, source="embedding",
         )
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_skip_hit_with_missing_metadata(self) -> None:
         """VectorHit 对应的 metadata 不存在时跳过该候选。"""
         hits = [VectorHit(entry_id=999, similarity=0.9), VectorHit(entry_id=1, similarity=0.8)]
@@ -168,7 +168,7 @@ class TestEmbeddingRecall:
         assert result is not None
         assert result.entry_id == 1
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_all_hits_missing_metadata_returns_none(self) -> None:
         hits = [VectorHit(entry_id=999, similarity=0.9)]
         matcher = AIMatcher(
@@ -179,7 +179,7 @@ class TestEmbeddingRecall:
         result = await matcher.match_with_vector("找猫", _make_query_vector())
         assert result is None
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_limit_passed_to_query(self) -> None:
         class CountingVectorStore(MockVectorStore):
             def __init__(self) -> None:
@@ -218,7 +218,7 @@ class TestRerank:
             limit=limit,
         )
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_valid_rank_selects_candidate(self) -> None:
         reranker = MockReranker(result=2)
         result = await self._matcher(reranker).match_with_vector("选第二张", _make_query_vector())
@@ -227,35 +227,35 @@ class TestRerank:
         assert result.source == "rerank"
         assert [c.rank for c in reranker.calls[0][1]] == [1, 2, 3]
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_limit_controls_candidates(self) -> None:
         reranker = MockReranker(result=1)
         m = self._matcher(reranker, limit=2)
         await m.match_with_vector("只看两个", _make_query_vector())
         assert len(reranker.calls[0][1]) == 2
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_zero_fallbacks_top1(self) -> None:
         result = await self._matcher(MockReranker(result=0)).match_with_vector("放弃精排", _make_query_vector())
         assert result is not None
         assert result.entry_id == 1
         assert result.source == "embedding"
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_out_of_range_fallbacks_top1(self) -> None:
         result = await self._matcher(MockReranker(result=99)).match_with_vector("越界", _make_query_vector())
         assert result is not None
         assert result.entry_id == 1
         assert result.source == "embedding"
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_non_integer_fallbacks_top1(self) -> None:
         result = await self._matcher(MockReranker(result="2")).match_with_vector("非整数", _make_query_vector())
         assert result is not None
         assert result.entry_id == 1
         assert result.source == "embedding"
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_exception_fallbacks_top1(self) -> None:
         result = await self._matcher(MockReranker(exc=RuntimeError("down"))).match_with_vector("失败", _make_query_vector())
         assert result is not None
@@ -263,7 +263,7 @@ class TestRerank:
         assert result.source == "embedding"
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_candidate_carries_speaker_and_tags() -> None:
     """召回候选应携带 speaker/tags。"""
     entries = {

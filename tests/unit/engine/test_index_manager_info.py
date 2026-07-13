@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+import pytest_asyncio
 
 from bot.engine.index_manager import IndexInfo, IndexManager
 from bot.engine.metadata_store import MemeEntry
@@ -122,7 +123,7 @@ class FakeVectorStore:
         return set()
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def index_manager(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """构造带 Fake Store 的 IndexManager。"""
     monkeypatch.setenv("READ_LOCK_TIMEOUT", "30")
@@ -150,7 +151,7 @@ async def index_manager(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 class TestInfo:
     """IndexManager.info() 单元测试。"""
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_info_entry_count_and_ranking(
         self, index_manager: IndexManager
     ) -> None:
@@ -172,7 +173,7 @@ class TestInfo:
         assert info.speaker_ranking == [("甲", 4), ("乙", 3), ("丙", 2), (None, 1)]
         assert info.status == "空闲"
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_info_ranking_truncates_to_ten(self, index_manager: IndexManager) -> None:
         """speaker 种类超过 10 个时，排行截断到前 10。"""
         metadata_store = index_manager._metadata_store
@@ -185,7 +186,7 @@ class TestInfo:
         # 每个 speaker 各 1 条，排序稳定：按 count 降序、speaker 升序
         assert info.speaker_ranking[0][1] == 1
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_info_status_decoupled_from_session(
         self, index_manager: IndexManager
     ) -> None:
@@ -211,7 +212,7 @@ class TestInfo:
 class TestGetEntry:
     """IndexManager.get_entry() 单元测试。"""
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_get_entry_existing(self, index_manager: IndexManager) -> None:
         """存在的 id 返回对应 MemeEntry。"""
         metadata_store = index_manager._metadata_store
@@ -226,7 +227,7 @@ class TestGetEntry:
         assert entry.speaker == "小明"
         assert entry.tags == ["吐槽"]
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_get_entry_not_found(self, index_manager: IndexManager) -> None:
         """不存在的 id 返回 None。"""
         entry = await index_manager.get_entry(999)

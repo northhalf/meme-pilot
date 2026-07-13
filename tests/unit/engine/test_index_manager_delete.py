@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+import pytest_asyncio
 
 from bot.engine.index_manager import (
     DeleteResult,
@@ -118,7 +119,7 @@ class FakeVectorStore:
         pass
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def index_manager(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """构造带 Fake Store 的 IndexManager。"""
     monkeypatch.setenv("READ_LOCK_TIMEOUT", "30")
@@ -146,7 +147,7 @@ async def index_manager(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 class TestDelete:
     """IndexManager.delete() 单元测试。"""
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_delete_moves_file_to_deleted_dir(
         self, index_manager: IndexManager
     ) -> None:
@@ -166,7 +167,7 @@ class TestDelete:
         assert (index_manager._deleted_dir / image_path).exists()
         assert index_manager._metadata_store.get_entry(1) is None
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_delete_not_found_id(
         self, index_manager: IndexManager
     ) -> None:
@@ -177,7 +178,7 @@ class TestDelete:
         assert result.not_found_ids == [999]
         assert result.failed_ids == []
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_delete_unique_filename_on_conflict(
         self, index_manager: IndexManager
     ) -> None:
@@ -200,7 +201,7 @@ class TestDelete:
         assert existing.exists()
         assert (index_manager._deleted_dir / "test_1.jpg").exists()
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_delete_move_failure_preserves_entry(
         self,
         index_manager: IndexManager,

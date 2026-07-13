@@ -340,7 +340,7 @@ class TestLoadAndCount:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_add_returns_add_result(index_manager: IndexManager) -> None:
     (Path(index_manager._memes_dir) / "test.jpg").write_bytes(b"fake")
     result = await index_manager.add("test.jpg")
@@ -348,7 +348,7 @@ async def test_add_returns_add_result(index_manager: IndexManager) -> None:
     assert result.entry_id is not None
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_add_fifo_order(index_manager: IndexManager) -> None:
     for i in range(3):
         (Path(index_manager._memes_dir) / f"img{i}.jpg").write_bytes(b"fake")
@@ -364,7 +364,7 @@ async def test_add_fifo_order(index_manager: IndexManager) -> None:
     assert metadata_store.add_order == ids
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_refresh_rejects_pending_add(index_manager: IndexManager) -> None:
     # 通过 monkeypatch _process_image_pipeline 使其挂住，模拟管道阻塞
     original = index_manager._process_image_pipeline
@@ -398,7 +398,7 @@ async def test_refresh_rejects_pending_add(index_manager: IndexManager) -> None:
     await refresh_task
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_refresh_rejects_new_add(index_manager: IndexManager) -> None:
     # 让 refresh 长期持有写锁
     original = index_manager._run_sync_internal
@@ -423,7 +423,7 @@ async def test_refresh_rejects_new_add(index_manager: IndexManager) -> None:
         pass
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_search_holds_read_lock(index_manager: IndexManager) -> None:
     # 先 add 一条
     (Path(index_manager._memes_dir) / "cat.jpg").write_bytes(b"fake")
@@ -433,7 +433,7 @@ async def test_search_holds_read_lock(index_manager: IndexManager) -> None:
     assert isinstance(results, list)
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_close_cancels_pending_add(index_manager: IndexManager) -> None:
     entered = asyncio.Event()
 
@@ -456,7 +456,7 @@ async def test_close_cancels_pending_add(index_manager: IndexManager) -> None:
         await task
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_process_image_pipeline_empty_text(
     index_manager: IndexManager,
 ) -> None:
@@ -486,7 +486,7 @@ async def test_process_image_pipeline_empty_text(
     assert embedding == []
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_close_cancels_running_refresh(
     index_manager: IndexManager,
 ) -> None:
@@ -525,7 +525,7 @@ async def test_close_cancels_running_refresh(
 class TestAdd:
     """IndexManager.add() 单元测试。"""
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_add_passes_speaker_and_tags(
         self, index_manager: IndexManager
     ) -> None:
@@ -538,7 +538,7 @@ class TestAdd:
         assert entry.speaker == "小明"
         assert entry.tags == ["吐槽"]
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_add_duplicate_replaces_speaker_and_tags(
         self, index_manager: IndexManager
     ) -> None:
@@ -571,7 +571,7 @@ class TestAdd:
         # 验证 AddResult 携带归档路径
         assert result.archived_path == str(replaced_dir / "old.jpg")
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_add_duplicate_archives_old_image_with_unique_name(
         self, index_manager: IndexManager
     ) -> None:
@@ -603,7 +603,7 @@ class TestAdd:
         assert archived == str(replaced_dir / "old_1.jpg")
         assert (replaced_dir / "old_1.jpg").exists()
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_add_duplicate_upsert_failure_rolls_back_speaker_and_tags(
         self, index_manager: IndexManager
     ) -> None:
@@ -641,7 +641,7 @@ class TestAdd:
         assert (Path(index_manager._memes_dir) / "old.jpg").exists()
         assert not (Path(index_manager._memes_dir) / "new.jpg").exists()
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_add_no_text_moves_file(self, index_manager: IndexManager) -> None:
         """无文字图片 add() 应移入 meme_no_text/ 并返回 reason=no_text。"""
 
@@ -674,7 +674,7 @@ class TestAdd:
 class TestEditText:
     """IndexManager.edit_text() 单元测试。"""
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_edit_text_normal(self, index_manager: IndexManager) -> None:
         """正常修改：sqlite text 更新、chroma upsert 调用。"""
         # 先 add 一条
@@ -697,7 +697,7 @@ class TestEditText:
         vs = cast(FakeVectorStore, index_manager._vector_store)
         assert vs.has(eid)
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_edit_text_same_text(self, index_manager: IndexManager) -> None:
         """新文本与当前文本相同 → 直接返回，无写入。"""
         (Path(index_manager._memes_dir) / "dog.jpg").write_bytes(b"fake")
@@ -710,13 +710,13 @@ class TestEditText:
         assert result.old_text == "dog"
         assert result.new_text == "dog"
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_edit_text_entry_not_found(self, index_manager: IndexManager) -> None:
         """entry_id 不存在 → ValueError。"""
         with pytest.raises(ValueError, match="不存在"):
             await index_manager.edit_text(999, "新文本")
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_edit_text_duplicate_text(self, index_manager: IndexManager) -> None:
         """text 被其他条目使用 → DuplicateTextError。"""
         (Path(index_manager._memes_dir) / "a.jpg").write_bytes(b"fake")
@@ -728,7 +728,7 @@ class TestEditText:
         with pytest.raises(DuplicateTextError, match="已被 entry_id="):
             await index_manager.edit_text(r2.entry_id, "a")  # "a" 是 a.jpg 的 OCR 文本
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_edit_text_refresh_active(self, index_manager: IndexManager) -> None:
         """refresh 进行中 → RefreshInProgressError。"""
         index_manager._refresh_active = True
@@ -736,7 +736,7 @@ class TestEditText:
         with pytest.raises(RefreshInProgressError):
             await index_manager.edit_text(1, "新文本")
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_edit_text_upsert_failure(self, index_manager: IndexManager) -> None:
         """chroma upsert 失败 → sqlite 回滚到旧 text。"""
         (Path(index_manager._memes_dir) / "rollback.jpg").write_bytes(b"fake")
@@ -756,7 +756,7 @@ class TestEditText:
         assert entry is not None
         assert entry.text == "rollback"  # MockOcrProvider 返回文件名(不含扩展名)
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_edit_text_toctou_after_embed(
         self, index_manager: IndexManager
     ) -> None:
@@ -782,7 +782,7 @@ class TestEditText:
         with pytest.raises(RefreshInProgressError):
             await index_manager.edit_text(eid, "加班")
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_edit_text_shutting_down(self, index_manager: IndexManager) -> None:
         """shutting_down → IndexAddCancelledError，两次检查均生效。"""
         (Path(index_manager._memes_dir) / "shut.jpg").write_bytes(b"fake")
@@ -821,7 +821,7 @@ class TestEditText:
 class TestSetSpeaker:
     """IndexManager.set_speaker() 单元测试。"""
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_set_speaker_normal(self, index_manager: IndexManager) -> None:
         """正常设置 speaker。"""
         (Path(index_manager._memes_dir) / "cat.jpg").write_bytes(b"fake")
@@ -839,7 +839,7 @@ class TestSetSpeaker:
         assert entry is not None
         assert entry.speaker == "张三"
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_set_speaker_clear(self, index_manager: IndexManager) -> None:
         """清空 speaker（设为 None）。"""
         (Path(index_manager._memes_dir) / "dog.jpg").write_bytes(b"fake")
@@ -859,7 +859,7 @@ class TestSetSpeaker:
         assert entry is not None
         assert entry.speaker is None
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_set_speaker_no_change(self, index_manager: IndexManager) -> None:
         """speaker 无变化 → 直接返回，不进队列。"""
         (Path(index_manager._memes_dir) / "nochange.jpg").write_bytes(b"fake")
@@ -876,7 +876,7 @@ class TestSetSpeaker:
         assert result2.old_speaker == "王五"
         assert result2.new_speaker == "王五"
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_set_speaker_entry_not_found(
         self, index_manager: IndexManager
     ) -> None:
@@ -884,7 +884,7 @@ class TestSetSpeaker:
         with pytest.raises(ValueError, match="不存在"):
             await index_manager.set_speaker(999, "张三")
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_set_speaker_refresh_active(
         self, index_manager: IndexManager
     ) -> None:
@@ -893,14 +893,14 @@ class TestSetSpeaker:
         with pytest.raises(RefreshInProgressError):
             await index_manager.set_speaker(1, "张三")
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_set_speaker_shutting_down(self, index_manager: IndexManager) -> None:
         """shutting_down → IndexAddCancelledError。"""
         index_manager._shutting_down = True
         with pytest.raises(IndexAddCancelledError, match="Bot 正在关闭"):
             await index_manager.set_speaker(1, "张三")
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_set_speaker_entry_deleted_concurrently(
         self, index_manager: IndexManager
     ) -> None:
@@ -934,7 +934,7 @@ class TestSetSpeaker:
 class TestConcurrencyAndDrain:
     """IndexManager 并发控制与 Write Queue drain 行为测试。"""
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_add_direct_pipeline(self, index_manager: IndexManager) -> None:
         """add() 直接调用 _process_image_pipeline（mock 验证调用一次）。"""
         call_count = 0
@@ -952,7 +952,7 @@ class TestConcurrencyAndDrain:
         assert result.entry_id is not None
         assert call_count == 1
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_refresh_drains_write_queue(self, index_manager: IndexManager) -> None:
         """refresh 等待 write_queue 排空后才获取写锁。"""
         original_write = index_manager._write_entry
@@ -987,14 +987,14 @@ class TestConcurrencyAndDrain:
 
         await asyncio.wait_for(refresh_task, timeout=5.0)
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_write_queue_empty_no_wait(self, index_manager: IndexManager) -> None:
         """write_queue 为空时 refresh 不等待 drain。"""
         assert index_manager._write_queue.empty()
         result = await index_manager.refresh()
         assert isinstance(result, SyncResult)
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_write_worker_drain_signal(self, index_manager: IndexManager) -> None:
         """Write Worker 处理完最后一条后 _write_drained.set()。"""
         index_manager._write_drained.clear()
@@ -1003,7 +1003,7 @@ class TestConcurrencyAndDrain:
         await asyncio.sleep(0.02)
         assert index_manager._write_drained.is_set()
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_no_concurrency_params_in_init(self) -> None:
         """IndexManager 不再接受 sync_concurrency 参数。"""
         from bot.engine.index_manager import IndexManager
@@ -1014,7 +1014,7 @@ class TestConcurrencyAndDrain:
         assert not hasattr(m, "_add_concurrency")
         assert not hasattr(m, "_sync_semaphore")
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_deleted_attrs_not_present(
         self, index_manager: IndexManager
     ) -> None:
@@ -1026,7 +1026,7 @@ class TestConcurrencyAndDrain:
 class TestRefresh:
     """IndexManager.refresh() 去重归档测试。"""
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_refresh_dedup_moves_duplicate_to_replaced(
         self, index_manager: IndexManager
     ) -> None:
@@ -1055,7 +1055,7 @@ class TestRefresh:
         assert not (memes_dir / "new.jpg").exists()
         assert (replaced_dir / "new.jpg").exists()
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_refresh_no_text_moved(self, index_manager: IndexManager) -> None:
         """refresh 遇到无文字新图应移入 meme_no_text/，计入 no_text_moved 且不计入 failed。"""
 
@@ -1081,7 +1081,7 @@ class TestRefresh:
         await index_manager.close()
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_scan_meme_files_called_once_per_sync(
     index_manager: IndexManager,
 ) -> None:
@@ -1105,7 +1105,7 @@ async def test_scan_meme_files_called_once_per_sync(
 
 
 class TestRandomSearch:
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_random_search_full_random(
         self, index_manager: IndexManager
     ) -> None:
@@ -1118,7 +1118,7 @@ class TestRandomSearch:
         assert len(results) == 5
         assert len({r.entry_id for r in results}) == 5
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_random_search_with_keyword(
         self, index_manager: IndexManager
     ) -> None:
@@ -1132,7 +1132,7 @@ class TestRandomSearch:
         assert len(results) == 1
         assert "加班" in results[0].text
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_random_search_keyword_no_match(
         self, index_manager: IndexManager
     ) -> None:
@@ -1143,14 +1143,14 @@ class TestRandomSearch:
         results = await index_manager.random_search("火星文")
         assert results == []
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_random_search_empty_index(
         self, index_manager: IndexManager
     ) -> None:
         results = await index_manager.random_search(None)
         assert results == []
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_random_search_not_injected(
         self, index_manager: IndexManager
     ) -> None:
@@ -1163,7 +1163,7 @@ class TestRandomSearch:
 
 
 class TestSemanticSearch:
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_semantic_search_returns_results(
         self, index_manager: IndexManager
     ) -> None:
@@ -1177,14 +1177,14 @@ class TestSemanticSearch:
         assert isinstance(results, list)
         assert len(results) > 0
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_semantic_search_empty_index(
         self, index_manager: IndexManager
     ) -> None:
         results = await index_manager.semantic_search("任意描述")
         assert results == []
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_semantic_search_zero_vector(
         self, index_manager: IndexManager
     ) -> None:
@@ -1200,7 +1200,7 @@ class TestSemanticSearch:
         with pytest.raises(ValueError, match="零向量"):
             await index_manager.semantic_search("任意描述")
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_semantic_search_not_injected(
         self, index_manager: IndexManager
     ) -> None:
@@ -1211,7 +1211,7 @@ class TestSemanticSearch:
 
 
 class TestCombinedSearch:
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_search_combined_with_keyword(
         self, index_manager: IndexManager
     ) -> None:
@@ -1224,7 +1224,7 @@ class TestCombinedSearch:
         assert results[0].similarity == 100.0
         assert results[0].entry_id == 1
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_search_combined_pure_filter(
         self, index_manager: IndexManager
     ) -> None:
@@ -1236,7 +1236,7 @@ class TestCombinedSearch:
         assert len(results) == 1
         assert results[0].similarity == 0.0
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_search_combined_tag_filter(
         self, index_manager: IndexManager
     ) -> None:
@@ -1250,13 +1250,13 @@ class TestCombinedSearch:
         results = await index_manager.search_combined(None, [], ["吐槽"])
         assert {r.entry_id for r in results} == {1}
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_search_combined_empty_index(
         self, index_manager: IndexManager
     ) -> None:
         assert await index_manager.search_combined("加班", [], []) == []
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_search_combined_not_injected(
         self, index_manager: IndexManager
     ) -> None:
@@ -1272,7 +1272,7 @@ class TestCombinedSearch:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_get_chroma_ids_uses_get_all_ids(
     index_manager: IndexManager,
 ) -> None:
@@ -1300,7 +1300,7 @@ async def test_get_chroma_ids_uses_get_all_ids(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_add_timeout_cancels_enqueued_future(
     index_manager: IndexManager,
 ) -> None:
@@ -1330,7 +1330,7 @@ async def test_add_timeout_cancels_enqueued_future(
     await index_manager.close()
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_write_worker_skips_cancelled_future(
     index_manager: IndexManager,
 ) -> None:
@@ -1441,7 +1441,7 @@ class FakeEmbeddingProvider:
 class TestPipelineFinalFilename:
     """_process_image_pipeline 返回 final_filename 与降级测试。"""
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_pipeline_uses_output_path(self, tmp_path: Path) -> None:
         md = FakeMetadataStore()
         vs = FakeVectorStore()
@@ -1461,7 +1461,7 @@ class TestPipelineFinalFilename:
         assert final_fn == "a.webp"
         assert text == "hello"
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_pipeline_keeps_filename_when_no_convert(
         self, tmp_path: Path
     ) -> None:
@@ -1482,7 +1482,7 @@ class TestPipelineFinalFilename:
         final_fn, text, _ = await im._process_image_pipeline("a.jpg")
         assert final_fn == "a.jpg"
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_pipeline_degrades_on_optimize_error(
         self, tmp_path: Path
     ) -> None:
@@ -1504,7 +1504,7 @@ class TestPipelineFinalFilename:
         assert final_fn == "a.jpg"
         assert text == "hello"
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_pipeline_empty_text_returns_empty_embedding(
         self, tmp_path: Path
     ) -> None:
@@ -1536,7 +1536,7 @@ class TestPipelineFinalFilename:
 class TestAddConvertsToWebp:
     """add() 转换后 sqlite image_path 为 .webp 测试。"""
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_add_writes_webp_image_path(self, tmp_path: Path) -> None:
         md = FakeMetadataStore()
         vs = FakeVectorStore()
@@ -1559,7 +1559,7 @@ class TestAddConvertsToWebp:
         assert entry is not None
         assert entry.image_path == "meme_001.webp"
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_add_degrades_to_original_format(self, tmp_path: Path) -> None:
         md = FakeMetadataStore()
         vs = FakeVectorStore()
@@ -1610,7 +1610,7 @@ class CountingOcrProvider:
 class TestSyncConvertsToWebp:
     """sync 阶段2 转换 + 并发同名去重测试。"""
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_sync_converts_new_files(self, tmp_path: Path) -> None:
         md = FakeMetadataStore()
         vs = FakeVectorStore()
@@ -1638,7 +1638,7 @@ class TestSyncConvertsToWebp:
         paths = {e.image_path for e in md.get_all_entries().values()}
         assert paths == {"a.webp", "b.webp"}
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_sync_dedups_same_stem_final_filename(
         self, tmp_path: Path
     ) -> None:

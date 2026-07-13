@@ -7,7 +7,7 @@ import pytest
 from bot.engine.rapidocr_ocr import RapidOcrService, create_rapidocr_service
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_ocr_returns_cleaned_text() -> None:
     """ocr 应返回去除空白后的文本。"""
     service = RapidOcrService(text_score=0.9)
@@ -29,7 +29,7 @@ async def test_ocr_returns_cleaned_text() -> None:
         assert kwargs == {"use_det": True, "use_cls": False, "use_rec": True}
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_ocr_filters_low_score_lines() -> None:
     """低于 text_score 置信度的文本行应被过滤。"""
     service = RapidOcrService(text_score=0.9)
@@ -45,7 +45,7 @@ async def test_ocr_filters_low_score_lines() -> None:
         assert text == "清晰文本"
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_ocr_returns_empty_when_no_txts() -> None:
     """结果对象无 txts 时返回空字符串。"""
     service = RapidOcrService(text_score=0.9)
@@ -61,7 +61,7 @@ async def test_ocr_returns_empty_when_no_txts() -> None:
         assert text == ""
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_ocr_raises_file_not_found() -> None:
     """图片文件不存在时应抛出 FileNotFoundError。"""
     service = RapidOcrService(text_score=0.9)

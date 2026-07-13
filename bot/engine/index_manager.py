@@ -718,7 +718,7 @@ class IndexManager:
         future: "asyncio.Future[SetSpeakerResult]" = loop.create_future()
         req = _WriteRequest(
             op=WriteOp.SET_SPEAKER,
-            future=future,  # type: ignore[arg-type]
+            future=future,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             entry_id=entry_id,
             speaker=speaker,
         )
@@ -765,7 +765,7 @@ class IndexManager:
         future: "asyncio.Future[AddTagResult]" = loop.create_future()
         req = _WriteRequest(
             op=WriteOp.ADD_TAG,
-            future=future,  # type: ignore[arg-type]
+            future=future,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             entry_id=entry_id,
             tags=list(tags),
         )
@@ -806,7 +806,7 @@ class IndexManager:
         future: "asyncio.Future[DeleteResult]" = loop.create_future()
         req = _WriteRequest(
             op=WriteOp.DELETE,
-            future=future,  # type: ignore[arg-type]
+            future=future,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             entry_ids=list(entry_ids),
         )
         await self._write_queue.put(req)
@@ -1263,7 +1263,7 @@ class IndexManager:
                 if not text:
                     continue
                 try:
-                    vec = await self._embedding_provider.embed(text)  # type: ignore[union-attr]
+                    vec = await self._embedding_provider.embed(text)  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
                 except Exception as exc:
                     logger.error("阶段0 重 embed 失败: id=%s, error=%s", eid, exc)
                     failed.append(entries[eid].image_path)
@@ -1299,7 +1299,7 @@ class IndexManager:
             if not entry.text:
                 continue
             try:
-                vec = await self._embedding_provider.embed(entry.text)  # type: ignore[union-attr]
+                vec = await self._embedding_provider.embed(entry.text)  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
             except Exception as exc:
                 logger.error("阶段0 全量重建 embed 失败: id=%s, error=%s", eid, exc)
                 failed.append(entry.image_path)
