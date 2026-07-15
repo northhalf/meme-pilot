@@ -7,8 +7,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from nonebot.adapters.onebot.v11 import Message
+from nonebot.exception import FinishedException
 
+from bot.engine.collection_manager import (
+    InvalidPublicIdError,
+    MemeNotFoundError,
+    ShortIdUnavailableError,
+)
 from bot.engine.index_manager import EditTextResult
+from bot.engine.metadata_store import MemeEntry
+from bot.engine.types import MemePublicId
 from tests.conftest import extract_message_text
 
 # 在导入插件前 mock nonebot.on_command，避免 NoneBot2 完整初始化
@@ -66,6 +74,7 @@ def _make_entry(image_path: str = "test.jpg", text: str = "旧文本") -> MagicM
     """创建模拟的 MemeEntry。"""
     entry = MagicMock()
     entry.id = 5
+    entry.public_id = MemePublicId(1, 5)
     entry.image_path = image_path
     entry.text = text
     return entry
@@ -143,6 +152,10 @@ class TestHandleEdit:
         with (
             patch("bot.plugins.edit.is_authorized", return_value=True),
             patch("bot.plugins.edit.session_manager.activate_chat", return_value=True),
+            patch(
+                "bot.plugins.edit.resolve_entry_argument",
+                new=AsyncMock(side_effect=InvalidPublicIdError("abc")),
+            ),
         ):
             bot = _make_bot()
             event = _make_event(text="/edittext abc 新文本")
@@ -154,19 +167,48 @@ class TestHandleEdit:
 
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
-            assert extract_message_text(msg) == "entry_id 必须为数字"
+            assert "表情包 ID 格式错误" in extract_message_text(msg)
+
+    def test_resolve_timeout_deactivates_without_starting_confirmation(self) -> None:
+        """解析公开 ID 等待读锁超时应清理会话且不启动确认超时。"""
+        with (
+            patch("bot.plugins.edit.is_authorized", return_value=True),
+            patch("bot.plugins.edit.session_manager.activate_chat", return_value=True),
+            patch(
+                "bot.plugins.edit.resolve_entry_argument",
+                new=AsyncMock(side_effect=asyncio.TimeoutError),
+            ),
+            patch("bot.plugins.edit.session_manager.deactivate_chat") as deactivate,
+            patch(
+                "bot.plugins.edit.timeout_session", new_callable=AsyncMock
+            ) as timeout,
+        ):
+            matcher = _make_matcher()
+            _run_handler(
+                handle_edit(
+                    _make_bot(),
+                    _make_event(text="/edittext 1.3 新文本"),
+                    matcher,
+                    args=_make_message("1.3 新文本"),
+                )
+            )  # type: ignore[arg-type]
+
+        assert extract_message_text(matcher.finish.await_args[0][0]) == (
+            "索引更新较慢，请稍后再试"
+        )
+        deactivate.assert_called_once()
+        timeout.assert_not_called()
 
     def test_entry_not_found(self) -> None:
         """entry_id 不存在 → 错误消息。"""
         with (
             patch("bot.plugins.edit.is_authorized", return_value=True),
             patch("bot.plugins.edit.session_manager.activate_chat", return_value=True),
-            patch("bot.plugins.edit.get_metadata_store") as mock_store,
+            patch(
+                "bot.plugins.edit.resolve_entry_argument",
+                new=AsyncMock(side_effect=MemeNotFoundError("1.5")),
+            ),
         ):
-            store = MagicMock()
-            store.get_entry.return_value = None
-            mock_store.return_value = store
-
             bot = _make_bot()
             event = _make_event(text="/edittext 5 新文本")
             matcher = _make_matcher()
@@ -205,16 +247,15 @@ class TestHandleEdit:
         with (
             patch("bot.plugins.edit.is_authorized", return_value=True),
             patch("bot.plugins.edit.session_manager.activate_chat", return_value=True),
-            patch("bot.plugins.edit.get_metadata_store") as mock_store,
+            patch(
+                "bot.plugins.edit.resolve_entry_argument",
+                new=AsyncMock(return_value=_make_entry(text="旧文本")),
+            ),
             patch("bot.plugins.edit.session_manager.create_selection"),
             patch("bot.plugins.edit.session_manager.reset_current_task"),
             patch("bot.plugins.edit.timeout_session", new_callable=MagicMock),
             patch("bot.plugins.edit.asyncio.create_task"),
         ):
-            store = MagicMock()
-            store.get_entry.return_value = _make_entry(text="旧文本")
-            mock_store.return_value = store
-
             bot = _make_bot()
             event = _make_event(text="/e 5 新文本")
             matcher = _make_matcher()
@@ -232,6 +273,101 @@ class TestHandleEdit:
 # ---------------------------------------------------------------------------
 
 
+class TestPublicIdEdit:
+    """`/edittext` 公开 ID 迁移测试。"""
+
+    @pytest.mark.asyncio
+    async def test_short_id_is_resolved_and_state_keeps_both_ids(self) -> None:
+        """普通合集短号应交给共享解析器并保存内部/公开 ID。"""
+        entry = MemeEntry(
+            id=85,
+            image_path="新三国/a.webp",
+            text="旧文本",
+            collection_id=1,
+            local_id=3,
+            collection_name="新三国",
+        )
+        with (
+            patch("bot.plugins.edit.is_authorized", return_value=True),
+            patch("bot.plugins.edit.session_manager.activate_chat", return_value=True),
+            patch(
+                "bot.plugins.edit.resolve_entry_argument",
+                new=AsyncMock(return_value=entry),
+            ) as mock_resolve,
+            patch("bot.plugins.edit.session_manager.create_selection"),
+            patch("bot.plugins.edit.session_manager.reset_current_task"),
+            patch("bot.plugins.edit.timeout_session", new_callable=AsyncMock),
+        ):
+            event = _make_event(text="/edittext 003 新文本")
+            matcher = _make_matcher()
+            await handle_edit(
+                _make_bot(), event, matcher, args=_make_message("003 新文本")
+            )  # type: ignore[arg-type]
+
+        mock_resolve.assert_awaited_once_with(event, "003")
+        assert matcher.state["entry_id"] == 85
+        assert matcher.state["public_id"] == MemePublicId(1, 3)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("raw_id", "exc", "expected"),
+        [
+            ("３", InvalidPublicIdError("３"), "表情包 ID 格式错误"),
+            ("3", ShortIdUnavailableError("3"), "全部合集模式下"),
+        ],
+    )
+    async def test_domain_error_deactivates_session(
+        self, raw_id: str, exc: ValueError, expected: str
+    ) -> None:
+        """公开 ID 领域错误应提示并立即清理会话。"""
+        with (
+            patch("bot.plugins.edit.is_authorized", return_value=True),
+            patch("bot.plugins.edit.session_manager.activate_chat", return_value=True),
+            patch(
+                "bot.plugins.edit.resolve_entry_argument",
+                new=AsyncMock(side_effect=exc),
+            ),
+            patch("bot.plugins.edit.session_manager.deactivate_chat") as deactivate,
+        ):
+            matcher = _make_matcher()
+            await handle_edit(
+                _make_bot(),
+                _make_event(text=f"/edittext {raw_id} 新文本"),
+                matcher,
+                args=_make_message(f"{raw_id} 新文本"),
+            )  # type: ignore[arg-type]
+
+        assert expected in extract_message_text(matcher.finish.await_args[0][0])
+        deactivate.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_domain_error_stays_deactivated_when_finish_stops_handler(
+        self,
+    ) -> None:
+        """测试模式下 finish 抛 FinishedException 时也应先清理会话。"""
+        with (
+            patch("bot.plugins.edit.is_authorized", return_value=True),
+            patch("bot.plugins.edit.session_manager.activate_chat", return_value=True),
+            patch(
+                "bot.plugins.edit.resolve_entry_argument",
+                new=AsyncMock(side_effect=InvalidPublicIdError("abc")),
+            ),
+            patch("bot.plugins.edit.session_manager.deactivate_chat") as deactivate,
+        ):
+            matcher = _make_matcher()
+            matcher.finish = AsyncMock(side_effect=FinishedException)
+
+            with pytest.raises(FinishedException):
+                await handle_edit(
+                    _make_bot(),
+                    _make_event(text="/edittext abc 新文本"),
+                    matcher,
+                    args=_make_message("abc 新文本"),
+                )  # type: ignore[arg-type]
+
+        deactivate.assert_called_once()
+
+
 class TestGotConfirm:
     """got_confirm 处理器测试。"""
 
@@ -241,6 +377,7 @@ class TestGotConfirm:
         return _make_matcher(
             state={
                 "entry_id": entry_id,
+                "public_id": MemePublicId(1, entry_id),
                 "new_text": new_text,
                 "old_text": old_text,
             }
@@ -317,6 +454,7 @@ class TestGotConfirm:
             matcher = _make_matcher(
                 state={
                     "entry_id": 5,
+                    "public_id": MemePublicId(1, 5),
                     "new_text": "加班到崩溃",
                     "old_text": "旧文本",
                 }
@@ -347,6 +485,7 @@ class TestGotConfirm:
             matcher = _make_matcher(
                 state={
                     "entry_id": 5,
+                    "public_id": MemePublicId(1, 5),
                     "new_text": "加班到崩溃",
                     "old_text": "旧文本",
                 }
@@ -378,6 +517,7 @@ class TestGotConfirm:
             matcher = _make_matcher(
                 state={
                     "entry_id": 5,
+                    "public_id": MemePublicId(1, 5),
                     "new_text": "加班到崩溃",
                     "old_text": "旧文本",
                 }

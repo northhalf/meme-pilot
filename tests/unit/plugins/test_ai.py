@@ -6,6 +6,7 @@ import pytest
 from nonebot.adapters.onebot.v11 import Message
 
 from bot.engine.ai_matcher import AIMatchResult
+from bot.session import ChatScope
 from tests.conftest import extract_message_text
 
 # ---------------------------------------------------------------------------
@@ -60,11 +61,11 @@ def _make_index_manager(
     """创建模拟的 IndexManager。"""
     im = MagicMock()
     if ai_side_effect is not None:
-        im.ai_match = AsyncMock(side_effect=ai_side_effect)
+        im.ai_match_for_scope = AsyncMock(side_effect=ai_side_effect)
     elif ai_result is not _UNSET:
-        im.ai_match = AsyncMock(return_value=ai_result)
+        im.ai_match_for_scope = AsyncMock(return_value=ai_result)
     else:
-        im.ai_match = AsyncMock(
+        im.ai_match_for_scope = AsyncMock(
             return_value=AIMatchResult(
                 entry_id=1,
                 image_path="加班心累.jpg",
@@ -73,6 +74,9 @@ def _make_index_manager(
                 source="rerank",
                 speaker="小明",
                 tags=["吐槽"],
+                collection_id=1,
+                local_id=3,
+                collection_name="新三国",
             )
         )
     return im
@@ -98,7 +102,7 @@ class TestHandleAiAuth:
 
         await handle_ai(_make_bot(), _make_event(), matcher)
 
-        mock_get_im.return_value.ai_match.assert_awaited_once()
+        mock_get_im.return_value.ai_match_for_scope.assert_awaited_once()
 
     @pytest.mark.asyncio
     @patch.object(ai, "get_index_manager")
@@ -147,6 +151,31 @@ class TestHandleAiAuth:
 
 class TestHandleAiTimeout:
     """读锁超时测试。"""
+
+    @pytest.mark.asyncio
+    @patch.object(ai.session_manager, "activate_chat", return_value=True)
+    @patch.object(ai.session_manager, "deactivate_chat")
+    @patch.object(ai, "get_index_manager")
+    @patch.object(ai, "is_authorized", return_value=True)
+    async def test_selection_timeout_skips_ai_match(
+        self,
+        mock_auth: MagicMock,
+        mock_get_im: MagicMock,
+        mock_deactivate: MagicMock,
+        mock_activate: MagicMock,
+    ) -> None:
+        """合集读取超时时统一提示、清会话且不调用 AI 匹配。"""
+        manager = _make_index_manager()
+        manager.ai_match_for_scope.side_effect = TimeoutError
+        mock_get_im.return_value = manager
+        event = _make_event()
+        matcher = _make_matcher()
+
+        await handle_ai(_make_bot(), event, matcher)
+
+        manager.ai_match_for_scope.assert_awaited_once()
+        mock_deactivate.assert_called_once_with(ChatScope.from_event(event))
+        assert "索引更新较慢" in extract_message_text(matcher.finish.await_args.args[0])
 
     @pytest.mark.asyncio
     @patch.object(ai, "get_index_manager")
@@ -203,6 +232,23 @@ class TestHandleAiSuccess:
     """匹配成功测试。"""
 
     @pytest.mark.asyncio
+    @patch.object(ai, "get_index_manager")
+    @patch.object(ai, "is_authorized", return_value=True)
+    async def test_current_collection_filter_read_once(
+        self, mock_auth: MagicMock, mock_get_im: MagicMock
+    ) -> None:
+        """AI 匹配读取一次当前合集并传入过滤条件。"""
+        manager = _make_index_manager(ai_result=None)
+        mock_get_im.return_value = manager
+        event = _make_event()
+
+        await handle_ai(_make_bot(), event, _make_matcher())
+
+        manager.ai_match_for_scope.assert_awaited_once_with(
+            ChatScope.from_event(event), "加班心累"
+        )
+
+    @pytest.mark.asyncio
     @patch.object(ai, "MessageSegment")
     @patch.object(ai, "get_index_manager")
     @patch.object(ai, "is_authorized", return_value=True)
@@ -222,7 +268,8 @@ class TestHandleAiSuccess:
         matcher.finish.assert_awaited_once()
         msg = matcher.finish.await_args[0][0]
         finished_text = extract_message_text(msg)
-        assert "1" in finished_text
+        assert "1.3, 新三国" in finished_text
+        assert "entry_id=1" not in finished_text
         assert "小明" in finished_text
         assert "吐槽" in finished_text
 

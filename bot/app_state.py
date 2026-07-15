@@ -1,13 +1,14 @@
 """共享实例管理模块。
 
 模块级单例模式，供插件获取 IndexManager、MetadataStore、VectorStore、
-OcrProvider、EmbeddingProvider、AIMatcher、KeywordSearcher、RandomSearcher、
-SemanticSearcher。
+OcrProvider、EmbeddingProvider、ImageOptimizer、AIMatcher、KeywordSearcher、
+RandomSearcher、SemanticSearcher、CombinedSearcher、CollectionManager。
 bot.py 启动时调用 init_app() 初始化，插件通过 get_*() 函数获取实例。
 """
 
 from .engine import (
     AIMatcher,
+    CollectionManager,
     ImageOptimizer,
     IndexManager,
     KeywordSearcher,
@@ -23,6 +24,7 @@ from .engine.combined_searcher import CombinedSearcher
 _index_manager: IndexManager | None = None
 _metadata_store: MetadataStore | None = None
 _vector_store: VectorStore | None = None
+_collection_manager: CollectionManager | None = None
 _ocr_service: OcrProvider | None = None
 _embedding_service: EmbeddingProvider | None = None
 _image_optimizer: ImageOptimizer | None = None
@@ -45,6 +47,7 @@ def init_app(
     random_searcher: RandomSearcher | None = None,
     semantic_searcher: SemanticSearcher | None = None,
     combined_searcher: CombinedSearcher | None = None,
+    collection_manager: CollectionManager | None = None,
 ) -> None:
     """初始化全局共享实例。
 
@@ -63,13 +66,15 @@ def init_app(
         random_searcher: 随机搜索器实例，可选。
         semantic_searcher: 语义搜索器实例，可选。
         combined_searcher: 组合搜索器实例，可选。
+        collection_manager: 合集管理器实例，可选。
     """
-    global _index_manager, _metadata_store, _vector_store, _ocr_service
-    global _embedding_service, _image_optimizer, _ai_matcher, _keyword_searcher
-    global _random_searcher, _semantic_searcher, _combined_searcher
+    global _index_manager, _metadata_store, _vector_store, _collection_manager
+    global _ocr_service, _embedding_service, _image_optimizer, _ai_matcher
+    global _keyword_searcher, _random_searcher, _semantic_searcher, _combined_searcher
     _index_manager = index_manager
     _metadata_store = metadata_store
     _vector_store = vector_store
+    _collection_manager = collection_manager
     _ocr_service = ocr_service
     _embedding_service = embedding_service
     _image_optimizer = image_optimizer
@@ -120,6 +125,20 @@ def get_vector_store() -> VectorStore:
     if _vector_store is None:
         raise RuntimeError("VectorStore 尚未初始化，请先调用 init_app()")
     return _vector_store
+
+
+def get_collection_manager() -> CollectionManager:
+    """获取 CollectionManager 单例。
+
+    Returns:
+        已初始化的 CollectionManager 实例。
+
+    Raises:
+        RuntimeError: 尚未调用 init_app() 注入 CollectionManager。
+    """
+    if _collection_manager is None:
+        raise RuntimeError("CollectionManager 尚未初始化，请先调用 init_app()")
+    return _collection_manager
 
 
 def get_ocr_service() -> OcrProvider:

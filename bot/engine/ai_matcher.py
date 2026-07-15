@@ -11,6 +11,7 @@ from bot.log_context import timed
 
 from .metadata_store import MemeEntry
 from .protocols import EmbeddingProvider, MetadataEntryProvider, VectorQueryProvider
+from .types import GLOBAL_COLLECTION_NAME, MemePublicId
 from .utils import vector_norm
 from .vector_store import VectorHit
 
@@ -29,6 +30,9 @@ class AIMatchCandidate:
         similarity: 余弦相似度。
         speaker: 说话人，可能为 None。
         tags: 标记词列表。
+        collection_id: 所属合集编号，0 表示全局根目录。
+        local_id: 合集内正整数编号。
+        collection_name: 所属合集名称。
     """
 
     rank: int
@@ -38,6 +42,18 @@ class AIMatchCandidate:
     similarity: float
     speaker: str | None = None
     tags: list[str] = field(default_factory=list)
+    collection_id: int = 0
+    local_id: int = 1
+    collection_name: str = GLOBAL_COLLECTION_NAME
+
+    @property
+    def public_id(self) -> MemePublicId:
+        """返回用户可见的复合 ID。
+
+        Returns:
+            当前候选所属合集编号和合集内编号。
+        """
+        return MemePublicId(self.collection_id, self.local_id)
 
 
 class RerankProvider(Protocol):
@@ -68,6 +84,9 @@ class AIMatchResult:
         source: 结果来源，取值为 "embedding" 或 "rerank"。
         speaker: 说话人，可能为 None。
         tags: 标记词列表。
+        collection_id: 所属合集编号，0 表示全局根目录。
+        local_id: 合集内正整数编号。
+        collection_name: 所属合集名称。
     """
 
     entry_id: int
@@ -77,6 +96,18 @@ class AIMatchResult:
     source: str
     speaker: str | None = None
     tags: list[str] = field(default_factory=list)
+    collection_id: int = 0
+    local_id: int = 1
+    collection_name: str = GLOBAL_COLLECTION_NAME
+
+    @property
+    def public_id(self) -> MemePublicId:
+        """返回用户可见的复合 ID。
+
+        Returns:
+            当前结果所属合集编号和合集内编号。
+        """
+        return MemePublicId(self.collection_id, self.local_id)
 
 
 class AIMatcher:
@@ -114,12 +145,15 @@ class AIMatcher:
         self,
         description: str,
         query_vector: list[float],
+        *,
+        collection_id: int | None = None,
     ) -> AIMatchResult | None:
         """根据已生成的 embedding 向量匹配表情包。
 
         Args:
             description: 用户输入的自然语言描述（已 strip）。
             query_vector: 用户描述对应的 embedding 向量。
+            collection_id: 只召回该合集的向量；None 表示全库召回。
 
         Returns:
             匹配结果；空描述、零向量、向量库为空或无有效候选时返回 None。
@@ -132,7 +166,12 @@ class AIMatcher:
             logger.debug("AI 匹配描述为空，返回空结果")
             return None
 
-        logger.info("AI 匹配描述: %r, top_k=%d", description, self._limit)
+        logger.info(
+            "AI 匹配描述: %r, top_k=%d, collection_id=%s",
+            description,
+            self._limit,
+            collection_id,
+        )
 
         if vector_norm(query_vector) == 0:
             raise ValueError("用户描述 embedding 不能是零向量")
@@ -141,7 +180,11 @@ class AIMatcher:
             logger.debug("向量库为空，返回空结果")
             return None
 
-        hits = await self._vector_store.query(query_vector, n_results=self._limit)
+        hits = await self._vector_store.query(
+            query_vector,
+            n_results=self._limit,
+            collection_id=collection_id,
+        )
         candidates = self._build_candidates(hits)
         logger.info("向量召回 %d 个候选", len(candidates))
         if not candidates:
@@ -213,6 +256,9 @@ class AIMatcher:
                     similarity=hit.similarity,
                     speaker=entry.speaker,
                     tags=entry.tags,
+                    collection_id=entry.collection_id,
+                    local_id=entry.local_id,
+                    collection_name=entry.collection_name,
                 )
             )
         return [
@@ -231,4 +277,7 @@ def _candidate_to_result(candidate: AIMatchCandidate, source: str) -> AIMatchRes
         source=source,
         speaker=candidate.speaker,
         tags=candidate.tags,
+        collection_id=candidate.collection_id,
+        local_id=candidate.local_id,
+        collection_name=candidate.collection_name,
     )

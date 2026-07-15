@@ -29,18 +29,25 @@ class SemanticSearcher:
         self,
         query_vector: list[float],
         limit: int | None = 10,
+        *,
+        collection_id: int | None = None,
     ) -> list[SearchResult]:
         """根据 embedding 向量召回最相似的 N 个表情包。
 
         Args:
             query_vector: 查询文本的 embedding 向量。
             limit: 召回数量上限；None 表示全库召回，默认 10。
+            collection_id: 只召回该合集的向量；None 表示全库召回。
 
         Returns:
             与向量最相似的 SearchResult 列表；metadata 缺失的命中会被跳过。
         """
-        logger.debug("语义搜索入口: limit=%s", limit)
-        hits = await self.vector_store.query(query_vector, n_results=limit)
+        logger.debug("语义搜索入口: limit=%s, collection_id=%s", limit, collection_id)
+        hits = await self.vector_store.query(
+            query_vector,
+            n_results=limit,
+            collection_id=collection_id,
+        )
         entries = self.metadata_store.get_all_entries()
         results: list[SearchResult] = []
         for hit in hits:
@@ -50,15 +57,6 @@ class SemanticSearcher:
                     "召回 hit 的 metadata 缺失，跳过：entry_id=%s", hit.entry_id
                 )
                 continue
-            results.append(
-                SearchResult(
-                    entry_id=entry.id,
-                    image_path=entry.image_path,
-                    text=entry.text,
-                    similarity=hit.similarity,
-                    speaker=entry.speaker,
-                    tags=entry.tags,
-                )
-            )
+            results.append(SearchResult.from_entry(entry, hit.similarity))
         logger.info("语义搜索返回 %d 个结果", len(results))
         return results

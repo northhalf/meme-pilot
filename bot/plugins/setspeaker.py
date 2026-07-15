@@ -1,6 +1,6 @@
 """/setspeaker 命令插件 — 设置或清空表情包的说话人（speaker）字段。
 
-授权用户私聊中发送 /setspeaker <entry_id> [说话人]，
+授权用户私聊中发送 /setspeaker <公开ID> [说话人]，
 Bot 发送图片和确认消息，用户回复「确认」或「yes」后执行修改。
 无 [说话人] 参数时清空 speaker。
 """
@@ -17,14 +17,23 @@ from nonebot.params import Arg, CommandArg
 from nonebot.rule import to_me
 
 from bot import reply as reply_utils
-from bot.app_state import get_index_manager, get_metadata_store
+from bot.app_state import get_index_manager
 from bot.auth import is_authorized, log_unauthorized
 from bot.config import MEMES_DIR
+from bot.engine.collection_manager import (
+    InvalidPublicIdError,
+    MemeNotFoundError,
+    ShortIdUnavailableError,
+)
 from bot.engine.index_manager import (
     IndexAddCancelledError,
     RefreshInProgressError,
 )
 from bot.log_context import generate_request_id, set_request_id
+from bot.plugins._collection_utils import (
+    public_id_error_message,
+    resolve_entry_argument,
+)
 from bot.plugins._help_text import HELP_TEXT
 from bot.plugins._search_utils import got_intercept_bypass
 from bot.session import ChatScope, session_manager, timeout_session
@@ -79,32 +88,33 @@ async def handle_setspeaker(
             if len(parts) < 1:
                 session_manager.deactivate_chat(scope)
                 await reply_utils.finish(
-                    event, matcher, "用法：/setspeaker <entry_id> [说话人]"
+                    event, matcher, "用法：/setspeaker <公开ID> [说话人]"
                 )
                 return
 
+            raw_id = parts[0]
             try:
-                entry_id = int(parts[0])
-            except ValueError:
+                entry = await resolve_entry_argument(event, raw_id)
+            except asyncio.TimeoutError:
                 session_manager.deactivate_chat(scope)
-                await reply_utils.finish(event, matcher, "entry_id 必须为数字")
+                await reply_utils.finish(event, matcher, "索引更新较慢，请稍后再试")
+                return
+            except (
+                ShortIdUnavailableError,
+                InvalidPublicIdError,
+                MemeNotFoundError,
+            ) as exc:
+                session_manager.deactivate_chat(scope)
+                await reply_utils.finish(event, matcher, public_id_error_message(exc))
                 return
 
+            entry_id = entry.id
+            public_id = entry.public_id
             speaker: str | None = parts[1].strip() if len(parts) > 1 else None
             if speaker is not None and not speaker:
                 speaker = None
 
             logger.debug("/setspeaker 参数: entry_id=%s, speaker=%r", entry_id, speaker)
-
-            # 校验 entry 存在
-            store = get_metadata_store()
-            entry = store.get_entry(entry_id)
-            if entry is None:
-                session_manager.deactivate_chat(scope)
-                await reply_utils.finish(
-                    event, matcher, f"未找到 id 为 {entry_id} 的表情包"
-                )
-                return
 
             # 发送图片
             image_path = MEMES_DIR / entry.image_path
@@ -126,6 +136,7 @@ async def handle_setspeaker(
 
             # 存入 state
             matcher.state["entry_id"] = entry_id
+            matcher.state["public_id"] = public_id
             matcher.state["speaker"] = speaker
             matcher.state["old_speaker"] = entry.speaker
 
@@ -176,6 +187,7 @@ async def got_confirm(
 
                 if text.strip().lower() in ("确认", "yes", "y"):
                     entry_id = matcher.state["entry_id"]
+                    public_id = matcher.state["public_id"]
                     speaker = matcher.state.get("speaker")
 
                     try:
@@ -197,7 +209,7 @@ async def got_confirm(
                         )
                     except ValueError:
                         await reply_utils.finish(
-                            event, matcher, f"未找到 id 为 {entry_id} 的表情包"
+                            event, matcher, f"未找到 ID 为 {public_id} 的表情包"
                         )
                     else:
                         session_manager.deactivate_chat(scope)
@@ -211,7 +223,9 @@ async def got_confirm(
                         await reply_utils.finish(
                             event,
                             matcher,
-                            f"说话人已设置 ✅\n旧：{old_text}\n新：{new_text}",
+                            f"说话人已设置 ✅\n"
+                            f"ID：{public_id}\n"
+                            f"旧：{old_text}\n新：{new_text}",
                         )
                         return
                 else:

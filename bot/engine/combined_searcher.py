@@ -75,7 +75,7 @@ class CombinedSearcher:
         speakers: list[str],
         tags: list[str] | None = None,
     ) -> list[SearchResult]:
-        """按关键词/说话人/标签组合检索。
+        """按关键词/说话人/标签组合检索（全库兼容包装）。
 
         Args:
             keyword: 关键词；None 或空串表示纯过滤（不跑关键词匹配）。
@@ -96,6 +96,37 @@ class CombinedSearcher:
             tags,
         )
         entries = self._metadata_store.get_all_entries()
+        return self.search_in(entries, keyword, speakers, tags=tags)
+
+    def search_in(
+        self,
+        entries: dict[int, MemeEntry],
+        keyword: str | None,
+        speakers: list[str],
+        tags: list[str] | None = None,
+    ) -> list[SearchResult]:
+        """在指定 entries 子集上按关键词/说话人/标签组合检索。
+
+        Args:
+            entries: 索引条目子集，key=int(id)。
+            keyword: 关键词；None 或空串表示纯过滤（不跑关键词匹配）。
+            speakers: 说话人列表（OR，精确相等）；空列表表示不过滤。
+            tags: 标签列表（AND，区分大小写）；None 或空列表表示不过滤。
+
+        Note:
+            调用方必须已持有读锁。
+
+        Returns:
+            有关键词时按相似度降序；无关键词时顺序随机。无匹配返回空列表。
+        """
+        tags = tags or []
+        logger.debug(
+            "组合子集检索入口: entries=%d, keyword=%r, speakers=%r, tags=%r",
+            len(entries),
+            keyword,
+            speakers,
+            tags,
+        )
         if not entries:
             logger.debug("索引为空，返回空结果")
             return []
@@ -117,17 +148,7 @@ class CombinedSearcher:
             )
             return results
 
-        results = [
-            SearchResult(
-                entry_id=entry.id,
-                image_path=entry.image_path,
-                text=entry.text,
-                similarity=0.0,
-                speaker=entry.speaker,
-                tags=entry.tags,
-            )
-            for entry in filtered.values()
-        ]
+        results = [SearchResult.from_entry(entry, 0.0) for entry in filtered.values()]
         random.shuffle(results)
         logger.info(
             "组合检索（纯过滤）: speakers=%r, tags=%r, 命中=%d",

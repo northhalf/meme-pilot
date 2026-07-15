@@ -23,7 +23,7 @@ from nonebot.matcher import Matcher
 from bot import reply as reply_utils
 from bot.app_state import get_index_manager
 from bot.config import MEMES_DIR
-from bot.engine.types import SearchResult
+from bot.engine.types import MemePublicId, SearchResult
 from bot.plugins._help_text import HELP_TEXT
 from bot.session import ChatScope, session_manager, timeout_session
 
@@ -70,22 +70,24 @@ def _similarity_percent(similarity: float, scale: Literal["ratio", "score"]) -> 
     return max(0, min(100, round(raw)))
 
 
-def format_metadata_line(entry_id: int, speaker: str | None, tags: list[str]) -> str:
-    """格式化表情包的元数据行。
-
-    输出格式：id, speaker, tag1, tag2, ...
-    speaker 缺失时显示为"无"；tags 为空时省略 tags 段。
+def format_metadata_line(
+    public_id: MemePublicId,
+    collection_name: str,
+    speaker: str | None,
+    tags: list[str],
+) -> str:
+    """格式化表情包的公开元数据行。
 
     Args:
-        entry_id: 索引 id。
+        public_id: 用户可见的复合 ID。
+        collection_name: 条目实际所属合集名称；根目录条目为“全局”。
         speaker: 说话人，可能为 None。
         tags: 标记词列表。
 
     Returns:
-        格式化后的元数据行字符串。
+        公开 ID、合集、说话人和标签组成的元数据行。
     """
-    parts = [str(entry_id), speaker if speaker else "无"]
-    parts.extend(tags)
+    parts = [str(public_id), collection_name, speaker if speaker else "无", *tags]
     return ", ".join(parts)
 
 
@@ -186,7 +188,7 @@ async def present_candidates(
 
     lines = ["找到多个匹配的表情包，请选择："]
     for i, r in enumerate(candidates, 1):
-        meta = format_metadata_line(r.entry_id, r.speaker, r.tags)
+        meta = format_metadata_line(r.public_id, r.collection_name, r.speaker, r.tags)
         if options.show_similarity:
             sim_pct = _similarity_percent(r.similarity, options.similarity_scale)
             lines.append(f"{i}. {r.text} -- {meta}, {sim_pct}%")
@@ -254,7 +256,12 @@ async def dispatch_search_results(
         await reply_utils.finish(
             event,
             cmd_matcher,
-            format_metadata_line(result.entry_id, result.speaker, result.tags),
+            format_metadata_line(
+                result.public_id,
+                result.collection_name,
+                result.speaker,
+                result.tags,
+            ),
         )
         return
 
@@ -306,9 +313,9 @@ async def execute_search(
         await reply_utils.finish(event, cmd_matcher, "服务未就绪，请稍后再试")
         return
 
-    # 执行搜索
+    # 读取当前合集快照并执行搜索
     try:
-        results = await index_manager.search(keyword)
+        results = await index_manager.search_for_scope(scope, keyword)
         logger.info("search 搜索结果数: %d", len(results))
     except asyncio.TimeoutError:
         logger.info("%s 的搜索等待读锁超时", scope)
@@ -359,7 +366,9 @@ async def execute_combined_search(
         return
 
     try:
-        results = await index_manager.search_combined(keyword, speakers, tags)
+        results = await index_manager.search_combined_for_scope(
+            scope, keyword, speakers, tags
+        )
         logger.info("/query 结果数: %d", len(results))
     except asyncio.TimeoutError:
         logger.info("%s 的组合检索等待读锁超时", scope)
@@ -460,7 +469,12 @@ async def handle_got_selection(
             await reply_utils.finish(
                 event,
                 matcher,
-                format_metadata_line(result.entry_id, result.speaker, result.tags),
+                format_metadata_line(
+                    result.public_id,
+                    result.collection_name,
+                    result.speaker,
+                    result.tags,
+                ),
             )
 
         except RejectedException:

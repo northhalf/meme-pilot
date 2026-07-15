@@ -7,7 +7,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from nonebot.adapters.onebot.v11 import Message
 
+from bot.engine.collection_manager import InvalidPublicIdError, MemeNotFoundError
 from bot.engine.index_manager import AddTagResult
+from bot.engine.types import MemePublicId
 from tests.conftest import extract_message_text
 
 
@@ -81,6 +83,7 @@ def _make_entry(
     entry.text = text
     entry.speaker = None
     entry.tags = tags if tags is not None else []
+    entry.public_id = MemePublicId(1, 3)
     return entry
 
 
@@ -191,12 +194,16 @@ class TestHandleAddtag:
             assert "用法" in extract_message_text(msg)
 
     def test_invalid_entry_id(self) -> None:
-        """非数字 entry_id → 回复 entry_id 必须为数字。"""
+        """非法公开 ID 应回复领域格式提示。"""
         with (
             patch("bot.plugins.addtag.is_authorized", return_value=True),
             patch(
                 "bot.plugins.addtag.session_manager.activate_chat",
                 return_value=True,
+            ),
+            patch(
+                "bot.plugins.addtag.resolve_entry_argument",
+                new=AsyncMock(side_effect=InvalidPublicIdError("abc")),
             ),
         ):
             bot = _make_bot()
@@ -209,7 +216,39 @@ class TestHandleAddtag:
 
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
-            assert extract_message_text(msg) == "entry_id 必须为数字"
+            assert "表情包 ID 格式错误" in extract_message_text(msg)
+
+    def test_resolve_timeout_deactivates_without_starting_confirmation(self) -> None:
+        """解析公开 ID 等待读锁超时应清理会话且不启动确认超时。"""
+        with (
+            patch("bot.plugins.addtag.is_authorized", return_value=True),
+            patch(
+                "bot.plugins.addtag.session_manager.activate_chat", return_value=True
+            ),
+            patch(
+                "bot.plugins.addtag.resolve_entry_argument",
+                new=AsyncMock(side_effect=asyncio.TimeoutError),
+            ),
+            patch("bot.plugins.addtag.session_manager.deactivate_chat") as deactivate,
+            patch(
+                "bot.plugins.addtag.timeout_session", new_callable=AsyncMock
+            ) as timeout,
+        ):
+            matcher = _make_matcher()
+            _run_handler(
+                handle_addtag(
+                    _make_bot(),
+                    _make_event(text="/addtag 1.3 标签"),
+                    matcher,
+                    args=_make_message("1.3 标签"),
+                )
+            )  # type: ignore[arg-type]
+
+        assert extract_message_text(matcher.finish.await_args[0][0]) == (
+            "索引更新较慢，请稍后再试"
+        )
+        deactivate.assert_called_once()
+        timeout.assert_not_called()
 
     def test_entry_not_found(self) -> None:
         """entry_id 不存在 → 回复未找到。"""
@@ -219,12 +258,11 @@ class TestHandleAddtag:
                 "bot.plugins.addtag.session_manager.activate_chat",
                 return_value=True,
             ),
-            patch("bot.plugins.addtag.get_metadata_store") as mock_get_store,
+            patch(
+                "bot.plugins.addtag.resolve_entry_argument",
+                new=AsyncMock(side_effect=MemeNotFoundError("9.99")),
+            ),
         ):
-            store = MagicMock()
-            store.get_entry.return_value = None
-            mock_get_store.return_value = store
-
             bot = _make_bot()
             event = _make_event(text="/addtag 999 标签")
             matcher = _make_matcher()
@@ -245,13 +283,11 @@ class TestHandleAddtag:
                 "bot.plugins.addtag.session_manager.activate_chat",
                 return_value=True,
             ),
-            patch("bot.plugins.addtag.get_metadata_store") as mock_get_store,
-            patch("bot.plugins.addtag.get_index_manager"),
+            patch(
+                "bot.plugins.addtag.resolve_entry_argument",
+                new=AsyncMock(return_value=_make_entry(tags=["已有"])),
+            ),
         ):
-            store = MagicMock()
-            store.get_entry.return_value = _make_entry(tags=["已有"])
-            mock_get_store.return_value = store
-
             bot = _make_bot()
             event = _make_event(text="/addtag 3 新增1 新增2")
             matcher = _make_matcher()
@@ -302,7 +338,13 @@ class TestGotConfirm:
 
             bot = _make_bot()
             event = _make_event(text="确认")
-            matcher = _make_matcher(state={"entry_id": 3, "tags": ["新增1", "新增2"]})
+            matcher = _make_matcher(
+                state={
+                    "entry_id": 3,
+                    "public_id": MemePublicId(1, 3),
+                    "tags": ["新增1", "新增2"],
+                }
+            )
 
             _run_handler(
                 got_confirm(bot, event, matcher, _make_message(event.get_plaintext()))
@@ -335,7 +377,13 @@ class TestGotConfirm:
 
             bot = _make_bot()
             event = _make_event(text="yes")
-            matcher = _make_matcher(state={"entry_id": 3, "tags": ["新增"]})
+            matcher = _make_matcher(
+                state={
+                    "entry_id": 3,
+                    "public_id": MemePublicId(1, 3),
+                    "tags": ["新增"],
+                }
+            )
 
             _run_handler(
                 got_confirm(bot, event, matcher, _make_message(event.get_plaintext()))
@@ -351,7 +399,13 @@ class TestGotConfirm:
         ):
             bot = _make_bot()
             event = _make_event(text="不")
-            matcher = _make_matcher(state={"entry_id": 3, "tags": ["新增1", "新增2"]})
+            matcher = _make_matcher(
+                state={
+                    "entry_id": 3,
+                    "public_id": MemePublicId(1, 3),
+                    "tags": ["新增1", "新增2"],
+                }
+            )
 
             _run_handler(
                 got_confirm(bot, event, matcher, _make_message(event.get_plaintext()))
@@ -400,16 +454,11 @@ class TestShortCommandAddtag:
                 "bot.plugins.addtag.session_manager.activate_chat",
                 return_value=True,
             ),
-            patch("bot.plugins.addtag.get_metadata_store") as mock_store,
-            patch("bot.plugins.addtag.get_index_manager"),
+            patch(
+                "bot.plugins.addtag.resolve_entry_argument",
+                new=AsyncMock(return_value=_make_entry(text="旧文本")),
+            ),
         ):
-            entry = MagicMock()
-            entry.tags = []
-            entry.text = "旧文本"
-            store = MagicMock()
-            store.get_entry.return_value = entry
-            mock_store.return_value = store
-
             matcher = _make_matcher()
             _run_handler(
                 handle_addtag(
@@ -419,5 +468,81 @@ class TestShortCommandAddtag:
                     args=_make_message("42 心累 深夜"),
                 )  # type: ignore[arg-type]
             )
-            assert matcher.state["entry_id"] == 42
+            assert matcher.state["entry_id"] == 3
+            assert matcher.state["public_id"] == MemePublicId(1, 3)
             assert matcher.state["tags"] == ["心累", "深夜"]
+
+
+class TestPublicIdAddtag:
+    """`/addtag` 公开 ID 解析与展示测试。"""
+
+    def test_leading_zero_public_id_is_resolved_without_int_conversion(self) -> None:
+        """完整 ID 前导零应原样传给共享解析器并保存双 ID state。"""
+        from bot.engine.metadata_store import MemeEntry
+        from bot.engine.types import MemePublicId
+
+        entry = MemeEntry(
+            id=42,
+            image_path="新三国/a.webp",
+            text="旧文本",
+            collection_id=1,
+            local_id=3,
+            collection_name="新三国",
+        )
+        with (
+            patch("bot.plugins.addtag.is_authorized", return_value=True),
+            patch(
+                "bot.plugins.addtag.session_manager.activate_chat", return_value=True
+            ),
+            patch(
+                "bot.plugins.addtag.resolve_entry_argument",
+                new=AsyncMock(return_value=entry),
+            ) as mock_resolve,
+            patch("bot.plugins.addtag.session_manager.create_selection"),
+            patch("bot.plugins.addtag.session_manager.reset_current_task"),
+            patch("bot.plugins.addtag.timeout_session", new_callable=AsyncMock),
+        ):
+            event = _make_event(text="/addtag 01.003 吐槽")
+            matcher = _make_matcher()
+            _run_handler(
+                handle_addtag(
+                    _make_bot(), event, matcher, args=_make_message("01.003 吐槽")
+                )
+            )  # type: ignore[arg-type]
+
+        mock_resolve.assert_awaited_once_with(event, "01.003")
+        assert matcher.state["entry_id"] == 42
+        assert matcher.state["public_id"] == MemePublicId(1, 3)
+
+    def test_success_message_uses_public_id_snapshot(self) -> None:
+        """执行成功消息应使用 state 中的公开 ID 快照。"""
+        from bot.engine.types import MemePublicId
+
+        with (
+            patch("bot.plugins.addtag.session_manager.handler_context"),
+            patch("bot.plugins.addtag.session_manager.deactivate_chat"),
+            patch("bot.plugins.addtag.get_index_manager") as mock_get_im,
+        ):
+            im = MagicMock()
+            im.add_tags = AsyncMock(
+                return_value=AddTagResult(
+                    entry_id=42, added_tags=["吐槽"], all_tags=["吐槽"]
+                )
+            )
+            im.add_user_timeout = 60
+            mock_get_im.return_value = im
+            matcher = _make_matcher(
+                state={
+                    "entry_id": 42,
+                    "public_id": MemePublicId(1, 3),
+                    "tags": ["吐槽"],
+                }
+            )
+            event = _make_event(text="确认")
+
+            _run_handler(
+                got_confirm(_make_bot(), event, matcher, _make_message("确认"))
+            )  # type: ignore[arg-type]
+
+        assert "ID：1.3" in extract_message_text(matcher.finish.await_args[0][0])
+        assert "42" not in extract_message_text(matcher.finish.await_args[0][0])

@@ -73,15 +73,25 @@ class VectorQueryProvider(Protocol):
         ...
 
     async def query(
-        self, query_embedding: list[float], n_results: int | None = 10
+        self,
+        query_embedding: list[float],
+        n_results: int | None = 10,
+        *,
+        collection_id: int | None = None,
     ) -> list[VectorHit]:
-        """召回 Top-N。
+        """召回 Top-N，可按合集过滤。
 
         Args:
             query_embedding: 查询向量。
             n_results: 召回数量上限；None 表示全库召回。
+            collection_id: None 表示全部合集；非负整数只查询该合集。
 
         Returns:
             按 similarity 降序排列的 VectorHit 列表。
         """
         ...
+
+
+# 注意：VectorStoreProtocol 目前由 IndexManager 在本地定义，
+# 因为 IndexManager 只需要重建/生命周期之外的最小子集（含 rebuild_all overload）。
+# 共享协议保留 VectorQueryProvider 供 AI/Semantic 搜索消费。

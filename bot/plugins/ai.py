@@ -82,13 +82,13 @@ async def handle_ai(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
 
             logger.debug("/ai 描述: %r", description)
 
-            # 并发：发送进度提示 + 执行 AI 匹配
+            # 读取当前合集快照，再并发发送进度提示并执行 AI 匹配
             try:
                 _, match_result = await asyncio.gather(
                     reply_utils.send(
                         event, matcher, "正在根据你的描述搜索表情包，请稍候..."
                     ),
-                    index_manager.ai_match(description),
+                    index_manager.ai_match_for_scope(scope, description),
                 )
             except asyncio.TimeoutError:
                 logger.info("用户 %s 的 /ai 等待读锁超时", user_id)
@@ -123,7 +123,8 @@ async def handle_ai(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
                 event,
                 matcher,
                 format_metadata_line(
-                    match_result.entry_id,
+                    match_result.public_id,
+                    match_result.collection_name,
                     match_result.speaker,
                     match_result.tags,
                 ),

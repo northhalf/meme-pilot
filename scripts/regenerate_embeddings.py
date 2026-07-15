@@ -23,6 +23,7 @@ import argparse
 import asyncio
 import logging
 import os
+import sqlite3
 import sys
 from pathlib import Path
 from typing import Any
@@ -163,24 +164,30 @@ async def _regenerate(batch_size: int, sleep_seconds: float, dry_run: bool) -> N
     metadata_store = MetadataStore(str(INDEX_DB_PATH))
     metadata_store.load()
 
-    entries = metadata_store.get_all_entries()
-    if not entries:
-        logger.warning("MetadataStore 中没有记录，无需重建。")
+    rows = []
+    with sqlite3.connect(str(INDEX_DB_PATH)) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = list(
+            conn.execute("SELECT id, text, collection_id FROM meme ORDER BY id")
+        )
+
+    # 过滤有效文本并保留 collection_id 关联
+    items: list[tuple[int, str, int]] = []
+    for row in rows:
+        entry_id = int(row["id"])
+        text = str(row["text"]).strip()
+        collection_id = int(row["collection_id"])
+        if text:
+            items.append((entry_id, text, collection_id))
+        else:
+            logger.warning("跳过空文本条目: id=%s", entry_id)
+
+    if not items:
+        logger.warning("MetadataStore 中没有有效文本记录，无需重建。")
         metadata_store.close()
         return
 
-    # 过滤有效文本
-    items: list[tuple[int, str]] = []
-    for entry_id, entry in entries.items():
-        text = entry.text.strip()
-        if text:
-            items.append((entry_id, text))
-        else:
-            logger.warning(
-                "跳过空文本条目: id=%s, image_path=%s", entry_id, entry.image_path
-            )
-
-    logger.info("共 %d 条记录，其中 %d 条有有效文本。", len(entries), len(items))
+    logger.info("共 %d 条记录，其中 %d 条有有效文本。", len(rows), len(items))
     if dry_run:
         logger.info("dry-run 模式，不调用 API 或写入向量库。")
         metadata_store.close()
@@ -191,12 +198,19 @@ async def _regenerate(batch_size: int, sleep_seconds: float, dry_run: bool) -> N
     vector_store.load()
 
     try:
-        embeddings: list[tuple[int, list[float]]] = []
+        embeddings: list[tuple[int, list[float], int]] = []
         total_batches = (len(items) + batch_size - 1) // batch_size
         for batch_idx, i in enumerate(range(0, len(items), batch_size), start=1):
             batch = items[i : i + batch_size]
-            batch_embeddings = await _embed_batch(client, model, batch)
-            embeddings.extend(batch_embeddings)
+            # _embed_batch 只接收 (entry_id, text)
+            text_batch = [(entry_id, text) for entry_id, text, _ in batch]
+            batch_embeddings = await _embed_batch(client, model, text_batch)
+            # 按 entry_id 把 embedding 与 collection_id 重新关联
+            embedding_by_id = {entry_id: vec for entry_id, vec in batch_embeddings}
+            for entry_id, _, collection_id in batch:
+                vec = embedding_by_id.get(entry_id)
+                if vec is not None:
+                    embeddings.append((entry_id, vec, collection_id))
             logger.info(
                 "已完成 %d/%d 条向量生成（第 %d/%d 批）。",
                 min(i + batch_size, len(items)),

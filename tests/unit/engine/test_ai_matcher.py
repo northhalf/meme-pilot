@@ -1,11 +1,13 @@
 """AIMatcher 单元测试。"""
 
 from typing import Any
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from bot.engine.ai_matcher import AIMatchCandidate, AIMatchResult, AIMatcher
 from bot.engine.metadata_store import MemeEntry
+from bot.engine.types import MemePublicId
 from bot.engine.vector_store import VectorHit
 
 
@@ -23,7 +25,11 @@ class MockVectorStore:
         self._error = error
 
     async def query(
-        self, query_embedding: list[float], n_results: int | None = 10
+        self,
+        query_embedding: list[float],
+        n_results: int | None = 10,
+        *,
+        collection_id: int | None = None,
     ) -> list[VectorHit]:
         if self._error is not None:
             raise self._error
@@ -201,10 +207,18 @@ class TestEmbeddingRecall:
                 self.last_n: int | None = 0
 
             async def query(
-                self, query_embedding: list[float], n_results: int | None = 10
+                self,
+                query_embedding: list[float],
+                n_results: int | None = 10,
+                *,
+                collection_id: int | None = None,
             ) -> list[VectorHit]:
                 self.last_n = n_results
-                return await super().query(query_embedding, n_results)
+                return await super().query(
+                    query_embedding,
+                    n_results,
+                    collection_id=collection_id,
+                )
 
         vs = CountingVectorStore()
         matcher = AIMatcher(
@@ -324,3 +338,78 @@ async def test_candidate_carries_speaker_and_tags() -> None:
     assert result is not None
     assert result.speaker == "小明"
     assert result.tags == ["搞笑"]
+
+
+@pytest.mark.asyncio
+async def test_ai_match_passes_collection_filter() -> None:
+    """match_with_vector 应将 collection_id 传给 vector_store.query。"""
+    vector_store = Mock()
+    vector_store.count.return_value = 1
+    vector_store.query = AsyncMock(return_value=[])
+    metadata_store = Mock()
+    embedding_provider = AsyncMock()
+    matcher = AIMatcher(metadata_store, vector_store, embedding_provider)
+
+    await matcher.match_with_vector("描述", [1.0, 0.0], collection_id=2)
+
+    vector_store.query.assert_awaited_once_with(
+        [1.0, 0.0], n_results=10, collection_id=2
+    )
+
+
+@pytest.mark.asyncio
+async def test_candidate_and_result_carry_collection_identity() -> None:
+    """候选和结果应携带 MemeEntry 的合集身份。"""
+    entries = {
+        1: MemeEntry(
+            id=1,
+            image_path="新三国/a.webp",
+            text="丞相发笑",
+            speaker="曹操",
+            tags=["三国"],
+            collection_id=1,
+            local_id=2,
+            collection_name="新三国",
+        ),
+    }
+    matcher = AIMatcher(
+        MockMetadataStore(entries),
+        MockVectorStore(hits=[VectorHit(entry_id=1, similarity=0.9)], count=1),
+        MockEmbeddingProvider(),
+    )
+    result = await matcher.match_with_vector("选丞相", _make_query_vector())
+    assert result is not None
+    assert result.public_id == MemePublicId(1, 2)
+    assert result.collection_name == "新三国"
+    assert result.collection_id == 1
+    assert result.local_id == 2
+
+
+def test_candidate_public_id_property() -> None:
+    """AIMatchCandidate.public_id 应返回正确的 MemePublicId。"""
+    candidate = AIMatchCandidate(
+        rank=1,
+        entry_id=1,
+        image_path="a.webp",
+        text="文本",
+        similarity=0.9,
+        collection_id=3,
+        local_id=5,
+        collection_name="合集",
+    )
+    assert candidate.public_id == MemePublicId(3, 5)
+
+
+def test_result_public_id_property() -> None:
+    """AIMatchResult.public_id 应返回正确的 MemePublicId。"""
+    result = AIMatchResult(
+        entry_id=1,
+        image_path="a.webp",
+        text="文本",
+        similarity=0.9,
+        source="embedding",
+        collection_id=3,
+        local_id=5,
+        collection_name="合集",
+    )
+    assert result.public_id == MemePublicId(3, 5)

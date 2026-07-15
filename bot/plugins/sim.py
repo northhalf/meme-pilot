@@ -87,9 +87,11 @@ async def handle_sim(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
                 await reply_utils.finish(event, matcher, "服务未就绪，请稍后再试")
                 return
 
-            # 执行语义搜索
+            # 读取当前合集快照并执行语义搜索
             try:
-                results = await index_manager.semantic_search(description, limit=None)
+                results = await index_manager.semantic_search_for_scope(
+                    scope, description, limit=None
+                )
             except asyncio.TimeoutError:
                 logger.info("用户 %s 的 /sim 等待读锁超时", user_id)
                 session_manager.deactivate_chat(scope)

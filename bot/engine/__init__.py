@@ -13,14 +13,21 @@ from .ai_matcher import (
     AIMatchResult,
     RerankProvider,
 )
+from .collection_manager import CollectionManager
 from .combined_searcher import CombinedSearcher
 from .image_optimizer import ImageOptimizer, OptimizeResult
 from .index_manager import (
     AddResult,
+    DuplicateMemeInCollectionError,
     DuplicateTextError,
     EditTextResult,
     IndexCorruptedError,
     IndexManager,
+    MemeMoveError,
+    MemeMoveSourceExpiredError,
+    MovePreview,
+    MoveResult,
+    MoveSourceSnapshot,
     OcrProvider,
     SyncResult,
     resolve_unique_filename,
@@ -99,15 +106,23 @@ __all__ = [
     "AIMatchCandidate",
     "AIMatchResult",
     "RerankProvider",
+    # collection_manager
+    "CollectionManager",
     # image_optimizer
     "ImageOptimizer",
     "OptimizeResult",
     # index_manager
     "AddResult",
+    "DuplicateMemeInCollectionError",
     "DuplicateTextError",
     "EditTextResult",
     "IndexCorruptedError",
     "IndexManager",
+    "MemeMoveError",
+    "MemeMoveSourceExpiredError",
+    "MovePreview",
+    "MoveResult",
+    "MoveSourceSnapshot",
     "SyncResult",
     "resolve_unique_filename",
     # keyword_searcher

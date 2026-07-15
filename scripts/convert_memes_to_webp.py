@@ -146,11 +146,12 @@ def run_conversion(
 
     try:
         for src in files:
-            rel = (
-                src.relative_to(memes_dir.parent).as_posix()
-                if include_archives
-                else src.name
+            old_relative = (
+                src.relative_to(memes_dir).as_posix()
+                if not include_archives
+                else src.relative_to(memes_dir.parent).as_posix()
             )
+            rel = old_relative
             logger.info("转换: %s", rel)
 
             if dry_run:
@@ -175,19 +176,21 @@ def run_conversion(
             except ValueError:
                 in_memes = False
 
-            new_rel = webp_path.name
+            new_relative = webp_path.relative_to(memes_dir).as_posix()
             db_updated = False
             if not in_memes:
                 logger.info("归档目录图仅转换备份，不更新 sqlite: %s", rel)
                 db_updated = True
             else:
                 try:
-                    entry = metadata_store.get_by_filename(src.name)
+                    entry = metadata_store.get_by_filename(old_relative)
                     if entry is None:
-                        logger.info("index.db 中无对应记录: %s", src.name)
+                        logger.info("index.db 中无对应记录: %s", old_relative)
                         db_updated = True
                     else:
-                        db_updated = metadata_store.update(entry.id, image_path=new_rel)
+                        db_updated = metadata_store.update(
+                            entry.id, image_path=new_relative
+                        )
                         if not db_updated:
                             logger.warning("更新 image_path 失败，id=%s", entry.id)
                 except DuplicateEntryError as exc:

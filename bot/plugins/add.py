@@ -24,7 +24,9 @@ from bot import reply as reply_utils
 from bot.app_state import get_index_manager
 from bot.auth import is_authorized, log_unauthorized
 from bot.config import MEMES_DIR, read_session_timeout
+from bot.engine.collection_manager import CollectionNotFoundError
 from bot.engine.index_manager import (
+    CollectionSelectionExpiredError,
     CompressionError,
     EmbeddingError,
     IndexAddCancelledError,
@@ -93,7 +95,24 @@ async def handle_add(
             tags = parts[1:] if len(parts) > 1 else []
             matcher.state["speaker"] = speaker
             matcher.state["tags"] = tags
-            logger.debug("/add 参数: speaker=%r, tags=%r", speaker, tags)
+            try:
+                selection = await get_index_manager().get_selected_collection(scope)
+            except RuntimeError:
+                session_manager.deactivate_chat(scope)
+                await reply_utils.finish(event, matcher, "服务未就绪，请稍后再试")
+                return
+            except asyncio.TimeoutError:
+                session_manager.deactivate_chat(scope)
+                await reply_utils.finish(event, matcher, "索引更新较慢，请稍后再试")
+                return
+            matcher.state["collection_selection"] = selection
+            logger.debug(
+                "/add 参数: speaker=%r, tags=%r, collection=%s(%s)",
+                speaker,
+                tags,
+                selection.name,
+                selection.collection_id,
+            )
 
             selection_id = str(uuid.uuid4())
             task = asyncio.create_task(
@@ -162,6 +181,19 @@ async def got_image(
                 image_url = urls[0]
                 speaker = matcher.state.get("speaker")
                 tags = matcher.state.get("tags", [])
+                selection = matcher.state["collection_selection"]
+                try:
+                    await index_manager.validate_collection_selection(scope, selection)
+                except CollectionSelectionExpiredError:
+                    session_manager.deactivate_chat(scope)
+                    await reply_utils.finish(
+                        event, matcher, "当前合集已变化，请重新 /add"
+                    )
+                    return
+                except asyncio.TimeoutError:
+                    session_manager.deactivate_chat(scope)
+                    await reply_utils.finish(event, matcher, "索引更新较慢，请稍后再试")
+                    return
                 logger.debug(
                     "/add 收到图片 URL: %r, 扩展名: %r",
                     image_url,
@@ -188,11 +220,16 @@ async def got_image(
 
                 # 文件名处理
                 filename = f"{_auto_filename(image_data)}{ext}"
-                filepath = resolve_unique_filename(MEMES_DIR, filename)
-                filename = filepath.name
+                target_dir = MEMES_DIR
+                if selection.collection_id != 0:
+                    target_dir = MEMES_DIR / selection.name
+                filepath = resolve_unique_filename(target_dir, filename)
+                relative_path = filepath.name
+                if selection.collection_id != 0:
+                    relative_path = f"{selection.name}/{filepath.name}"
 
                 # 保存图片
-                MEMES_DIR.mkdir(parents=True, exist_ok=True)
+                target_dir.mkdir(parents=True, exist_ok=True)
                 try:
                     filepath.write_bytes(image_data)
                 except OSError as exc:
@@ -201,13 +238,24 @@ async def got_image(
                     await reply_utils.finish(event, matcher, "图片保存失败")
                     return
 
-                logger.info("图片已保存: %s", filename)
+                logger.info("图片已保存: %s", relative_path)
 
                 # 调用 IndexManager 处理
                 try:
                     result = await index_manager.add(
-                        filename, speaker=speaker, tags=tags
+                        relative_path,
+                        speaker=speaker,
+                        tags=tags,
+                        collection_id=selection.collection_id,
+                        scope=scope,
+                        expected_selection=selection,
                     )
+                except CollectionSelectionExpiredError:
+                    logger.info("用户 %s 的 /add 合集选择已失效", user_id)
+                    msg = "当前合集已变化，请重新 /add"
+                except CollectionNotFoundError:
+                    logger.info("用户 %s 的 /add 目标合集已失效", user_id)
+                    msg = "当前合集已变化，请重新 /add"
                 except RefreshInProgressError as exc:
                     logger.info("用户 %s 的 /add 被拒绝：%s", user_id, exc)
                     msg = "索引正在刷新，请稍后再试"
@@ -242,28 +290,34 @@ async def got_image(
                             event, matcher, "未识别到文字，已移至 meme_no_text/"
                         )
                     elif result.reason == "replaced":
+                        if result.public_id is None or result.collection_name is None:
+                            raise RuntimeError("替换结果缺少公开 ID 或合集名称")
                         ocr_display = _format_ocr_text(result.text)
                         await reply_utils.finish(
                             event,
                             matcher,
-                            f"替换旧图✅，id：{result.entry_id}，识别到的文字为：\n「{ocr_display}」\n"
+                            f"替换旧图✅，ID：{result.public_id}，识别到的文字为：\n「{ocr_display}」\n"
                             f"{
                                 format_metadata_line(
-                                    entry_id=result.entry_id,  # pyright: ignore[reportArgumentType]  # ty:ignore[invalid-argument-type]
+                                    public_id=result.public_id,
+                                    collection_name=result.collection_name,
                                     speaker=result.speaker,
                                     tags=result.tags,
                                 )
                             }",
                         )
                     else:
+                        if result.public_id is None or result.collection_name is None:
+                            raise RuntimeError("新增结果缺少公开 ID 或合集名称")
                         ocr_display = _format_ocr_text(result.text)
                         await reply_utils.finish(
                             event,
                             matcher,
-                            f"新增表情包✅，id：{result.entry_id}，识别到的文字为：\n「{ocr_display}」\n"
+                            f"新增表情包✅，ID：{result.public_id}，识别到的文字为：\n「{ocr_display}」\n"
                             f"{
                                 format_metadata_line(
-                                    entry_id=result.entry_id,  # pyright: ignore[reportArgumentType]  # ty:ignore[invalid-argument-type]
+                                    public_id=result.public_id,
+                                    collection_name=result.collection_name,
                                     speaker=result.speaker,
                                     tags=result.tags,
                                 )

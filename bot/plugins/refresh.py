@@ -76,7 +76,11 @@ async def handle_refresh(bot: Bot, event: MessageEvent, matcher: Matcher) -> Non
                 result = await index_manager.refresh()
                 logger.info("用户 %s 的 /refresh 完成", user_id)
                 logger.info(
-                    "/refresh 统计: 新增=%d, 删除=%d, 去重=%d, 无文字移走=%d, 失败=%d",
+                    "/refresh 统计: 新增合集=%d, 删除合集=%d, 回退窗口=%d, "
+                    "新增=%d, 删除=%d, 去重=%d, 无文字移走=%d, 失败=%d",
+                    result.collections_added,
+                    result.collections_deleted,
+                    result.scopes_reset,
                     result.added,
                     result.deleted,
                     result.deduped,
@@ -107,6 +111,9 @@ async def handle_refresh(bot: Bot, event: MessageEvent, matcher: Matcher) -> Non
             # 格式化摘要
             lines = [
                 "索引刷新完成 ✅",
+                f"新增合集：{result.collections_added}",
+                f"删除合集：{result.collections_deleted}",
+                f"回退窗口：{result.scopes_reset}",
                 f"新增: {result.added} | 删除: {result.deleted} "
                 f"| 去重: {result.deduped} | 无文字移走: {result.no_text_moved} "
                 f"| 失败: {len(result.failed)}",

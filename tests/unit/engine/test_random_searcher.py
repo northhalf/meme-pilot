@@ -5,6 +5,7 @@ import pytest
 from bot.engine.keyword_searcher import KeywordSearcher
 from bot.engine.metadata_store import MemeEntry
 from bot.engine.random_searcher import RandomSearcher
+from bot.engine.types import MemePublicId
 
 
 class MockMetadataStore:
@@ -100,3 +101,88 @@ class TestSearchResultCarriesMetadata:
         assert len(results) == 1
         assert results[0].speaker == "小明"
         assert results[0].tags == ["吐槽"]
+
+    def test_collection_identity_preserved(self) -> None:
+        entries = {
+            1: MemeEntry(
+                id=1,
+                image_path="新三国/a.webp",
+                text="丞相发笑",
+                collection_id=1,
+                local_id=2,
+                collection_name="新三国",
+            ),
+        }
+        metadata_store = MockMetadataStore(entries)
+        keyword_searcher = KeywordSearcher(metadata_store)
+        searcher = RandomSearcher(metadata_store, keyword_searcher)
+
+        results = searcher.search_random(None, limit=10)
+        assert len(results) == 1
+        assert results[0].public_id == MemePublicId(1, 2)
+        assert results[0].collection_name == "新三国"
+
+
+class TestSearchRandomIn:
+    """search_random_in：在显式传入的 entries 子集上随机取样。"""
+
+    def test_search_random_in_only_uses_supplied_entries(self) -> None:
+        entries = {
+            2: MemeEntry(
+                id=2,
+                image_path="新三国/a.webp",
+                text="文本",
+                collection_id=1,
+                local_id=1,
+                collection_name="新三国",
+            )
+        }
+        metadata_store = MockMetadataStore({})
+        keyword_searcher = KeywordSearcher(metadata_store)
+        searcher = RandomSearcher(metadata_store, keyword_searcher)
+
+        results = searcher.search_random_in(entries, limit=10)
+
+        assert [result.entry_id for result in results] == [2]
+
+    def test_search_random_in_with_keyword_filters_subset(self) -> None:
+        entries = {
+            1: MemeEntry(id=1, image_path="a.jpg", text="加班"),
+            2: MemeEntry(
+                id=2,
+                image_path="新三国/a.webp",
+                text="丞相发笑",
+                collection_id=1,
+                local_id=1,
+                collection_name="新三国",
+            ),
+        }
+        metadata_store = MockMetadataStore(entries)
+        keyword_searcher = KeywordSearcher(metadata_store)
+        searcher = RandomSearcher(metadata_store, keyword_searcher)
+
+        results = searcher.search_random_in(entries, keyword="丞相", limit=10)
+
+        assert [result.entry_id for result in results] == [2]
+        assert results[0].public_id == MemePublicId(1, 1)
+
+    def test_search_random_in_empty_entries_returns_empty(self) -> None:
+        metadata_store = MockMetadataStore({})
+        keyword_searcher = KeywordSearcher(metadata_store)
+        searcher = RandomSearcher(metadata_store, keyword_searcher)
+
+        assert searcher.search_random_in({}) == []
+
+    def test_search_random_delegates_to_search_random_in(self) -> None:
+        entries = {
+            1: MemeEntry(id=1, image_path="a.jpg", text="加班"),
+        }
+        metadata_store = MockMetadataStore(entries)
+        keyword_searcher = KeywordSearcher(metadata_store)
+        searcher = RandomSearcher(metadata_store, keyword_searcher)
+
+        results = searcher.search_random(None, limit=10)
+        assert [result.entry_id for result in results] == [1]
+
+        results_keyword = searcher.search_random("加班", limit=10)
+        assert [result.entry_id for result in results_keyword] == [1]

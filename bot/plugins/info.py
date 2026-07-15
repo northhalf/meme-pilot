@@ -21,9 +21,18 @@ from bot import reply as reply_utils
 from bot.app_state import get_index_manager
 from bot.auth import is_authorized, log_unauthorized
 from bot.config import MEMES_DIR
+from bot.engine.collection_manager import (
+    InvalidPublicIdError,
+    MemeNotFoundError,
+    ShortIdUnavailableError,
+)
 from bot.engine.metadata_store import MemeEntry
 from bot.log_context import generate_request_id, set_request_id
-from bot.session import session_manager
+from bot.plugins._collection_utils import (
+    public_id_error_message,
+    resolve_entry_argument,
+)
+from bot.session import ChatScope, session_manager
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +68,8 @@ def _build_detail_message(entry: MemeEntry) -> Message | str:
     tags_text = ", ".join(entry.tags) if entry.tags else "无"
 
     text = (
-        f"id: {entry.id}\n"
+        f"ID：{entry.public_id}\n"
+        f"合集：{entry.collection_name}\n"
         f"文本：{entry.text}\n"
         f"文件名：{entry.image_path}\n"
         f"大小：{size_text}\n"
@@ -113,43 +123,52 @@ async def handle_info(
                 await reply_utils.finish(event, matcher, "服务未就绪，请稍后再试")
                 return
 
-            # 解析可选 id
             raw = args.extract_plain_text().strip()
-            entry_id: int | None = None
             if raw:
+                raw_id = raw.split()[0]
                 try:
-                    entry_id = int(raw.split()[0])
-                except ValueError:
-                    entry_id = None
-
-            # 有效 id 分支：持读锁查询；超时或异常均按设计处理
-            if entry_id is not None:
-                try:
-                    entry = await index_manager.get_entry(entry_id)
+                    entry = await resolve_entry_argument(event, raw_id)
                 except asyncio.TimeoutError:
-                    logger.info("用户 %s 的 /info %s 等待读锁超时", user_id, entry_id)
+                    logger.info("用户 %s 的 /info %s 等待读锁超时", user_id, raw_id)
                     await reply_utils.finish(event, matcher, "索引更新较慢，请稍后再试")
                     return
+                except (
+                    ShortIdUnavailableError,
+                    InvalidPublicIdError,
+                    MemeNotFoundError,
+                ) as exc:
+                    await reply_utils.finish(
+                        event, matcher, public_id_error_message(exc)
+                    )
+                    return
                 except Exception:
-                    logger.exception("获取条目详情失败: entry_id=%s", entry_id)
-                    entry = None
-                else:
-                    if entry is not None:
-                        await matcher.finish(_build_detail_message(entry))
-                        return
-                # id 无效或不存在时回退到总体信息分支
+                    logger.exception("获取条目详情失败: public_id=%s", raw_id)
+                    await reply_utils.finish(
+                        event, matcher, "索引信息获取失败，请稍后重试"
+                    )
+                    return
+                await matcher.finish(_build_detail_message(entry))
+                return
 
             # 总体信息分支
+            scope = ChatScope.from_event(event)
             try:
-                info = await index_manager.info()
+                selection = await index_manager.get_selected_collection(scope)
+                index_info = await index_manager.info(
+                    collection_id=selection.search_filter
+                )
+            except asyncio.TimeoutError:
+                logger.info("用户 %s 的 /info 当前合集读取超时", user_id)
+                await reply_utils.finish(event, matcher, "索引更新较慢，请稍后再试")
+                return
             except Exception:
                 logger.exception("获取索引信息失败")
                 await reply_utils.finish(event, matcher, "索引信息获取失败，请稍后再试")
                 return
 
             # engine 只感知刷新态；"正在处理命令"属应用层语义，由插件层覆写
-            if info.status == "空闲" and session_manager.has_active_session():
-                info.status = "正在处理命令"
+            if index_info.status == "空闲" and session_manager.has_active_session():
+                index_info.status = "正在处理命令"
 
             # 读取硬件信息
             try:
@@ -171,7 +190,7 @@ async def handle_info(
 
             # 组装说话人排行（前 10）
             ranking_lines: list[str] = []
-            for idx, (speaker, count) in enumerate(info.speaker_ranking, start=1):
+            for idx, (speaker, count) in enumerate(index_info.speaker_ranking, start=1):
                 speaker_name = speaker if speaker is not None else "无"
                 ranking_lines.append(f"  {idx}. {speaker_name} {count}")
 
@@ -179,7 +198,9 @@ async def handle_info(
                 ranking_lines.append("  暂无数据")
 
             logger.debug(
-                "/info 条目数=%d, speakers=%s", info.entry_count, info.speaker_ranking
+                "/info 条目数=%d, speakers=%s",
+                index_info.entry_count,
+                index_info.speaker_ranking,
             )
             try:
                 process_mem_text = humanize.naturalsize(
@@ -190,10 +211,12 @@ async def handle_info(
                 process_mem_text = "获取失败"
 
             lines = [
-                f"表情包数量：{info.entry_count}",
-                "排行（前 10）：",
+                f"表情包总数：{index_info.entry_count}",
+                f"当前合集：{selection.name}（{index_info.current_entry_count} 张）",
+                f"普通合集数：{index_info.collection_count}",
+                "当前范围说话人排行（前 10）：",
                 *ranking_lines,
-                f"当前机器人状态：{info.status}",
+                f"当前机器人状态：{index_info.status}",
                 f"内存占用：{mem_text}",
                 f"进程内存：{process_mem_text}",
                 f"CPU占用：{cpu_text}",

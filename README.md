@@ -17,12 +17,14 @@ Bot: 当前可用命令：
      /sim <描述文本>：按语义相似度给出前 10 个表情包（结果过多时支持翻页）
      /ai <自然语言描述>：按自然语言描述匹配表情包
      /add [speaker <tags...>] (/a)：通过聊天添加一张表情包
-     /addtag <id> <tag> [<tag>...] (/at)：为指定表情包添加标签
-     /del <id>... (/d)：删除指定表情包（需确认）
-     /edittext <id> <新文本> (/e)：修改指定表情包的 OCR 文本
-     /setspeaker <id> [说话人] (/sp)：设置或清空表情包的说话人
+     /addtag <公开ID> <tag> [<tag>...] (/at)：为指定表情包添加标签
+     /del <公开ID>... (/d)：删除指定表情包（需确认）
+     /edittext <公开ID> <新文本> (/e)：修改指定表情包的 OCR 文本
+     /setspeaker <公开ID> [说话人] (/sp)：设置或清空表情包的说话人
+     /switch [合集编号|名称]：查看或切换表情包合集
+     /mv <公开ID> <目标合集编号|名称>：移动表情包（需确认）
      /refresh (/r)：扫描 memes/ 并增量更新索引
-     /info [id]：查看机器人状态与统计信息，或查看指定表情包详情
+     /info [公开ID]：查看机器人状态与统计信息，或查看指定表情包详情
      /cancel (/c)：取消当前正在执行的命令
 ```
 
@@ -32,12 +34,12 @@ Bot: 当前可用命令：
 ```
 你: /query 加班 @小明 #吐槽
 Bot: 找到多个匹配的表情包，请选择：
-    1. 加班到凌晨三点的我 -- 23, 小明, 吐槽, 加班, 100%
+    1. 加班到凌晨三点的我 -- 1.3, 新三国, 小明, 吐槽, 加班, 100%
     回复编号即可 (1-1)
     回复 n 看下一页
 你: 1
 Bot: (发送对应表情包)
-Bot: 23, 小明, 吐槽, 加班
+Bot: 1.3, 新三国, 小明, 吐槽, 加班
 
 你: /query @小明            # 仅按 speaker
 你: /query #吐槽 #深夜       # 多 tag AND
@@ -49,9 +51,9 @@ Bot: 23, 小明, 吐槽, 加班
 ```
 你: /rand 加班
 Bot: 找到多个匹配的表情包，请选择：
-    1. 加班到凌晨三点的我 -- 23, 小明
+    1. 加班到凌晨三点的我 -- 1.3, 新三国, 小明
     ...
-    10. 周日晚上的加班通知 -- 45, 无
+    10. 周日晚上的加班通知 -- 0.5, 全局, 无
     回复编号即可 (1-10)
     回复 0 换一批
 ```
@@ -61,13 +63,13 @@ Bot: 找到多个匹配的表情包，请选择：
 ```
 你: /sim 一张表达心累的加班表情包
 Bot: 找到多个匹配的表情包，请选择：
-    1. 加班到凌晨三点的我 -- 23, 小明, 吐槽, 加班, 82%
-    2. 心累的打工人 -- 45, 无, 76%
+    1. 加班到凌晨三点的我 -- 1.3, 新三国, 小明, 吐槽, 加班, 82%
+    2. 心累的打工人 -- 0.5, 全局, 无, 76%
     回复编号即可 (1-2)
     回复 n 看下一页
 你: 1
 Bot: (发送对应表情包)
-Bot: 23, 小明, 吐槽, 加班
+Bot: 1.3, 新三国, 小明, 吐槽, 加班
 ```
 
 ### 🤖 AI 描述匹配 `/ai`
@@ -75,7 +77,7 @@ Bot: 23, 小明, 吐槽, 加班
 你: /ai 一张表达心累的加班表情包
 Bot: 正在根据你的描述搜索表情包，请稍候...
 Bot: (发送最匹配的表情包)
-Bot: 42, 无, 吐槽, 加班
+Bot: 42, 全局, 无, 吐槽, 加班
 ```
 
 ### ➕ 聊天添加 `/add`
@@ -83,9 +85,9 @@ Bot: 42, 无, 吐槽, 加班
 授权用户: /add 小明 吐槽 加班
 Bot: 请发送图片，60 秒内有效
 授权用户: (发送一张图片)
-Bot: 新增表情包✅，id：42，识别到的文字为：
+Bot: 新增表情包✅，id：1.3，合集：新三国，识别到的文字为：
 「加班心累时的表情包」
-Bot: 42, 小明, 吐槽, 加班
+Bot: 1.3, 新三国, 小明, 吐槽, 加班
 ```
 
 OCR 识别到的文字会展示给用户，超 50 字时自动截断并标注总长度。
@@ -98,10 +100,10 @@ OCR 识别到的文字会展示给用户，超 50 字时自动截断并标注总
 
 ### 🏷️ 标签添加 `/addtag`
 
-授权用户在私聊中发送 `/addtag <id> <tag> [<tag>...]`，Bot 发送确认消息（包含当前 OCR 文本、当前标签和新增标签），用户回复「确认」或「yes」后执行追加。
+授权用户在私聊中发送 `/addtag <公开ID> <tag> [<tag>...]`，Bot 发送确认消息（包含当前 OCR 文本、当前标签和新增标签），用户回复「确认」或「yes」后执行追加。
 
 ```
-授权用户: /addtag 42 心累 深夜
+授权用户: /addtag 1.3 心累 深夜
 Bot: 当前 OCR 文本：加班心累时的表情包
      当前标签：吐槽, 加班
      新增标签：心累, 深夜
@@ -114,26 +116,28 @@ Bot: 标签已添加 ✅
 
 ### 🗑️ 删除表情包 `/del`
 
-授权用户在私聊中发送 `/del <id>...`，Bot 发送待删除表情包的 OCR 文本摘要，用户回复「确认」或「yes」后执行删除。删除的图片会移动到 `memes_deleted/` 目录备份，可手动恢复。
+授权用户在私聊中发送 `/del <公开ID>...`，Bot 发送待删除表情包的 OCR 文本摘要，用户回复「确认」或「yes」后执行删除。删除的图片会移动到 `memes_deleted/` 目录备份，可手动恢复。
 
 ```
-授权用户: /del 12 42
+授权用户: /del 1.3 0.5
 Bot: 确认删除以下表情包？回复「确认」执行删除，回复其他内容取消。
-     12, 老板又说加班...
-     42, 加班心累时的表情包
+     1.3, 老板又说加班...
+     0.5, 加班心累时的表情包
 授权用户: 确认
 Bot: 已删除表情包 ✅
-     成功：12、42
+     成功：1.3、0.5
 ```
 
 ### ℹ️ 状态信息 `/info`
 
-授权用户在私聊或群聊 @bot 中发送 `/info`，Bot 返回索引统计、当前状态、本机内存/CPU 占用以及当前 Bot 进程 RSS；发送 `/info <id>` 时返回指定表情包的详情（id、文本、文件名、大小、说话人、标签），`id` 不存在时回退为总体信息。
+授权用户在私聊或群聊 @bot 中发送 `/info`，Bot 返回索引统计、当前合集范围、当前状态、本机内存/CPU 占用以及当前 Bot 进程 RSS；发送 `/info <公开ID>` 时返回指定表情包的详情（公开 ID、合集、OCR 文本、文件名、大小、说话人、标签），ID 不存在时回退为总体信息。
 
 ```
 授权用户: /info
-Bot: 表情包数量：128
-     排行（前 10）：
+Bot: 表情包总数：128
+     当前合集：新三国（30 张）
+     普通合集数：4
+     当前合集说话人排行（前 10）：
        1. 小明 45
        2. 无 32
        3. 小红 28
@@ -142,10 +146,11 @@ Bot: 表情包数量：128
      进程内存：123 MiB
      CPU占用：12%
 
-授权用户: /info 42
-Bot: id: 42
+授权用户: /info 1.3
+Bot: id：1.3
+     合集：新三国
      文本：加班心累
-     文件名：meme_20260101120000_a1b2c3d4.webp
+     文件名：新三国/截图/meme_20260101120000_a1b2c3d4.webp
      大小：123.45 KiB
      说话人：小明
      标签：吐槽, 加班
@@ -153,12 +158,12 @@ Bot: id: 42
 
 ### ✏️ OCR 文本编辑 `/edittext`
 
-授权用户在私聊中发送 `/edittext <id> <新文本>`，Bot 发送确认消息，
+授权用户在私聊中发送 `/edittext <公开ID> <新文本>`，Bot 发送确认消息，
 用户回复「确认」后执行修改。修改会同步更新文本索引和向量库。
 
 ### 🎤 说话人设置 `/setspeaker`
 
-授权用户在私聊中发送 `/setspeaker <id> [说话人]`，Bot 发送图片和确认消息，
+授权用户在私聊中发送 `/setspeaker <公开ID> [说话人]`，Bot 发送图片和确认消息，
 用户回复「确认」或「yes」后执行修改。`[说话人]` 缺省时清空 sqlite 元数据中的说话人字段。
 
 ### 🔄 增量更新 `/refresh`
@@ -170,10 +175,10 @@ Bot: 索引更新完成 ✅
 
 `/refresh` 扫描时同样会对新增图片做去重与无文字排除：OCR 文本去重键命中已有条目或其他新图的新增图片会被移动到 `memes_replaced/` 目录归档（保留已有或文件名靠前者），无文字图片移至 `meme_no_text/`；完成回复包含新增、删除、去重、无文字移走、失败五项数量。
 
-`/help`、`/query`、`/rand`、`/sim`、`/ai`、`/add`、`/addtag`、`/del`、`/edittext`、`/setspeaker`、`/refresh`、`/info`、`/cancel` 使用同一组授权用户白名单。非授权用户的私聊和群聊消息都会被静默忽略。
+`/help`、`/query`、`/rand`、`/sim`、`/ai`、`/add`、`/addtag`、`/del`、`/edittext`、`/setspeaker`、`/refresh`、`/info`、`/cancel`、`/switch`、`/mv` 使用同一组授权用户白名单。非授权用户的私聊和群聊消息都会被静默忽略。
 
 ### 群聊支持
-`/query`、`/rand`、`/sim`、`/help`、`/info` 和普通文本支持在群聊中 @bot 触发。`/add`、`/addtag`、`/del`、`/ai`、`/refresh`、`/edittext`、`/setspeaker` 在群聊中 @bot 调用时会回复"此命令仅限私聊使用"。`/cancel` 私聊和群聊均可使用。
+`/query`、`/rand`、`/sim`、`/help`、`/info`、`/switch` 和普通文本支持在群聊中 @bot 触发。`/add`、`/addtag`、`/del`、`/ai`、`/refresh`、`/edittext`、`/setspeaker`、`/mv` 在群聊中 @bot 调用时会回复"此命令仅限私聊使用"。`/cancel` 私聊和群聊均可使用。
 
 ## 🚀 快速开始
 
@@ -235,7 +240,18 @@ cp .env.example .env
 #   PADDLEOCR_BASE_URL=https://paddleocr.aistudio-app.com  # 可选，百度 OCR API 地址
 
 # 3. 放入表情包
-# 把你的 .jpg/.jpeg/.png/.gif/.webp/.bmp 放到 memes/ 目录
+# 把你的 .jpg/.jpeg/.png/.gif/.webp/.bmp 放到 memes/ 目录。
+# memes/ 支持根目录直接存放（归属“全局”，公开 ID 0.x），
+# 也支持用一级目录作为表情包合集，目录内可继续使用子目录：
+#
+#   memes/
+#   ├── root.webp              # 全局，公开 ID 0.1
+#   ├── 新三国/
+#   │   ├── a.webp             # 新三国，公开 ID 1.1
+#   │   └── 截图/
+#   │       └── b.webp         # 新三国，公开 ID 1.2
+#   └── 甄嬛传/
+#       └── c.webp             # 甄嬛传，公开 ID 2.1
 
 # 4. 启动
 docker compose up -d
@@ -260,6 +276,35 @@ docker compose logs -f bot
 > 💡 本地构建需要代理时，执行 `cp docker-compose.override.yml.example docker-compose.override.yml`（docker compose 会自动加载该文件），按需修改其中的代理地址；不需要代理时删除该文件即可。
 
 首次启动会自动扫描 `memes/` 目录中的图片，按 `OCR_PROVIDER` 配置（默认 `rapidocr`，本地 ONNX 推理）提取文字并建立索引。索引同步在后台执行，Bot 启动后立即可用；同步期间搜索命令会提示"索引更新较慢，请稍后再试"。
+
+### 旧库迁移（合集功能）
+
+如果你之前使用的是旧版单库（`data/index.db` 没有 `schema_version` 表），升级到新版本前需要先停止 Bot，然后使用迁移脚本升级 Schema；升级后如果希望把根目录图片整体移入某个合集，可继续使用 `move-root` 子命令。
+
+```bash
+# 0. 停止 Bot（脚本不会自动检测 Bot 进程）
+docker compose down
+
+# 1. 预演 Schema 升级（不修改任何文件）
+uv run python -m scripts.migrate_meme_collections upgrade-schema --dry-run
+
+# 2. 正式升级 Schema（会自动备份 SQLite，并补齐 Chroma collection_id 元数据）
+uv run python -m scripts.migrate_meme_collections upgrade-schema
+
+# 3.（可选）把根目录的已索引图片整体迁移到指定合集
+#    目标可以是合集编号、精确名称；名称不存在时会自动创建目录和合集
+uv run python -m scripts.migrate_meme_collections move-root 新三国 --dry-run
+uv run python -m scripts.migrate_meme_collections move-root 新三国
+```
+
+迁移注意事项：
+
+- 运行迁移前必须停止 Bot，否则可能导致 SQLite 或 Chroma 状态不一致。
+- `upgrade-schema` 默认使用 `MEMES_DIR`、`INDEX_DB_PATH`、`CHROMA_DIR` 路径；也可通过 `--memes-dir`、`--db-path`、`--chroma-dir` 显式指定。
+- 脚本会先用 SQLite Backup API 创建 `index.db.<时间戳>.bak` 备份；正式修改前建议再额外备份整个 `data/` 目录。
+- `--dry-run` 只输出计划，不生成备份、不修改 SQLite 或 Chroma。
+- 强制中断（Ctrl-C、进程崩溃、断电）可能导致 SQLite 与 Chroma 不一致；中断后请使用升级前备份恢复，或重新运行迁移脚本由阶段0一致性检查修复。
+- `move-root` 只处理 `memes/` 根目录直接存放、且已在 SQLite 中索引的受支持图片；未索引图片会跳过并报告；目标合集已有相同 OCR 文本时保留源条目并跳过。
 
 ### 扫码登录与反向 WebSocket
 
@@ -323,6 +368,8 @@ push 或 PR 到 `main` 时，CI 会先跑单元测试，通过后并行执行集
                                    │  ├ /del   删除表情   │
                                    │  ├ /edittext 文本编辑│
                                    │  ├ /setspeaker 说话人│
+                                   │  ├ /switch 切换合集  │
+                                   │  ├ /mv    跨合集移动 │
                                    │  ├ /info  状态信息   │
                                    │  ├ /refresh 增量更新 │
                                    │  └ /cancel 取消命令  │
@@ -330,11 +377,11 @@ push 或 PR 到 `main` 时，CI 会先跑单元测试，通过后并行执行集
                                               │
                                    ┌──────────▼───────────┐
                                    │  本地表情包库          │
-                                   │  ├ memes/ 图片文件    │
+                                   │  ├ memes/ 图片文件    │  根目录=全局，一级目录=合集
                                    │  ├ memes_deleted/     │  被删除备份
                                    │  ├ memes_replaced/    │  被替换归档
-                                   │  ├ data/index.db      │  sqlite 元数据
-                                   │  └ data/chroma/       │  chroma 向量库
+                                   │  ├ data/index.db      │  sqlite 元数据（含合集表）
+                                   │  └ data/chroma/       │  chroma 向量库（含 collection_id）
                                    └──────────────────────┘
 ```
 
@@ -344,23 +391,44 @@ OCR 与 Embedding 均通过 `bot/engine/provider_factory.py` 按 `OCR_PROVIDER` 
 
 ```sql
 -- data/index.db（sqlite3）
+CREATE TABLE schema_version (
+    version INTEGER NOT NULL
+);
+
+CREATE TABLE meme_collection (
+    id INTEGER PRIMARY KEY CHECK (id > 0),
+    name TEXT NOT NULL UNIQUE
+);
+
 CREATE TABLE meme (
     id INTEGER PRIMARY KEY,
-    image_path TEXT NOT NULL,   -- memes/ 下相对路径
+    collection_id INTEGER NOT NULL CHECK (collection_id >= 0),  -- 0=全局根目录，正整数=普通合集
+    local_id INTEGER NOT NULL CHECK (local_id > 0),             -- 合集内编号
+    image_path TEXT NOT NULL,   -- memes/ 下相对路径（根目录文件名或合集内嵌套路径）
     text TEXT NOT NULL,         -- OCR 去除所有空白后的文本
-    speaker TEXT                -- 说话人，v1.0 可通过 /setspeaker 设置
+    speaker TEXT                -- 说话人
 );
 CREATE UNIQUE INDEX idx_meme_image_path ON meme(image_path);
-CREATE UNIQUE INDEX idx_meme_text ON meme(text);
+CREATE UNIQUE INDEX idx_meme_collection_local ON meme(collection_id, local_id);
+CREATE UNIQUE INDEX idx_meme_collection_text ON meme(collection_id, text);
+
 CREATE TABLE meme_tag (
     meme_id INTEGER NOT NULL,
     tag TEXT NOT NULL,
     PRIMARY KEY (meme_id, tag),
     FOREIGN KEY (meme_id) REFERENCES meme(id) ON DELETE CASCADE
 );
+
+CREATE TABLE chat_collection_scope (
+    user_id INTEGER NOT NULL,
+    chat_type TEXT NOT NULL CHECK (chat_type IN ('private', 'group')),
+    chat_id INTEGER NOT NULL,
+    selected_collection_id INTEGER NOT NULL CHECK (selected_collection_id >= 0),
+    PRIMARY KEY (user_id, chat_type, chat_id)
+);
 ```
 
-`data/index.db` 是 sqlite 元数据库，可用 `sqlite3` CLI 查询（如 `sqlite3 data/index.db "SELECT id, image_path, text FROM meme;"`）；`data/chroma/` 是 ChromaDB 向量库（collection `memes`，HNSW cosine），由系统自动维护，不建议手动编辑。OCR 文本在写入前统一去除所有空白字符。
+`data/index.db` 是 sqlite 元数据库，可用 `sqlite3` CLI 查询（如 `sqlite3 data/index.db "SELECT id, collection_id, local_id, image_path, text FROM meme;"`）；`data/chroma/` 是 ChromaDB 向量库（collection `memes`，HNSW cosine），每条向量附带 `collection_id` 元数据用于按合集过滤召回，由系统自动维护，不建议手动编辑。OCR 文本在写入前统一去除所有空白字符。
 
 ## 📂 项目结构
 
@@ -372,21 +440,22 @@ meme-pilot/
 │   ├── config/              # OneBot v11 + WebUI 配置
 │   ├── qq/                  # QQ 登录数据
 │   └── entrypoint.sh        # 自动生成反向 WebSocket 配置
-├── memes/                   # 放你的表情包图片
+├── memes/                   # 放你的表情包图片；根目录=全局，一级目录=合集
 ├── meme_no_text/            # OCR 无文字图片（不进索引，Docker 卷挂载）
 ├── memes_deleted/           # 被 /del 删除的表情包备份目录，可手动恢复
 ├── memes_replaced/          # 被替换表情包的归档目录
 ├── memes_migrated_backup/   # 迁移脚本备份目录（转 WebP 后的原文件备份）
 ├── data/                    # 索引数据
-│   ├── index.db             # sqlite 元数据（id、image_path、text、speaker + meme_tag）
-│   └── chroma/              # ChromaDB 向量库（collection memes，cosine）
+│   ├── index.db             # sqlite 元数据（meme、meme_tag、meme_collection、chat_collection_scope、schema_version）
+│   └── chroma/              # ChromaDB 向量库（collection memes，cosine，记录含 collection_id）
 ├── log/                     # 日志目录（Docker 卷挂载）
 │   ├── bot.log              # 当前日志（<= 10MB）
 │   ├── bot.log.1            # 上一份日志备份
 │   ├── bot.log.2            # 上二份日志备份
 │   └── bot.log.3            # 上三份日志备份
 ├── scripts/
-│   └── convert_memes_to_webp.py # 存量图片批量转 WebP 迁移脚本
+│   ├── convert_memes_to_webp.py   # 存量图片批量转 WebP 迁移脚本
+│   └── migrate_meme_collections.py # 合集 Schema 升级与根目录迁移脚本（upgrade-schema / move-root）
 ├── tests/                   # 测试目录规划
 │   ├── unit/                # 单元测试
 │   │   ├── engine/
@@ -412,11 +481,14 @@ meme-pilot/
     │   ├── delete.py       # /del 命令
     │   ├── edit.py         # /edittext 命令
     │   ├── setspeaker.py   # /setspeaker 命令
+    │   ├── switch.py       # /switch 合集切换命令
+    │   ├── move.py         # /mv 跨合集移动命令
     │   ├── refresh.py      # /refresh 命令
     │   ├── info.py         # /info 命令
     │   ├── help.py         # /help 命令
     │   ├── cancel.py       # /cancel 命令
     │   ├── plain_text.py   # 兜底：普通文本/未知命令
+    │   ├── _collection_utils.py # 合集与公开 ID 插件适配（共享模块）
     │   ├── _help_text.py        # 帮助文本常量（共享模块）
     │   └── _search_utils.py     # 搜索核心逻辑（共享模块）
     └── engine/
@@ -433,9 +505,10 @@ meme-pilot/
         ├── rerank_service.py    # DeepSeek 精排封装（实现 RerankProvider）
         ├── metadata_store.py    # sqlite3 元数据存储（MemeEntry + MetadataStore）
         ├── vector_store.py      # chromadb 向量存储（VectorHit + VectorStore）
+        ├── collection_manager.py # 表情包合集、公开 ID 与 ChatScope 选择解析
         ├── index_manager.py     # 索引薄编排（委托两个 Store）
         ├── rwlock.py            # 读写锁（写者优先）
-        ├── types.py             # 共享数据类型（SearchResult 等）
+        ├── types.py             # 共享数据类型（SearchResult、MemePublicId 等）
         ├── utils.py             # 共享工具（vector_norm、resolve_unique_filename 等）
         ├── keyword_searcher.py  # 模糊搜索
         ├── random_searcher.py   # 随机取样搜索

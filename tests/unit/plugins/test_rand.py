@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from bot.engine.types import SearchResult
+from bot.engine.types import CollectionSelection, SearchResult
 from bot.session import ChatScope
 from tests.conftest import _assert_has_reply, _assert_no_reply, extract_message_text
 
@@ -101,8 +101,11 @@ class TestHandleRandAuth:
     ) -> None:
         """授权用户应正常调用 dispatch_search_results。"""
         with patch.object(rand, "get_index_manager") as mock_get_im:
-            mock_get_im.return_value.random_search = AsyncMock(
-                return_value=[_make_search_result()]
+            mock_get_im.return_value.random_search_for_scope = AsyncMock(
+                return_value=(
+                    CollectionSelection(0, "全部合集"),
+                    [_make_search_result()],
+                )
             )
             await handle_rand(_make_bot(), _make_event(), _make_matcher())
             mock_dispatch.assert_awaited_once()
@@ -114,19 +117,53 @@ class TestHandleRandDelegation:
     @pytest.mark.asyncio
     @patch.object(rand.session_manager, "activate_chat", return_value=True)
     @patch.object(rand, "is_authorized", return_value=True)
+    async def test_current_collection_is_snapshotted(
+        self, mock_auth: MagicMock, mock_activate: MagicMock
+    ) -> None:
+        """首次搜索读取一次合集并把过滤条件保存为会话快照。"""
+        with patch.object(rand, "get_index_manager") as mock_get_im:
+            manager = mock_get_im.return_value
+            manager.random_search_for_scope = AsyncMock(
+                return_value=(
+                    CollectionSelection(1, "新三国"),
+                    [_make_search_result()],
+                )
+            )
+            matcher = _make_matcher()
+            event = _make_event(text="/rand 加班")
+
+            await handle_rand(_make_bot(), event, matcher)
+
+            manager.random_search_for_scope.assert_awaited_once_with(
+                ChatScope.from_event(event), "加班"
+            )
+            assert matcher.state["collection_selection"] == CollectionSelection(
+                1, "新三国"
+            )
+
+    @pytest.mark.asyncio
+    @patch.object(rand.session_manager, "activate_chat", return_value=True)
+    @patch.object(rand, "is_authorized", return_value=True)
     async def test_keyword_passed_to_random_search(
         self, mock_auth: MagicMock, mock_activate: MagicMock
     ) -> None:
         """有关键词时应传给 random_search。"""
         with patch.object(rand, "get_index_manager") as mock_get_im:
             mock_random = AsyncMock(return_value=[_make_search_result()])
-            mock_get_im.return_value.random_search = mock_random
+            mock_get_im.return_value.random_search_for_scope = AsyncMock(
+                return_value=(
+                    CollectionSelection(0, "全部合集"),
+                    mock_random.return_value,
+                )
+            )
 
             await handle_rand(
                 _make_bot(), _make_event(text="/rand 加班"), _make_matcher()
             )
 
-            mock_random.assert_awaited_once_with("加班")
+            mock_get_im.return_value.random_search_for_scope.assert_awaited_once_with(
+                ChatScope.from_event(_make_event()), "加班"
+            )
 
     @pytest.mark.asyncio
     @patch.object(rand.session_manager, "activate_chat", return_value=True)
@@ -137,11 +174,47 @@ class TestHandleRandDelegation:
         """无关键词时应以 None 调用 random_search。"""
         with patch.object(rand, "get_index_manager") as mock_get_im:
             mock_random = AsyncMock(return_value=[_make_search_result()])
-            mock_get_im.return_value.random_search = mock_random
+            mock_get_im.return_value.random_search_for_scope = AsyncMock(
+                return_value=(
+                    CollectionSelection(0, "全部合集"),
+                    mock_random.return_value,
+                )
+            )
 
             await handle_rand(_make_bot(), _make_event(text="/rand"), _make_matcher())
 
-            mock_random.assert_awaited_once_with(None)
+            mock_get_im.return_value.random_search_for_scope.assert_awaited_once_with(
+                ChatScope.from_event(_make_event(text="/rand")), None
+            )
+
+
+class TestHandleRandSelectionTimeout:
+    """当前合集读取超时测试。"""
+
+    @pytest.mark.asyncio
+    @patch.object(rand.session_manager, "activate_chat", return_value=True)
+    @patch.object(rand.session_manager, "deactivate_chat")
+    @patch.object(rand, "is_authorized", return_value=True)
+    async def test_timeout_clears_session_without_random_search(
+        self,
+        mock_auth: MagicMock,
+        mock_deactivate: MagicMock,
+        mock_activate: MagicMock,
+    ) -> None:
+        """合集读取超时时统一提示、清会话且不调用随机搜索。"""
+        with patch.object(rand, "get_index_manager") as mock_get_im:
+            manager = mock_get_im.return_value
+            manager.random_search_for_scope = AsyncMock(side_effect=TimeoutError)
+            event = _make_event()
+            matcher = _make_matcher()
+
+            await handle_rand(_make_bot(), event, matcher)
+
+            manager.random_search_for_scope.assert_awaited_once()
+            mock_deactivate.assert_called_once_with(ChatScope.from_event(event))
+            assert "索引更新较慢" in extract_message_text(
+                matcher.finish.await_args.args[0]
+            )
 
 
 class TestHandleRandEmptyResults:
@@ -159,7 +232,9 @@ class TestHandleRandEmptyResults:
     ) -> None:
         """关键词无匹配时应回复没有匹配到。"""
         with patch.object(rand, "get_index_manager") as mock_get_im:
-            mock_get_im.return_value.random_search = AsyncMock(return_value=[])
+            mock_get_im.return_value.random_search_for_scope = AsyncMock(
+                return_value=(CollectionSelection(0, "全部合集"), [])
+            )
             matcher = _make_matcher()
 
             await handle_rand(_make_bot(), _make_event(text="/rand 火星文"), matcher)
@@ -181,7 +256,9 @@ class TestHandleRandEmptyResults:
     ) -> None:
         """群聊中关键词无匹配时应带 reply。"""
         with patch.object(rand, "get_index_manager") as mock_get_im:
-            mock_get_im.return_value.random_search = AsyncMock(return_value=[])
+            mock_get_im.return_value.random_search_for_scope = AsyncMock(
+                return_value=(CollectionSelection(0, "全部合集"), [])
+            )
             matcher = _make_matcher()
 
             await handle_rand(
@@ -207,7 +284,9 @@ class TestHandleRandEmptyResults:
     ) -> None:
         """全库随机但目录为空时应提示目录为空。"""
         with patch.object(rand, "get_index_manager") as mock_get_im:
-            mock_get_im.return_value.random_search = AsyncMock(return_value=[])
+            mock_get_im.return_value.random_search_for_scope = AsyncMock(
+                return_value=(CollectionSelection(0, "全部合集"), [])
+            )
             matcher = _make_matcher()
 
             await handle_rand(_make_bot(), _make_event(text="/rand"), matcher)
@@ -229,7 +308,9 @@ class TestHandleRandEmptyResults:
     ) -> None:
         """群聊中全库随机但目录为空时应带 reply。"""
         with patch.object(rand, "get_index_manager") as mock_get_im:
-            mock_get_im.return_value.random_search = AsyncMock(return_value=[])
+            mock_get_im.return_value.random_search_for_scope = AsyncMock(
+                return_value=(CollectionSelection(0, "全部合集"), [])
+            )
             matcher = _make_matcher()
 
             await handle_rand(
@@ -268,15 +349,25 @@ class TestGotRandSelection:
         mock_get_sel.return_value = MagicMock()
         new_results = [_make_search_result(entry_id=2, text="乙")]
         with patch.object(rand, "get_index_manager") as mock_get_im:
-            mock_get_im.return_value.random_search = AsyncMock(return_value=new_results)
+            selection = CollectionSelection(1, "新三国")
+            mock_get_im.return_value.random_search_for_scope_snapshot = AsyncMock(
+                return_value=new_results
+            )
             matcher = _make_matcher(
-                state={"candidates": [_make_search_result()], "keyword": None}
+                state={
+                    "candidates": [_make_search_result()],
+                    "keyword": None,
+                    "collection_selection": selection,
+                }
             )
 
             await got_rand_selection(
                 _make_bot(), _make_event(text="0"), matcher, _make_message("0")
             )
 
+            mock_get_im.return_value.random_search_for_scope_snapshot.assert_awaited_once_with(
+                _make_scope("12345"), None, selection
+            )
             mock_remove_sel.assert_called_once_with(_make_scope("12345"))
             mock_present.assert_awaited_once()
             args = mock_present.call_args
@@ -284,6 +375,50 @@ class TestGotRandSelection:
             assert args.kwargs.get("has_next_page", False) is False
             # 换一批在 got 内，必须用 reject 重新等待，否则 matcher 结束
             assert args.kwargs.get("use_reject") is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("message_type", ["private", "group"])
+    @patch.object(rand.session_manager, "deactivate_chat")
+    @patch("bot.plugins._search_utils.session_manager.remove_selection")
+    @patch("bot.plugins._search_utils.session_manager.activate_chat")
+    @patch("bot.plugins._search_utils.session_manager.get_selection")
+    @patch("bot.plugins._search_utils.got_intercept_bypass", return_value=False)
+    async def test_zero_rejects_expired_collection_snapshot(
+        self,
+        mock_bypass: MagicMock,
+        mock_get_sel: MagicMock,
+        mock_activate: MagicMock,
+        mock_remove_sel: MagicMock,
+        mock_deactivate: MagicMock,
+        message_type: str,
+    ) -> None:
+        """刷新回退 scope 后换批应结束会话并提示重新执行 /rand。"""
+        mock_get_sel.return_value = MagicMock()
+        selection = CollectionSelection(1, "旧合集")
+        event = _make_event(text="0", message_type=message_type)
+        matcher = _make_matcher(
+            state={
+                "candidates": [_make_search_result()],
+                "keyword": None,
+                "collection_selection": selection,
+            }
+        )
+        with patch.object(rand, "get_index_manager") as mock_get_im:
+            mock_get_im.return_value.random_search_for_scope_snapshot = AsyncMock(
+                side_effect=rand.CollectionSelectionExpiredError()
+            )
+
+            await got_rand_selection(_make_bot(), event, matcher, _make_message("0"))
+
+        mock_remove_sel.assert_called_once_with(ChatScope.from_event(event))
+        mock_deactivate.assert_called_once_with(ChatScope.from_event(event))
+        matcher.finish.assert_awaited_once()
+        reply = matcher.finish.await_args.args[0]
+        assert "当前合集已变化，请重新发送 /rand" in extract_message_text(reply)
+        if message_type == "group":
+            _assert_has_reply(reply)
+        else:
+            _assert_no_reply(reply)
 
     @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.resolve_selection")
@@ -376,8 +511,11 @@ class TestHandleRandOptions:
             mock_activate: activate_chat 的 mock。
         """
         with patch.object(rand, "get_index_manager") as mock_get_im:
-            mock_get_im.return_value.random_search = AsyncMock(
-                return_value=[_make_search_result()]
+            mock_get_im.return_value.random_search_for_scope = AsyncMock(
+                return_value=(
+                    CollectionSelection(0, "全部合集"),
+                    [_make_search_result()],
+                )
             )
             await handle_rand(_make_bot(), _make_event(), _make_matcher())
 

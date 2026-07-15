@@ -14,20 +14,28 @@ def _reset_globals() -> Generator[None, Any, None]:
     app_state._index_manager = None
     app_state._metadata_store = None
     app_state._vector_store = None
+    app_state._collection_manager = None
     app_state._ocr_service = None
     app_state._embedding_service = None
     app_state._image_optimizer = None
     app_state._ai_matcher = None
     app_state._keyword_searcher = None
+    app_state._random_searcher = None
+    app_state._semantic_searcher = None
+    app_state._combined_searcher = None
     yield
     app_state._index_manager = None
     app_state._metadata_store = None
     app_state._vector_store = None
+    app_state._collection_manager = None
     app_state._ocr_service = None
     app_state._embedding_service = None
     app_state._image_optimizer = None
     app_state._ai_matcher = None
     app_state._keyword_searcher = None
+    app_state._random_searcher = None
+    app_state._semantic_searcher = None
+    app_state._combined_searcher = None
 
 
 class TestInitApp:
@@ -42,10 +50,21 @@ class TestInitApp:
         emb = MagicMock()
         ai = MagicMock()
         ks = MagicMock()
-        app_state.init_app(im, md, vs, ocr, emb, ai_matcher=ai, keyword_searcher=ks)
+        cm = MagicMock()
+        app_state.init_app(
+            im,
+            md,
+            vs,
+            ocr,
+            emb,
+            ai_matcher=ai,
+            keyword_searcher=ks,
+            collection_manager=cm,
+        )
         assert app_state._index_manager is im
         assert app_state._metadata_store is md
         assert app_state._vector_store is vs
+        assert app_state._collection_manager is cm
         assert app_state._ocr_service is ocr
         assert app_state._embedding_service is emb
         assert app_state._ai_matcher is ai
@@ -60,6 +79,7 @@ class TestInitApp:
         assert app_state._index_manager is im2
         assert app_state._metadata_store is md2
         assert app_state._vector_store is vs2
+        assert app_state._collection_manager is None
         assert app_state._ocr_service is ocr2
         assert app_state._embedding_service is emb2
 
@@ -189,3 +209,31 @@ class TestGetVectorStore:
         """未初始化时应抛出 RuntimeError。"""
         with pytest.raises(RuntimeError, match="VectorStore 尚未初始化"):
             app_state.get_vector_store()
+
+
+class TestGetCollectionManager:
+    """get_collection_manager() 测试。"""
+
+    def test_returns_instance(self) -> None:
+        """初始化后应返回 CollectionManager 实例。"""
+        from bot.engine import CollectionManager
+
+        cm = MagicMock(spec=CollectionManager)
+        app_state.init_app(
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            collection_manager=cm,
+        )
+        assert app_state.get_collection_manager() is cm
+
+    def test_raises_when_not_injected(self) -> None:
+        """未注入 CollectionManager 时应抛出 RuntimeError。"""
+        app_state.init_app(
+            MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock()
+        )
+
+        with pytest.raises(RuntimeError, match="CollectionManager 尚未初始化"):
+            app_state.get_collection_manager()

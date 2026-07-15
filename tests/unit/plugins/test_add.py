@@ -12,10 +12,12 @@ from bot.engine.index_manager import (
     AddResult,
     CompressionError,
     EmbeddingError,
+    CollectionSelectionExpiredError,
     IndexAddCancelledError,
     OcrError,
     RefreshInProgressError,
 )
+from bot.engine.types import CollectionSelection, MemePublicId
 from bot.session import ChatScope
 from tests.conftest import extract_message_text
 
@@ -65,7 +67,10 @@ def _make_bot() -> MagicMock:
 def _make_matcher(*, state: dict | None = None) -> MagicMock:
     """创建模拟的 Matcher。"""
     matcher = MagicMock()
-    matcher.state = state if state is not None else {}
+    matcher.state = {
+        "collection_selection": CollectionSelection(0, "全部合集"),
+        **(state or {}),
+    }
     matcher.finish = AsyncMock()
     matcher.send = AsyncMock()
     matcher.reject = AsyncMock()
@@ -77,8 +82,18 @@ def _make_index_manager() -> MagicMock:
 
     im = MagicMock()
     im.add = AsyncMock(
-        return_value=AddResult(entry_id=1, reason="added", text="加班心好累")
+        return_value=AddResult(
+            entry_id=1,
+            reason="added",
+            text="加班心好累",
+            public_id=MemePublicId(1, 3),
+            collection_name="新三国",
+        )
     )
+    im.get_selected_collection = AsyncMock(
+        return_value=CollectionSelection(0, "全部合集")
+    )
+    im.validate_collection_selection = AsyncMock()
     im.add_user_timeout = 60.0
     return im
 
@@ -118,6 +133,9 @@ class TestParseAddArgs:
         )
         assert matcher.state["speaker"] is None
         assert matcher.state["tags"] == []
+        assert matcher.state["collection_selection"] == CollectionSelection(
+            0, "全部合集"
+        )
 
     @pytest.mark.asyncio
     @patch.object(add, "get_index_manager")
@@ -428,8 +446,8 @@ class TestHandleAdd:
     async def test_authorized_proceeds(
         self,
         mock_sm: MagicMock,
-        mock_get_im: MagicMock,
         mock_auth: MagicMock,
+        mock_get_im: MagicMock,
     ) -> None:
         """授权用户应正常激活会话。"""
         mock_sm.activate_chat.return_value = True
@@ -545,6 +563,113 @@ class TestGotImage:
         mock_sm.deactivate_chat.assert_called_once_with(_make_scope("111"))
 
     @pytest.mark.asyncio
+    async def test_selected_collection_path_and_snapshot_are_passed_atomically(
+        self, tmp_path: Path
+    ) -> None:
+        """普通合集应写入其一级目录并把完整选择快照传给引擎。"""
+        memes_dir = tmp_path / "memes"
+        selection = CollectionSelection(1, "新三国")
+        im = _make_index_manager()
+        im.get_selected_collection.return_value = selection
+        matcher = _make_matcher(state={})
+
+        with (
+            patch.object(add, "MEMES_DIR", memes_dir),
+            patch.object(add, "is_authorized", return_value=True),
+            patch.object(add, "session_manager") as mock_sm,
+            patch.object(add, "get_index_manager", return_value=im),
+            patch.object(add, "got_intercept_bypass", return_value=False),
+            patch.object(add, "extract_image_urls", return_value=["https://img/a.jpg"]),
+            patch.object(
+                add,
+                "_download_image",
+                new=AsyncMock(return_value=(b"fake", _make_response())),
+            ),
+            patch.object(add, "_auto_filename", return_value="meme"),
+        ):
+            mock_sm.activate_chat.return_value = True
+            await handle_add(
+                _make_bot(), _make_event(), matcher, args=_make_message("")
+            )
+            await got_image(_make_bot(), _make_event(), matcher, MagicMock())
+
+        im.validate_collection_selection.assert_awaited_once_with(
+            _make_scope(), selection
+        )
+        im.add.assert_awaited_once_with(
+            "新三国/meme.jpg",
+            speaker=None,
+            tags=[],
+            collection_id=1,
+            scope=_make_scope(),
+            expected_selection=selection,
+        )
+        assert (memes_dir / "新三国/meme.jpg").read_bytes() == b"fake"
+
+    @pytest.mark.asyncio
+    async def test_global_collection_saves_directly_under_memes(
+        self, tmp_path: Path
+    ) -> None:
+        """选择 0 时图片应直接保存到 MEMES_DIR。"""
+        memes_dir = tmp_path / "memes"
+        selection = CollectionSelection(0, "全部合集")
+        im = _make_index_manager()
+        matcher = _make_matcher(state={"collection_selection": selection})
+
+        with (
+            patch.object(add, "MEMES_DIR", memes_dir),
+            patch.object(add, "session_manager"),
+            patch.object(add, "get_index_manager", return_value=im),
+            patch.object(add, "got_intercept_bypass", return_value=False),
+            patch.object(add, "extract_image_urls", return_value=["https://img/a.jpg"]),
+            patch.object(
+                add,
+                "_download_image",
+                new=AsyncMock(return_value=(b"fake", _make_response())),
+            ),
+            patch.object(add, "_auto_filename", return_value="meme"),
+        ):
+            await got_image(_make_bot(), _make_event(), matcher, MagicMock())
+
+        assert (memes_dir / "meme.jpg").read_bytes() == b"fake"
+        im.add.assert_awaited_once_with(
+            "meme.jpg",
+            speaker=None,
+            tags=[],
+            collection_id=0,
+            scope=_make_scope(),
+            expected_selection=selection,
+        )
+
+    @pytest.mark.asyncio
+    async def test_expired_selection_before_download_finishes_without_file(
+        self, tmp_path: Path
+    ) -> None:
+        """下载前选择已失效时不得发起下载或留下文件。"""
+        im = _make_index_manager()
+        im.validate_collection_selection.side_effect = CollectionSelectionExpiredError()
+        download = AsyncMock()
+        matcher = _make_matcher(
+            state={"collection_selection": CollectionSelection(1, "旧合集")}
+        )
+
+        with (
+            patch.object(add, "MEMES_DIR", tmp_path / "memes"),
+            patch.object(add, "session_manager"),
+            patch.object(add, "get_index_manager", return_value=im),
+            patch.object(add, "got_intercept_bypass", return_value=False),
+            patch.object(add, "extract_image_urls", return_value=["https://img/a.jpg"]),
+            patch.object(add, "_download_image", new=download),
+        ):
+            await got_image(_make_bot(), _make_event(), matcher, MagicMock())
+
+        download.assert_not_awaited()
+        assert extract_message_text(matcher.finish.await_args[0][0]) == (
+            "当前合集已变化，请重新 /add"
+        )
+        assert not (tmp_path / "memes").exists()
+
+    @pytest.mark.asyncio
     @patch.object(add, "session_manager")
     @patch.object(add, "got_intercept_bypass", return_value=False)
     @patch.object(add, "resolve_unique_filename")
@@ -569,7 +694,13 @@ class TestGotImage:
 
         im = _make_index_manager()
         im.add = AsyncMock(
-            return_value=AddResult(entry_id=1, reason="added", text="加班心好累")
+            return_value=AddResult(
+                entry_id=1,
+                reason="added",
+                text="加班心好累",
+                public_id=MemePublicId(1, 3),
+                collection_name="新三国",
+            )
         )
         mock_get_im.return_value = im
 
@@ -586,8 +717,16 @@ class TestGotImage:
         matcher.finish.assert_awaited_once()
         msg = matcher.finish.await_args[0][0]
         assert "新增表情包" in extract_message_text(msg)
-        im.add.assert_awaited_once_with("a.jpg", speaker=None, tags=[])
-        assert "id：1" in extract_message_text(msg)
+        im.add.assert_awaited_once_with(
+            "a.jpg",
+            speaker=None,
+            tags=[],
+            collection_id=0,
+            scope=_make_scope(),
+            expected_selection=CollectionSelection(0, "全部合集"),
+        )
+        assert "ID：1.3" in extract_message_text(msg)
+        assert "1, " not in extract_message_text(msg)
 
     @pytest.mark.asyncio
     @patch.object(add, "session_manager")
@@ -614,7 +753,13 @@ class TestGotImage:
 
         im = _make_index_manager()
         im.add = AsyncMock(
-            return_value=AddResult(entry_id=1, reason="added", text="加班心好累")
+            return_value=AddResult(
+                entry_id=1,
+                reason="added",
+                text="加班心好累",
+                public_id=MemePublicId(1, 3),
+                collection_name="新三国",
+            )
         )
         mock_get_im.return_value = im
 
@@ -631,8 +776,16 @@ class TestGotImage:
         matcher.finish.assert_awaited_once()
         msg = matcher.finish.await_args[0][0]
         assert "新增表情包" in extract_message_text(msg)
-        im.add.assert_awaited_once_with("meme.jpg", speaker="小明", tags=["吐槽"])
-        assert "id：1" in extract_message_text(msg)
+        im.add.assert_awaited_once_with(
+            "meme.jpg",
+            speaker="小明",
+            tags=["吐槽"],
+            collection_id=0,
+            scope=_make_scope(),
+            expected_selection=CollectionSelection(0, "全部合集"),
+        )
+        assert "ID：1.3" in extract_message_text(msg)
+        assert "1, " not in extract_message_text(msg)
 
     @pytest.mark.asyncio
     @patch.object(add, "session_manager")

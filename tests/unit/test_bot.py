@@ -2,7 +2,16 @@
 
 import pytest
 
+from bot.bot import CollectionManager
 from bot.config import read_bot_port, read_int_env
+
+
+class TestCollectionManagerImport:
+    """CollectionManager 已接入启动流程。"""
+
+    def test_collection_manager_imported(self) -> None:
+        """bot.py 已从 bot.engine 导入 CollectionManager。"""
+        assert CollectionManager is not None
 
 
 class TestReadIntEnv:

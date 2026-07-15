@@ -6,6 +6,7 @@ import random
 from bot.log_context import timed
 
 from .keyword_searcher import KeywordSearcher
+from .metadata_store import MemeEntry
 from .protocols import MetadataStoreProvider
 from .types import SearchResult
 
@@ -36,7 +37,7 @@ class RandomSearcher:
         keyword: str | None = None,
         limit: int = 10,
     ) -> list[SearchResult]:
-        """随机返回指定数量的表情包候选。
+        """随机返回指定数量的表情包候选（全库兼容包装）。
 
         Args:
             keyword: 可选关键词；None 或空串表示全库随机。
@@ -44,34 +45,47 @@ class RandomSearcher:
 
         Returns:
             随机取样后的 SearchResult 列表，候选不足时返回全部。
-            关键词无匹配时返回空列表，不会回退到全库随机。
+            有关键词但无匹配时返回空列表（不回退到全库随机）。
             所有结果的 similarity 字段固定为 0.0。
         """
         logger.debug("随机搜索入口: keyword=%r, limit=%d", keyword, limit)
+        entries = self.metadata_store.get_all_entries()
+        return self.search_random_in(entries, keyword=keyword, limit=limit)
+
+    def search_random_in(
+        self,
+        entries: dict[int, MemeEntry],
+        keyword: str | None = None,
+        limit: int = 10,
+    ) -> list[SearchResult]:
+        """在指定 entries 子集上随机取样。
+
+        Args:
+            entries: 索引条目子集，key=int(id)。
+            keyword: 可选关键词；None 或空串表示直接对 entries 随机取样。
+            limit: 返回数量上限，默认 10。
+
+        Returns:
+            随机取样后的 SearchResult 列表，候选不足时返回全部。
+            有关键词但无匹配时返回空列表，不会回退到全库随机。
+            所有结果的 similarity 字段固定为 0.0。
+        """
+        logger.debug(
+            "随机子集搜索入口: entries=%d, keyword=%r, limit=%d",
+            len(entries),
+            keyword,
+            limit,
+        )
         if keyword:
-            candidates = self.keyword_searcher.search(keyword)
+            keyword_results = self.keyword_searcher.search_in(entries, keyword)
             candidates = [
-                SearchResult(
-                    entry_id=r.entry_id,
-                    image_path=r.image_path,
-                    text=r.text,
-                    similarity=0.0,
-                    speaker=r.speaker,
-                    tags=r.tags,
-                )
-                for r in candidates
+                SearchResult.from_entry(entry, 0.0)
+                for result in keyword_results
+                if (entry := entries.get(result.entry_id)) is not None
             ]
         else:
-            entries = self.metadata_store.get_all_entries()
             candidates = [
-                SearchResult(
-                    entry_id=entry.id,
-                    image_path=entry.image_path,
-                    text=entry.text,
-                    similarity=0.0,
-                    speaker=entry.speaker,
-                    tags=entry.tags,
-                )
+                SearchResult.from_entry(entry, 0.0)
                 for entry in entries.values()
                 if entry.text
             ]

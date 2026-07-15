@@ -1,11 +1,15 @@
 """/setspeaker 命令插件单元测试。"""
 
+import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from bot.engine.collection_manager import InvalidPublicIdError, MemeNotFoundError
 from bot.engine.index_manager import SetSpeakerResult
+from bot.engine.metadata_store import MemeEntry
+from bot.engine.types import MemePublicId
 from bot.session import ChatScope
 from tests.conftest import _assert_has_reply, _assert_no_reply, extract_message_text
 
@@ -60,6 +64,7 @@ def _make_entry(image_path: str = "test.jpg", speaker: str | None = None) -> Mag
     """创建模拟的 MemeEntry。"""
     entry = MagicMock()
     entry.id = 3
+    entry.public_id = MemePublicId(1, 3)
     entry.image_path = image_path
     entry.speaker = speaker
     entry.text = "一些文字"
@@ -172,6 +177,10 @@ class TestHandleSetspeaker:
                 "bot.plugins.setspeaker.session_manager.activate_chat",
                 return_value=True,
             ),
+            patch(
+                "bot.plugins.setspeaker.resolve_entry_argument",
+                new=AsyncMock(side_effect=InvalidPublicIdError("abc")),
+            ),
         ):
             bot = _make_bot()
             event = _make_event(text="/setspeaker abc 张三")
@@ -181,8 +190,44 @@ class TestHandleSetspeaker:
 
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
-            assert extract_message_text(msg) == "entry_id 必须为数字"
+            assert "表情包 ID 格式错误" in extract_message_text(msg)
             _assert_no_reply(msg)
+
+    @pytest.mark.asyncio
+    async def test_resolve_timeout_deactivates_without_starting_confirmation(
+        self,
+    ) -> None:
+        """解析公开 ID 等待读锁超时应清理会话且不启动确认超时。"""
+        with (
+            patch("bot.plugins.setspeaker.is_authorized", return_value=True),
+            patch(
+                "bot.plugins.setspeaker.session_manager.activate_chat",
+                return_value=True,
+            ),
+            patch(
+                "bot.plugins.setspeaker.resolve_entry_argument",
+                new=AsyncMock(side_effect=asyncio.TimeoutError),
+            ),
+            patch(
+                "bot.plugins.setspeaker.session_manager.deactivate_chat"
+            ) as deactivate,
+            patch(
+                "bot.plugins.setspeaker.timeout_session", new_callable=AsyncMock
+            ) as timeout,
+        ):
+            matcher = _make_matcher()
+            await handle_setspeaker(
+                _make_bot(),
+                _make_event(text="/setspeaker 1.3 曹操"),
+                matcher,
+                args=_make_message("1.3 曹操"),
+            )
+
+        assert extract_message_text(matcher.finish.await_args[0][0]) == (
+            "索引更新较慢，请稍后再试"
+        )
+        deactivate.assert_called_once()
+        timeout.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_entry_not_found(self) -> None:
@@ -193,12 +238,11 @@ class TestHandleSetspeaker:
                 "bot.plugins.setspeaker.session_manager.activate_chat",
                 return_value=True,
             ),
-            patch("bot.plugins.setspeaker.get_metadata_store") as mock_get_store,
+            patch(
+                "bot.plugins.setspeaker.resolve_entry_argument",
+                new=AsyncMock(side_effect=MemeNotFoundError("1.999")),
+            ),
         ):
-            store = MagicMock()
-            store.get_entry.return_value = None
-            mock_get_store.return_value = store
-
             bot = _make_bot()
             event = _make_event(text="/setspeaker 999 张三")
             matcher = _make_matcher()
@@ -222,15 +266,13 @@ class TestHandleSetspeaker:
                 "bot.plugins.setspeaker.session_manager.activate_chat",
                 return_value=True,
             ),
-            patch("bot.plugins.setspeaker.get_metadata_store") as mock_get_store,
-            patch("bot.plugins.setspeaker.get_index_manager"),
+            patch(
+                "bot.plugins.setspeaker.resolve_entry_argument",
+                new=AsyncMock(return_value=_make_entry(speaker=None)),
+            ),
             patch("bot.plugins.setspeaker.MEMES_DIR", new=tmp_path),
             patch("bot.config.MEMES_DIR", new=tmp_path),  # 修复 import
         ):
-            store = MagicMock()
-            store.get_entry.return_value = _make_entry(speaker=None)
-            mock_get_store.return_value = store
-
             bot = _make_bot()
             event = _make_event(text="/setspeaker 3 张三")
             matcher = _make_matcher()
@@ -259,15 +301,13 @@ class TestHandleSetspeaker:
                 "bot.plugins.setspeaker.session_manager.activate_chat",
                 return_value=True,
             ),
-            patch("bot.plugins.setspeaker.get_metadata_store") as mock_get_store,
-            patch("bot.plugins.setspeaker.get_index_manager"),
+            patch(
+                "bot.plugins.setspeaker.resolve_entry_argument",
+                new=AsyncMock(return_value=_make_entry(speaker="李四")),
+            ),
             patch("bot.plugins.setspeaker.MEMES_DIR", new=tmp_path),
             patch("bot.config.MEMES_DIR", new=tmp_path),
         ):
-            store = MagicMock()
-            store.get_entry.return_value = _make_entry(speaker="李四")
-            mock_get_store.return_value = store
-
             bot = _make_bot()
             event = _make_event(text="/setspeaker 3")
             matcher = _make_matcher()
@@ -276,6 +316,46 @@ class TestHandleSetspeaker:
 
             assert matcher.state["entry_id"] == 3
             assert matcher.state["speaker"] is None
+
+
+class TestPublicIdSetspeaker:
+    """`/setspeaker` 公开 ID 迁移测试。"""
+
+    @pytest.mark.asyncio
+    async def test_long_leading_zero_id_is_passed_raw(self) -> None:
+        """超长前导零完整 ID 应原样交给共享解析器。"""
+        raw_id = f"{'0' * 5000}1.{'0' * 5000}3"
+        entry = MemeEntry(
+            id=85,
+            image_path="新三国/a.webp",
+            text="测试",
+            collection_id=1,
+            local_id=3,
+            collection_name="新三国",
+        )
+        with (
+            patch("bot.plugins.setspeaker.is_authorized", return_value=True),
+            patch(
+                "bot.plugins.setspeaker.session_manager.activate_chat",
+                return_value=True,
+            ),
+            patch(
+                "bot.plugins.setspeaker.resolve_entry_argument",
+                new=AsyncMock(return_value=entry),
+            ) as mock_resolve,
+            patch("bot.plugins.setspeaker.session_manager.create_selection"),
+            patch("bot.plugins.setspeaker.session_manager.reset_current_task"),
+            patch("bot.plugins.setspeaker.timeout_session", new_callable=AsyncMock),
+        ):
+            matcher = _make_matcher()
+            event = _make_event(text=f"/setspeaker {raw_id} 曹操")
+            await handle_setspeaker(
+                _make_bot(), event, matcher, args=_make_message(f"{raw_id} 曹操")
+            )
+
+        mock_resolve.assert_awaited_once_with(event, raw_id)
+        assert matcher.state["entry_id"] == 85
+        assert matcher.state["public_id"] == MemePublicId(1, 3)
 
 
 # ---------------------------------------------------------------------------
@@ -306,7 +386,12 @@ class TestGotConfirm:
             bot = _make_bot()
             event = _make_event(text="确认")
             matcher = _make_matcher(
-                state={"entry_id": 3, "speaker": "张三", "old_speaker": None}
+                state={
+                    "entry_id": 3,
+                    "public_id": MemePublicId(1, 3),
+                    "speaker": "张三",
+                    "old_speaker": None,
+                }
             )
 
             await got_confirm(bot, event, matcher, _make_message(event.get_plaintext()))
@@ -337,7 +422,12 @@ class TestGotConfirm:
             bot = _make_bot()
             event = _make_event(text="yes")
             matcher = _make_matcher(
-                state={"entry_id": 3, "speaker": "张三", "old_speaker": None}
+                state={
+                    "entry_id": 3,
+                    "public_id": MemePublicId(1, 3),
+                    "speaker": "张三",
+                    "old_speaker": None,
+                }
             )
 
             await got_confirm(bot, event, matcher, _make_message(event.get_plaintext()))
@@ -354,7 +444,12 @@ class TestGotConfirm:
             bot = _make_bot()
             event = _make_event(text="不")
             matcher = _make_matcher(
-                state={"entry_id": 3, "speaker": "张三", "old_speaker": None}
+                state={
+                    "entry_id": 3,
+                    "public_id": MemePublicId(1, 3),
+                    "speaker": "张三",
+                    "old_speaker": None,
+                }
             )
 
             await got_confirm(bot, event, matcher, _make_message(event.get_plaintext()))
@@ -384,7 +479,12 @@ class TestGotConfirm:
             bot = _make_bot()
             event = _make_event(text="确认")
             matcher = _make_matcher(
-                state={"entry_id": 3, "speaker": None, "old_speaker": "李四"}
+                state={
+                    "entry_id": 3,
+                    "public_id": MemePublicId(1, 3),
+                    "speaker": None,
+                    "old_speaker": "李四",
+                }
             )
 
             await got_confirm(bot, event, matcher, _make_message(event.get_plaintext()))
@@ -434,20 +534,15 @@ class TestShortCommandSetspeaker:
                 "bot.plugins.setspeaker.session_manager.activate_chat",
                 return_value=True,
             ),
-            patch("bot.plugins.setspeaker.get_metadata_store") as mock_store,
+            patch(
+                "bot.plugins.setspeaker.resolve_entry_argument",
+                new=AsyncMock(return_value=_make_entry()),
+            ),
             patch("bot.plugins.setspeaker.session_manager.create_selection"),
             patch("bot.plugins.setspeaker.session_manager.reset_current_task"),
             patch("bot.plugins.setspeaker.timeout_session", new_callable=MagicMock),
             patch("bot.plugins.setspeaker.asyncio.create_task"),
         ):
-            entry = MagicMock()
-            entry.image_path = "test.jpg"
-            entry.speaker = None
-            entry.text = "旧文本"
-            store = MagicMock()
-            store.get_entry.return_value = entry
-            mock_store.return_value = store
-
             matcher = _make_matcher()
             await handle_setspeaker(
                 _make_bot(),
@@ -455,7 +550,8 @@ class TestShortCommandSetspeaker:
                 matcher,
                 args=_make_message("42 小明"),
             )
-            assert matcher.state["entry_id"] == 42
+            assert matcher.state["entry_id"] == 3
+            assert matcher.state["public_id"] == MemePublicId(1, 3)
             assert matcher.state["speaker"] == "小明"
 
 

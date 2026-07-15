@@ -249,7 +249,15 @@ class TestHandleRefreshResult:
         from bot.engine.index_manager import SyncResult
 
         matcher = _make_matcher()
-        result = SyncResult(added=3, deleted=1, deduped=0, no_text_moved=0)
+        result = SyncResult(
+            added=3,
+            deleted=1,
+            deduped=0,
+            no_text_moved=0,
+            collections_added=2,
+            collections_deleted=1,
+            scopes_reset=4,
+        )
         im = _make_index_manager(entry_count=7, sync_result=result)
         mock_get_im.return_value = im
 
@@ -259,6 +267,9 @@ class TestHandleRefreshResult:
         call_args = matcher.finish.call_args[0][0]
         text = extract_message_text(call_args)
         assert "索引刷新完成" in text
+        assert "新增合集：2" in text
+        assert "删除合集：1" in text
+        assert "回退窗口：4" in text
         assert "新增: 3" in text
         assert "删除: 1" in text
         _assert_no_reply(call_args)

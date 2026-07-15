@@ -24,6 +24,8 @@ from bot import reply as reply_utils
 from bot.app_state import get_index_manager
 from bot.auth import is_authorized, log_unauthorized
 from bot.config import MEMES_DIR
+from bot.engine.index_manager import CollectionSelectionExpiredError
+from bot.engine.types import CollectionSelection
 from bot.log_context import generate_request_id, set_request_id
 from bot.plugins._help_text import HELP_TEXT
 from bot.plugins._search_utils import (
@@ -88,9 +90,11 @@ async def handle_rand(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
                 await reply_utils.finish(event, matcher, "服务未就绪，请稍后再试")
                 return
 
-            # 执行随机搜索
+            # 读取当前合集快照并执行随机搜索
             try:
-                results = await index_manager.random_search(keyword)
+                selection, results = await index_manager.random_search_for_scope(
+                    scope, keyword
+                )
             except asyncio.TimeoutError:
                 logger.info("用户 %s 的 /rand 等待读锁超时", user_id)
                 session_manager.deactivate_chat(scope)
@@ -113,8 +117,9 @@ async def handle_rand(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
                     )
                 return
 
-            # 保存关键词，供换一批复用
+            # 保存关键词和完整合集选择快照，供换一批校验并复用
             matcher.state["keyword"] = keyword
+            matcher.state["collection_selection"] = selection
             logger.info("/rand 发送结果数: %d", len(results))
             await dispatch_search_results(
                 bot, event, matcher, results, prompt_suffix="回复 0 换一批"
@@ -162,9 +167,28 @@ async def got_rand_selection(
                 # 回复 0：换一批
                 if selection_text == "0":
                     keyword = matcher.state.get("keyword")
+                    expected_selection = matcher.state.get("collection_selection")
+                    if not isinstance(expected_selection, CollectionSelection):
+                        session_manager.remove_selection(scope)
+                        session_manager.deactivate_chat(scope)
+                        await reply_utils.finish(
+                            event, matcher, "随机搜索状态异常，请重新发送 /rand"
+                        )
+                        return
                     try:
                         index_manager = get_index_manager()
-                        new_results = await index_manager.random_search(keyword)
+                        new_results = (
+                            await index_manager.random_search_for_scope_snapshot(
+                                scope, keyword, expected_selection
+                            )
+                        )
+                    except CollectionSelectionExpiredError:
+                        session_manager.remove_selection(scope)
+                        session_manager.deactivate_chat(scope)
+                        await reply_utils.finish(
+                            event, matcher, "当前合集已变化，请重新发送 /rand"
+                        )
+                        return
                     except asyncio.TimeoutError:
                         await reply_utils.reject(
                             event, matcher, "索引更新较慢，请稍后再试"
@@ -211,7 +235,12 @@ async def got_rand_selection(
                 await reply_utils.finish(
                     event,
                     matcher,
-                    format_metadata_line(result.entry_id, result.speaker, result.tags),
+                    format_metadata_line(
+                        result.public_id,
+                        result.collection_name,
+                        result.speaker,
+                        result.tags,
+                    ),
                 )
             except RejectedException:
                 raise

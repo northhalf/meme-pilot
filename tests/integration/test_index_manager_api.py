@@ -23,6 +23,7 @@ from dotenv import load_dotenv
 # 加载项目根目录 .env
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
+from bot.engine.collection_manager import CollectionManager  # noqa: E402
 from bot.engine.index_manager import IndexManager  # noqa: E402
 from bot.engine.openai_embedding import OpenAIEmbeddingService  # noqa: E402
 from bot.engine.openai_ocr import OpenAIOcrService  # noqa: E402
@@ -97,9 +98,11 @@ async def test_sync_single_image(
 
     metadata_store = MetadataStore(str(work_dirs["index_db"]))
     vector_store = VectorStore(str(work_dirs["chroma_dir"]))
+    collection_manager = CollectionManager(metadata_store)
     manager = IndexManager(
         metadata_store=metadata_store,
         vector_store=vector_store,
+        collection_manager=collection_manager,
         memes_dir=str(work_dirs["memes_dir"]),
         ocr_provider=ocr_service,
         embedding_provider=embedding_service,
@@ -143,9 +146,11 @@ async def test_sync_multiple_images(
 
     metadata_store = MetadataStore(str(work_dirs["index_db"]))
     vector_store = VectorStore(str(work_dirs["chroma_dir"]))
+    collection_manager = CollectionManager(metadata_store)
     manager = IndexManager(
         metadata_store=metadata_store,
         vector_store=vector_store,
+        collection_manager=collection_manager,
         memes_dir=str(work_dirs["memes_dir"]),
         ocr_provider=ocr_service,
         embedding_provider=embedding_service,
@@ -176,9 +181,11 @@ async def test_sync_delete_removed_image(
 
     metadata_store = MetadataStore(str(work_dirs["index_db"]))
     vector_store = VectorStore(str(work_dirs["chroma_dir"]))
+    collection_manager = CollectionManager(metadata_store)
     manager = IndexManager(
         metadata_store=metadata_store,
         vector_store=vector_store,
+        collection_manager=collection_manager,
         memes_dir=str(work_dirs["memes_dir"]),
         ocr_provider=ocr_service,
         embedding_provider=embedding_service,
@@ -217,9 +224,11 @@ async def test_sync_idempotent(
 
     metadata_store = MetadataStore(str(work_dirs["index_db"]))
     vector_store = VectorStore(str(work_dirs["chroma_dir"]))
+    collection_manager = CollectionManager(metadata_store)
     manager = IndexManager(
         metadata_store=metadata_store,
         vector_store=vector_store,
+        collection_manager=collection_manager,
         memes_dir=str(work_dirs["memes_dir"]),
         ocr_provider=ocr_service,
         embedding_provider=embedding_service,

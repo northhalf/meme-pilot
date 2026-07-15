@@ -1,13 +1,14 @@
 """_search_utils 模块单元测试。"""
 # pyright: reportUnusedVariable=false
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from nonebot.adapters.onebot.v11 import Message
 from nonebot.exception import RejectedException
 
-from bot.engine.types import SearchResult
+from bot.engine.types import MemePublicId, SearchResult
 from bot.session import ChatScope
 
 
@@ -21,6 +22,9 @@ def _make_search_result(
     similarity: float = 90.0,
     speaker: str | None = None,
     tags: list[str] | None = None,
+    collection_id: int = 0,
+    local_id: int | None = None,
+    collection_name: str = "全局",
 ) -> SearchResult:
     return SearchResult(
         entry_id=entry_id,
@@ -29,6 +33,9 @@ def _make_search_result(
         similarity=similarity,
         speaker=speaker,
         tags=tags or [],
+        collection_id=collection_id,
+        local_id=entry_id if local_id is None else local_id,
+        collection_name=collection_name,
     )
 
 
@@ -129,11 +136,11 @@ def _make_index_manager(
 ) -> MagicMock:
     im = MagicMock()
     if search_side_effect is not None:
-        im.search = AsyncMock(side_effect=search_side_effect)
+        im.search_for_scope = AsyncMock(side_effect=search_side_effect)
     elif results is not None:
-        im.search = AsyncMock(return_value=results)
+        im.search_for_scope = AsyncMock(return_value=results)
     else:
-        im.search = AsyncMock(return_value=[_make_search_result()])
+        im.search_for_scope = AsyncMock(return_value=[_make_search_result()])
     return im
 
 
@@ -161,8 +168,8 @@ class TestPresentCandidates:
         assert "candidates" in cmd.state
         assert "selection_id" in cmd.state
         sent_text = extract_message_text(cmd.send.call_args[0][0])
-        assert "1. 甲 -- 1, 小明, 吐槽" in sent_text
-        assert "2. 乙 -- 2, 无, 搞笑" in sent_text
+        assert "1. 甲 -- 0.1, 全局, 小明, 吐槽" in sent_text
+        assert "2. 乙 -- 0.2, 全局, 无, 搞笑" in sent_text
         _mock_create_selection.assert_called_once()
         _mock_timeout.assert_called_once()
 
@@ -211,7 +218,7 @@ class TestPresentCandidates:
         )
 
         sent_text = extract_message_text(cmd.send.call_args[0][0])
-        assert "1. 甲 -- 1, 无, 82%" in sent_text
+        assert "1. 甲 -- 0.1, 全局, 无, 82%" in sent_text
 
     @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.session_manager.create_selection")
@@ -489,6 +496,47 @@ class TestExecuteSearch:
     """execute_search 测试。"""
 
     @pytest.mark.asyncio
+    @patch("bot.plugins._search_utils.dispatch_search_results", new_callable=AsyncMock)
+    @patch("bot.plugins._search_utils.get_index_manager")
+    async def test_uses_current_collection_once(
+        self, mock_get_im: MagicMock, mock_dispatch: AsyncMock
+    ) -> None:
+        """每次搜索只读取一次当前合集并传入范围过滤。"""
+        manager = _make_index_manager(results=[_make_search_result()])
+        mock_get_im.return_value = manager
+        event = _make_event("111")
+
+        from bot.plugins._search_utils import execute_search
+
+        await execute_search(_make_bot(), event, _make_matcher(), "关键词")
+
+        manager.search_for_scope.assert_awaited_once_with(
+            ChatScope.from_event(event), "关键词"
+        )
+        mock_dispatch.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @patch("bot.plugins._search_utils.session_manager.deactivate_chat")
+    @patch("bot.plugins._search_utils.get_index_manager")
+    async def test_selection_timeout_replies_without_search(
+        self, mock_get_im: MagicMock, mock_deactivate: MagicMock
+    ) -> None:
+        """当前合集读取超时时统一提示、清会话且不执行搜索。"""
+        manager = _make_index_manager()
+        manager.search_for_scope.side_effect = asyncio.TimeoutError
+        mock_get_im.return_value = manager
+        event = _make_event("111")
+        matcher = _make_matcher()
+
+        from bot.plugins._search_utils import execute_search
+
+        await execute_search(_make_bot(), event, matcher, "加班")
+
+        manager.search_for_scope.assert_awaited_once()
+        mock_deactivate.assert_called_once_with(ChatScope.from_event(event))
+        assert "索引更新较慢" in extract_message_text(matcher.finish.await_args.args[0])
+
+    @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.get_index_manager")
     async def test_timeout_replies(self, mock_get_im: MagicMock) -> None:
         """等待读锁超时应回复提示。"""
@@ -753,31 +801,23 @@ class TestGotInterceptBypass:
 class TestFormatMetadataLine:
     """format_metadata_line 测试。"""
 
-    def test_with_speaker_and_tags(self) -> None:
-        """同时存在 speaker 和 tags 时格式化正确。"""
+    def test_uses_public_id_and_collection(self) -> None:
+        """普通合集元数据应展示公开 ID、合集、说话人和标签。"""
         from bot.plugins._search_utils import format_metadata_line
 
         assert (
-            format_metadata_line(3, "小明", ["吐槽", "加班"]) == "3, 小明, 吐槽, 加班"
+            format_metadata_line(MemePublicId(1, 3), "新三国", "曹操", ["吐槽"])
+            == "1.3, 新三国, 曹操, 吐槽"
         )
 
-    def test_missing_speaker(self) -> None:
-        """speaker 缺失时显示为"无"。"""
+    def test_global_entry_uses_global_name(self) -> None:
+        """根目录条目应展示归属名称“全局”，而非搜索范围“全部合集”。"""
         from bot.plugins._search_utils import format_metadata_line
 
-        assert format_metadata_line(7, None, ["吐槽"]) == "7, 无, 吐槽"
-
-    def test_empty_tags_omitted(self) -> None:
-        """tags 为空时省略 tags 段。"""
-        from bot.plugins._search_utils import format_metadata_line
-
-        assert format_metadata_line(7, "小明", []) == "7, 小明"
-
-    def test_both_empty(self) -> None:
-        """speaker 和 tags 都为空时只显示 id 和"无"。"""
-        from bot.plugins._search_utils import format_metadata_line
-
-        assert format_metadata_line(12, None, []) == "12, 无"
+        assert (
+            format_metadata_line(MemePublicId(0, 42), "全局", None, [])
+            == "0.42, 全局, 无"
+        )
 
 
 class TestSimilarityPercent:
@@ -984,7 +1024,7 @@ class TestHandleGotSelectionPagination:
         matcher.send.assert_awaited_once()
         matcher.finish.assert_awaited_once()
         finished_text = extract_message_text(matcher.finish.call_args[0][0])
-        assert "7, 小明" in finished_text
+        assert "0.7, 全局, 小明" in finished_text
         assert "%" not in finished_text
 
 
@@ -1004,7 +1044,7 @@ class TestExecuteCombinedSearch:
         """应调用 index_manager.search_combined 并分发结果。"""
         from bot.plugins._search_utils import execute_combined_search
 
-        mock_get_im.return_value.search_combined = AsyncMock(
+        mock_get_im.return_value.search_combined_for_scope = AsyncMock(
             return_value=[_make_search_result()]
         )
         event = _make_event("123")
@@ -1018,10 +1058,36 @@ class TestExecuteCombinedSearch:
             tags=["吐槽"],
         )
 
-        mock_get_im.return_value.search_combined.assert_awaited_once_with(
-            "加班", ["小明"], ["吐槽"]
+        mock_get_im.return_value.search_combined_for_scope.assert_awaited_once_with(
+            ChatScope.from_event(event), "加班", ["小明"], ["吐槽"]
         )
         mock_dispatch.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @patch("bot.plugins._search_utils.get_index_manager")
+    @patch("bot.plugins._search_utils.session_manager")
+    async def test_selection_timeout_replies_without_combined_search(
+        self,
+        mock_session: MagicMock,
+        mock_get_im: MagicMock,
+    ) -> None:
+        """当前合集读取超时时清会话且不执行组合搜索。"""
+        manager = mock_get_im.return_value
+        manager.search_combined_for_scope = AsyncMock(side_effect=asyncio.TimeoutError)
+        event = _make_event("123")
+        matcher = _make_matcher()
+
+        from bot.plugins._search_utils import execute_combined_search
+
+        await execute_combined_search(
+            MagicMock(), event, matcher, keyword="加班", speakers=[], tags=[]
+        )
+
+        manager.search_combined_for_scope.assert_awaited_once()
+        mock_session.deactivate_chat.assert_called_once_with(
+            ChatScope.from_event(event)
+        )
+        assert "索引更新较慢" in extract_message_text(matcher.finish.await_args.args[0])
 
     @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.get_index_manager")
@@ -1035,7 +1101,7 @@ class TestExecuteCombinedSearch:
         import asyncio
         from bot.plugins._search_utils import execute_combined_search
 
-        mock_get_im.return_value.search_combined = AsyncMock(
+        mock_get_im.return_value.search_combined_for_scope = AsyncMock(
             side_effect=asyncio.TimeoutError()
         )
         event = _make_event("123")

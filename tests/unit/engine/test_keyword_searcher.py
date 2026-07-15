@@ -8,7 +8,7 @@ import pytest
 
 from bot.engine.keyword_searcher import KeywordSearcher
 from bot.engine.metadata_store import MemeEntry
-from bot.engine.types import SearchResult
+from bot.engine.types import MemePublicId, SearchResult
 
 
 class MockMetadataStore:
@@ -70,6 +70,27 @@ def test_search_result_carries_speaker_and_tags() -> None:
     assert len(results) == 1
     assert results[0].speaker == "小明"
     assert results[0].tags == ["吐槽", "加班"]
+
+
+def test_search_result_keeps_collection_identity() -> None:
+    """KeywordSearcher 应把 MemeEntry 的合集身份带到 SearchResult。"""
+    entry = MemeEntry(
+        id=42,
+        image_path="新三国/a.webp",
+        text="丞相何故发笑",
+        collection_id=1,
+        local_id=3,
+        collection_name="新三国",
+    )
+    store = MockMetadataStore({42: entry})
+    searcher = KeywordSearcher(store)
+
+    results = searcher.search("丞相")
+
+    assert len(results) == 1
+    assert results[0].entry_id == 42
+    assert results[0].public_id == MemePublicId(1, 3)
+    assert results[0].collection_name == "新三国"
 
 
 class TestInit:

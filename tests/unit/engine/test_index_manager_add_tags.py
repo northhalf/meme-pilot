@@ -9,6 +9,7 @@ from bot.engine.index_manager import (
     IndexManager,
 )
 from bot.engine.metadata_store import MemeEntry
+from bot.engine.types import MemeCollection, MemePublicId, ScopeLike
 
 
 # ---------------------------------------------------------------------------
@@ -37,11 +38,54 @@ class FakeMetadataStore:
     def get_entry(self, entry_id: int) -> MemeEntry | None:
         return self._entries.get(entry_id)
 
-    def get_id_by_text(self, text: str) -> int | None:
+    def get_entries(self, collection_id: int | None = None) -> dict[int, MemeEntry]:
+        if collection_id is None:
+            return dict(self._entries)
+        return {
+            eid: e
+            for eid, e in self._entries.items()
+            if e.collection_id == collection_id
+        }
+
+    def get_entry_by_public_id(self, public_id: MemePublicId) -> MemeEntry | None:
         for eid, e in self._entries.items():
-            if e.text == text:
+            if (
+                e.collection_id == public_id.collection_id
+                and e.local_id == public_id.local_id
+            ):
+                return e
+        return None
+
+    def get_id_by_text(self, text: str, *, collection_id: int = 0) -> int | None:
+        for eid, e in self._entries.items():
+            if e.collection_id == collection_id and e.text == text:
                 return eid
         return None
+
+    def create_collection(self, name: str) -> MemeCollection:
+        return MemeCollection(id=1, name=name)
+
+    def get_collection(self, collection_id: int) -> MemeCollection | None:
+        return None
+
+    def get_collection_by_name(self, name: str) -> MemeCollection | None:
+        return None
+
+    def list_collections(self) -> list[MemeCollection]:
+        return []
+
+    def collection_entry_count(self, collection_id: int | None) -> int:
+        if collection_id is None:
+            return len(self._entries)
+        return len(
+            [e for e in self._entries.values() if e.collection_id == collection_id]
+        )
+
+    def get_selected_collection(self, scope: ScopeLike) -> int:
+        return 0
+
+    def set_selected_collection(self, scope: ScopeLike, collection_id: int) -> None:
+        pass
 
     def add(
         self,
@@ -49,6 +93,8 @@ class FakeMetadataStore:
         text: str,
         speaker: str | None = None,
         tags: list[str] | None = None,
+        *,
+        collection_id: int = 0,
     ) -> int:
         eid = 1 if not self._entries else max(self._entries) + 1
         self._entries[eid] = MemeEntry(
@@ -57,6 +103,8 @@ class FakeMetadataStore:
             text=text,
             speaker=speaker,
             tags=tags or [],
+            collection_id=collection_id,
+            local_id=eid,
         )
         return eid
 
@@ -68,6 +116,8 @@ class FakeMetadataStore:
         text: str | None = None,
         speaker: str | None = None,
         tags: list[str] | None = None,
+        collection_id: int | None = None,
+        local_id: int | None = None,
     ) -> bool:
         e = self._entries.get(entry_id)
         if e is None:
@@ -78,6 +128,10 @@ class FakeMetadataStore:
             text=text if text is not None else e.text,
             speaker=speaker if speaker is not None else e.speaker,
             tags=tags if tags is not None else e.tags,
+            collection_id=collection_id
+            if collection_id is not None
+            else e.collection_id,
+            local_id=local_id if local_id is not None else e.local_id,
         )
         return True
 
@@ -97,7 +151,9 @@ class FakeVectorStore:
     def count(self) -> int:
         return 0
 
-    async def upsert(self, entry_id: int, embedding: list[float]) -> None:
+    async def upsert(
+        self, entry_id: int, embedding: list[float], *, collection_id: int = 0
+    ) -> None:
         pass
 
     async def remove(self, entry_id: int) -> None:
@@ -106,13 +162,22 @@ class FakeVectorStore:
     async def remove_many(self, entry_ids: list[int]) -> None:
         pass
 
-    async def query(self, query_embedding: list[float], n_results: int = 10) -> list:
+    async def query(
+        self,
+        query_embedding: list[float],
+        n_results: int | None = 10,
+        *,
+        collection_id: int | None = None,
+    ) -> list:
         return []
 
     async def get_all_ids(self) -> set[int]:
         return set()
 
-    async def rebuild_all(self, items: list[tuple[int, list[float]]]) -> None:
+    async def rebuild_all(
+        self,
+        items: list[tuple[int, list[float]]] | list[tuple[int, list[float], int]],
+    ) -> None:
         pass
 
 

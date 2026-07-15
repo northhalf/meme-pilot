@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from bot.engine.types import SearchResult
+from bot.session import ChatScope
 from tests.conftest import _assert_has_reply, _assert_no_reply, extract_message_text
 
 _mock_cmd = MagicMock()
@@ -74,7 +75,7 @@ class TestHandleSimAuth:
         self, mock_dispatch: AsyncMock, mock_auth: MagicMock, mock_activate: MagicMock
     ) -> None:
         with patch.object(sim, "get_index_manager") as mock_get_im:
-            mock_get_im.return_value.semantic_search = AsyncMock(
+            mock_get_im.return_value.semantic_search_for_scope = AsyncMock(
                 return_value=[_make_search_result()]
             )
             await handle_sim(_make_bot(), _make_event(), _make_matcher())
@@ -85,18 +86,40 @@ class TestHandleSimDelegation:
     @pytest.mark.asyncio
     @patch.object(sim.session_manager, "activate_chat", return_value=True)
     @patch.object(sim, "is_authorized", return_value=True)
+    async def test_current_collection_filter_read_once(
+        self, mock_auth: MagicMock, mock_activate: MagicMock
+    ) -> None:
+        """语义搜索读取一次当前合集并传入过滤条件。"""
+        with patch.object(sim, "get_index_manager") as mock_get_im:
+            manager = mock_get_im.return_value
+            manager.semantic_search_for_scope = AsyncMock(
+                return_value=[_make_search_result()]
+            )
+            event = _make_event()
+
+            await handle_sim(_make_bot(), event, _make_matcher())
+
+            manager.semantic_search_for_scope.assert_awaited_once_with(
+                ChatScope.from_event(event), "心累的加班", limit=None
+            )
+
+    @pytest.mark.asyncio
+    @patch.object(sim.session_manager, "activate_chat", return_value=True)
+    @patch.object(sim, "is_authorized", return_value=True)
     async def test_description_passed_to_semantic_search(
         self, mock_auth: MagicMock, mock_activate: MagicMock
     ) -> None:
         with patch.object(sim, "get_index_manager") as mock_get_im:
             mock_semantic = AsyncMock(return_value=[_make_search_result()])
-            mock_get_im.return_value.semantic_search = mock_semantic
+            mock_get_im.return_value.semantic_search_for_scope = mock_semantic
 
             await handle_sim(
                 _make_bot(), _make_event(text="/sim 心累的加班"), _make_matcher()
             )
 
-            mock_semantic.assert_awaited_once_with("心累的加班", limit=None)
+            mock_semantic.assert_awaited_once_with(
+                ChatScope.from_event(_make_event()), "心累的加班", limit=None
+            )
 
     @pytest.mark.asyncio
     @patch.object(sim.session_manager, "activate_chat", return_value=True)
@@ -150,7 +173,9 @@ class TestHandleSimEmptyResults:
         mock_activate: MagicMock,
     ) -> None:
         with patch.object(sim, "get_index_manager") as mock_get_im:
-            mock_get_im.return_value.semantic_search = AsyncMock(return_value=[])
+            mock_get_im.return_value.semantic_search_for_scope = AsyncMock(
+                return_value=[]
+            )
             matcher = _make_matcher()
 
             await handle_sim(_make_bot(), _make_event(), matcher)
@@ -172,7 +197,9 @@ class TestHandleSimEmptyResults:
     ) -> None:
         """群聊中无结果时应带 reply 提示。"""
         with patch.object(sim, "get_index_manager") as mock_get_im:
-            mock_get_im.return_value.semantic_search = AsyncMock(return_value=[])
+            mock_get_im.return_value.semantic_search_for_scope = AsyncMock(
+                return_value=[]
+            )
             matcher = _make_matcher()
 
             await handle_sim(_make_bot(), _make_event(message_type="group"), matcher)
@@ -188,6 +215,31 @@ class TestHandleSimErrors:
     @patch.object(sim.session_manager, "activate_chat", return_value=True)
     @patch.object(sim.session_manager, "deactivate_chat")
     @patch.object(sim, "is_authorized", return_value=True)
+    async def test_selection_timeout_skips_semantic_search(
+        self,
+        mock_auth: MagicMock,
+        mock_deactivate: MagicMock,
+        mock_activate: MagicMock,
+    ) -> None:
+        """合集读取超时时统一提示、清会话且不调用语义搜索。"""
+        with patch.object(sim, "get_index_manager") as mock_get_im:
+            manager = mock_get_im.return_value
+            manager.semantic_search_for_scope = AsyncMock(side_effect=TimeoutError)
+            event = _make_event()
+            matcher = _make_matcher()
+
+            await handle_sim(_make_bot(), event, matcher)
+
+            manager.semantic_search_for_scope.assert_awaited_once()
+            mock_deactivate.assert_called_once_with(ChatScope.from_event(event))
+            assert "索引更新较慢" in extract_message_text(
+                matcher.finish.await_args.args[0]
+            )
+
+    @pytest.mark.asyncio
+    @patch.object(sim.session_manager, "activate_chat", return_value=True)
+    @patch.object(sim.session_manager, "deactivate_chat")
+    @patch.object(sim, "is_authorized", return_value=True)
     async def test_timeout_replies_slow(
         self,
         mock_auth: MagicMock,
@@ -197,7 +249,7 @@ class TestHandleSimErrors:
         import asyncio
 
         with patch.object(sim, "get_index_manager") as mock_get_im:
-            mock_get_im.return_value.semantic_search = AsyncMock(
+            mock_get_im.return_value.semantic_search_for_scope = AsyncMock(
                 side_effect=asyncio.TimeoutError()
             )
             matcher = _make_matcher()
@@ -223,7 +275,7 @@ class TestHandleSimErrors:
         import asyncio
 
         with patch.object(sim, "get_index_manager") as mock_get_im:
-            mock_get_im.return_value.semantic_search = AsyncMock(
+            mock_get_im.return_value.semantic_search_for_scope = AsyncMock(
                 side_effect=asyncio.TimeoutError()
             )
             matcher = _make_matcher()
@@ -246,7 +298,7 @@ class TestHandleSimErrors:
         mock_activate: MagicMock,
     ) -> None:
         with patch.object(sim, "get_index_manager") as mock_get_im:
-            mock_get_im.return_value.semantic_search = AsyncMock(
+            mock_get_im.return_value.semantic_search_for_scope = AsyncMock(
                 side_effect=ValueError("零向量")
             )
             matcher = _make_matcher()
@@ -270,7 +322,7 @@ class TestHandleSimErrors:
     ) -> None:
         """群聊中 AI 异常时应带 reply 提示。"""
         with patch.object(sim, "get_index_manager") as mock_get_im:
-            mock_get_im.return_value.semantic_search = AsyncMock(
+            mock_get_im.return_value.semantic_search_for_scope = AsyncMock(
                 side_effect=ValueError("零向量")
             )
             matcher = _make_matcher()
@@ -304,7 +356,7 @@ class TestHandleSimOptions:
             mock_activate: activate_chat 的 mock。
         """
         with patch.object(sim, "get_index_manager") as mock_get_im:
-            mock_get_im.return_value.semantic_search = AsyncMock(
+            mock_get_im.return_value.semantic_search_for_scope = AsyncMock(
                 return_value=[_make_search_result()]
             )
 

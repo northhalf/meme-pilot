@@ -124,14 +124,7 @@ class KeywordSearcher:
             命中结果列表（按 entries 读出顺序，未截断）；无命中返回空列表。
         """
         return [
-            SearchResult(
-                entry_id=entry.id,
-                image_path=entry.image_path,
-                text=entry.text,
-                similarity=100.0,
-                speaker=entry.speaker,
-                tags=entry.tags,
-            )
+            SearchResult.from_entry(entry, 100.0)
             for entry in entries.values()
             if entry.text and raw in entry.text
         ]
@@ -160,16 +153,7 @@ class KeywordSearcher:
                 continue
             score = self._compute_similarity(cleaned, text)
             if score >= self._threshold:
-                results.append(
-                    SearchResult(
-                        entry_id=entry.id,
-                        image_path=entry.image_path,
-                        text=text,
-                        similarity=score,
-                        speaker=entry.speaker,
-                        tags=entry.tags,
-                    )
-                )
+                results.append(SearchResult.from_entry(entry, score))
 
         results.sort(key=lambda r: r.similarity, reverse=True)
         perfect_results = [r for r in results if r.similarity == 100.0]

@@ -133,21 +133,64 @@ class TestConvertToWebp:
             assert w.format == "WEBP"
             assert getattr(w, "n_frames", 1) == 3
 
-    def test_include_archives_no_sqlite_update(
+    def test_nested_collection_path_updates_relative_path(
         self, tmp_path: Path, tmp_sqlite_path: Path
     ) -> None:
-        """归档目录图仅转文件+备份，不更新 sqlite。"""
+        """嵌套合集路径转换后 image_path 保持相对路径。"""
         memes = tmp_path / "memes"
         memes.mkdir()
-        deleted = tmp_path / "memes_deleted"
-        deleted.mkdir()
-        jpg = deleted / "arch.jpg"
-        _make_img(jpg)
-        mod = importlib.import_module("scripts.convert_memes_to_webp")
-        importlib.reload(mod)
-        success, _, failed = mod.run_conversion(
-            memes, tmp_sqlite_path, 85, False, include_archives=True
-        )
+        nested = memes / "新三国"
+        nested.mkdir()
+        png = nested / "a.png"
+        _make_img(png, fmt="PNG")
+
+        md = MetadataStore(str(tmp_sqlite_path))
+        md.load()
+        collection = md.create_collection("新三国")
+        entry_id = md.add("新三国/a.png", "丞相", collection_id=collection.id)
+        md.close()
+
+        success, skipped, failed = _run(memes, tmp_sqlite_path)
+
         assert success == 1 and failed == 0
-        assert (deleted / "arch.webp").exists()
-        assert not jpg.exists()
+        assert not png.exists()
+        assert (nested / "a.webp").exists()
+        md = MetadataStore(str(tmp_sqlite_path))
+        md.load()
+        entry = md.get_entry(entry_id)
+        assert entry is not None
+        assert entry.image_path == "新三国/a.webp"
+        md.close()
+
+    def test_root_file_and_nested_collection_together(
+        self, tmp_path: Path, tmp_sqlite_path: Path
+    ) -> None:
+        """同时转换根目录文件与嵌套合集文件。"""
+        memes = tmp_path / "memes"
+        memes.mkdir()
+        root_jpg = memes / "root.jpg"
+        _make_img(root_jpg)
+        nested = memes / "新三国"
+        nested.mkdir()
+        nested_png = nested / "a.png"
+        _make_img(nested_png, fmt="PNG")
+
+        md = MetadataStore(str(tmp_sqlite_path))
+        md.load()
+        collection = md.create_collection("新三国")
+        root_id = md.add("root.jpg", "根文本")
+        nested_id = md.add("新三国/a.png", "合集文本", collection_id=collection.id)
+        md.close()
+
+        success, skipped, failed = _run(memes, tmp_sqlite_path)
+
+        assert success == 2 and failed == 0
+        md = MetadataStore(str(tmp_sqlite_path))
+        md.load()
+        root_entry = md.get_entry(root_id)
+        nested_entry = md.get_entry(nested_id)
+        assert root_entry is not None
+        assert nested_entry is not None
+        assert root_entry.image_path == "root.webp"
+        assert nested_entry.image_path == "新三国/a.webp"
+        md.close()

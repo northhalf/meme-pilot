@@ -7,6 +7,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from nonebot.adapters.onebot.v11 import Message
 
+from bot.engine.collection_manager import InvalidPublicIdError, MemeNotFoundError
+from bot.engine.metadata_store import MemeEntry
+from bot.engine.types import MemePublicId
 from tests.conftest import extract_message_text
 
 
@@ -63,6 +66,7 @@ def _make_entry(entry_id: int, text: str) -> MagicMock:
     entry = MagicMock()
     entry.id = entry_id
     entry.text = text
+    entry.public_id = MemePublicId(0, entry_id)
     return entry
 
 
@@ -134,12 +138,16 @@ class TestHandleDelete:
             assert "用法" in extract_message_text(msg)
 
     def test_invalid_id(self) -> None:
-        """非数字 id → 回复 id 必须为数字。"""
+        """非法公开 ID 应回复领域格式提示。"""
         with (
             patch("bot.plugins.delete.is_authorized", return_value=True),
             patch(
                 "bot.plugins.delete.session_manager.activate_chat",
                 return_value=True,
+            ),
+            patch(
+                "bot.plugins.delete.resolve_entry_argument",
+                new=AsyncMock(side_effect=InvalidPublicIdError("abc")),
             ),
         ):
             bot = _make_bot()
@@ -150,7 +158,39 @@ class TestHandleDelete:
 
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
-            assert extract_message_text(msg) == "id 必须为数字"
+            assert "表情包 ID 格式错误" in extract_message_text(msg)
+
+    def test_resolve_timeout_deactivates_without_starting_confirmation(self) -> None:
+        """解析公开 ID 等待读锁超时应清理会话且不启动确认超时。"""
+        with (
+            patch("bot.plugins.delete.is_authorized", return_value=True),
+            patch(
+                "bot.plugins.delete.session_manager.activate_chat", return_value=True
+            ),
+            patch(
+                "bot.plugins.delete.resolve_entry_argument",
+                new=AsyncMock(side_effect=asyncio.TimeoutError),
+            ),
+            patch("bot.plugins.delete.session_manager.deactivate_chat") as deactivate,
+            patch(
+                "bot.plugins.delete.timeout_session", new_callable=AsyncMock
+            ) as timeout,
+        ):
+            matcher = _make_matcher()
+            _run_handler(
+                handle_delete(
+                    _make_bot(),
+                    _make_event(text="/del 1.3"),
+                    matcher,
+                    args=_make_message("1.3"),
+                )
+            )  # type: ignore[arg-type]
+
+        assert extract_message_text(matcher.finish.await_args[0][0]) == (
+            "索引更新较慢，请稍后再试"
+        )
+        deactivate.assert_called_once()
+        timeout.assert_not_called()
 
     def test_all_ids_not_found(self) -> None:
         """所有 id 都不存在 → 回复未找到任何表情包。"""
@@ -160,15 +200,14 @@ class TestHandleDelete:
                 "bot.plugins.delete.session_manager.activate_chat",
                 return_value=True,
             ),
-            patch("bot.plugins.delete.get_metadata_store") as mock_get_store,
+            patch(
+                "bot.plugins.delete.resolve_entry_argument",
+                new=AsyncMock(side_effect=MemeNotFoundError("0.999")),
+            ),
             patch(
                 "bot.plugins.delete.session_manager.deactivate_chat"
             ) as mock_deactivate,
         ):
-            store = MagicMock()
-            store.get_entry.return_value = None
-            mock_get_store.return_value = store
-
             bot = _make_bot()
             event = _make_event(text="/del 999 998")
             matcher = _make_matcher()
@@ -190,7 +229,15 @@ class TestHandleDelete:
                 "bot.plugins.delete.session_manager.activate_chat",
                 return_value=True,
             ),
-            patch("bot.plugins.delete.get_metadata_store") as mock_get_store,
+            patch(
+                "bot.plugins.delete.resolve_entry_argument",
+                new=AsyncMock(
+                    side_effect=[
+                        _make_entry(42, "加班心累时的表情包"),
+                        _make_entry(43, "当你的老板说今天要加班"),
+                    ]
+                ),
+            ),
             patch(
                 "bot.plugins.delete.session_manager.create_selection"
             ) as mock_create_selection,
@@ -198,36 +245,286 @@ class TestHandleDelete:
                 "bot.plugins.delete.session_manager.reset_current_task"
             ) as mock_reset,
         ):
-            store = MagicMock()
-
-            def _get_entry(eid: int):
-                if eid == 42:
-                    return _make_entry(42, "加班心累时的表情包")
-                if eid == 43:
-                    return _make_entry(43, "当你的老板说今天要加班")
-                return None
-
-            store.get_entry.side_effect = _get_entry
-            mock_get_store.return_value = store
-
             bot = _make_bot()
-            event = _make_event(text="/del 42 43 44")
+            event = _make_event(text="/del 42 43")
             matcher = _make_matcher()
 
             _run_handler(
-                handle_delete(bot, event, matcher, args=_make_message("42 43 44"))
+                handle_delete(bot, event, matcher, args=_make_message("42 43"))
             )  # type: ignore[arg-type]
 
             assert matcher.send.await_count == 1
             msg = matcher.send.await_args[0][0]
             assert "确认删除以下表情包" in extract_message_text(msg)
-            assert "42, 加班心累时的表情包" in extract_message_text(msg)
-            assert "43, 当你的老板说今天要加班" in extract_message_text(msg)
-            assert "未找到 id：44" in extract_message_text(msg)
+            assert "0.42, 加班心累时的表情包" in extract_message_text(msg)
+            assert "0.43, 当你的老板说今天要加班" in extract_message_text(msg)
             assert matcher.state["entry_ids"] == [42, 43]
-            assert matcher.state["not_found_ids"] == [44]
+            assert matcher.state["public_ids"] == {
+                42: MemePublicId(0, 42),
+                43: MemePublicId(0, 43),
+            }
             mock_create_selection.assert_called_once()
             mock_reset.assert_called_once()
+
+
+class TestPublicIdDelete:
+    """`/del` 混合公开 ID 与快照测试。"""
+
+    def test_valid_and_missing_full_ids_continue_to_confirmation(self) -> None:
+        """完整 ID 混合不存在项时应保留有效项并在摘要提示未找到。"""
+        entry = MemeEntry(
+            id=85,
+            image_path="新三国/a.webp",
+            text="甲",
+            collection_id=1,
+            local_id=3,
+            collection_name="新三国",
+        )
+        with (
+            patch("bot.plugins.delete.is_authorized", return_value=True),
+            patch(
+                "bot.plugins.delete.session_manager.activate_chat", return_value=True
+            ),
+            patch(
+                "bot.plugins.delete.resolve_entry_argument",
+                new=AsyncMock(side_effect=[entry, MemeNotFoundError("2.999")]),
+            ),
+            patch("bot.plugins.delete.session_manager.create_selection"),
+            patch("bot.plugins.delete.session_manager.reset_current_task"),
+            patch("bot.plugins.delete.timeout_session", new_callable=AsyncMock),
+        ):
+            matcher = _make_matcher()
+            _run_handler(
+                handle_delete(
+                    _make_bot(),
+                    _make_event(text="/del 1.3 2.999"),
+                    matcher,
+                    args=_make_message("1.3 2.999"),
+                )
+            )  # type: ignore[arg-type]
+
+        summary = extract_message_text(matcher.send.await_args[0][0])
+        assert "1.3, 甲" in summary
+        assert "未找到 ID：2.999" in summary
+        assert matcher.state["entry_ids"] == [85]
+        assert matcher.state["not_found_public_ids"] == ["2.999"]
+
+    def test_short_missing_ids_are_normalized_and_deduplicated(self) -> None:
+        """短号不存在项应按完整公开 ID 展示并保持首次出现顺序去重。"""
+        entry = MemeEntry(
+            id=85,
+            image_path="新三国/a.webp",
+            text="甲",
+            collection_id=1,
+            local_id=3,
+            collection_name="新三国",
+        )
+        with (
+            patch("bot.plugins.delete.is_authorized", return_value=True),
+            patch(
+                "bot.plugins.delete.session_manager.activate_chat", return_value=True
+            ),
+            patch(
+                "bot.plugins.delete.resolve_entry_argument",
+                new=AsyncMock(
+                    side_effect=[
+                        entry,
+                        MemeNotFoundError("1.999"),
+                        MemeNotFoundError("1.999"),
+                        MemeNotFoundError("1.1000"),
+                    ]
+                ),
+            ),
+            patch("bot.plugins.delete.session_manager.create_selection"),
+            patch("bot.plugins.delete.session_manager.reset_current_task"),
+            patch("bot.plugins.delete.timeout_session", new_callable=AsyncMock),
+        ):
+            matcher = _make_matcher()
+            _run_handler(
+                handle_delete(
+                    _make_bot(),
+                    _make_event(text="/del 003 0999 999 1000"),
+                    matcher,
+                    args=_make_message("003 0999 999 1000"),
+                )
+            )  # type: ignore[arg-type]
+
+        summary = extract_message_text(matcher.send.await_args[0][0])
+        assert "未找到 ID：1.999、1.1000" in summary
+        assert matcher.state["not_found_public_ids"] == ["1.999", "1.1000"]
+
+    def test_all_missing_ids_finish_without_confirmation(self) -> None:
+        """全部公开 ID 不存在时应统一结束且不启动确认会话。"""
+        with (
+            patch("bot.plugins.delete.is_authorized", return_value=True),
+            patch(
+                "bot.plugins.delete.session_manager.activate_chat", return_value=True
+            ),
+            patch(
+                "bot.plugins.delete.resolve_entry_argument",
+                new=AsyncMock(
+                    side_effect=[
+                        MemeNotFoundError("1.999"),
+                        MemeNotFoundError("2.999"),
+                    ]
+                ),
+            ),
+            patch("bot.plugins.delete.session_manager.deactivate_chat") as deactivate,
+            patch(
+                "bot.plugins.delete.timeout_session", new_callable=AsyncMock
+            ) as timeout,
+        ):
+            matcher = _make_matcher()
+            _run_handler(
+                handle_delete(
+                    _make_bot(),
+                    _make_event(text="/del 1.999 2.999"),
+                    matcher,
+                    args=_make_message("1.999 2.999"),
+                )
+            )  # type: ignore[arg-type]
+
+        assert extract_message_text(matcher.finish.await_args[0][0]) == (
+            "未找到任何表情包"
+        )
+        matcher.send.assert_not_awaited()
+        deactivate.assert_called_once()
+        timeout.assert_not_called()
+
+    def test_mixed_ids_deduplicate_by_internal_id_preserving_order(self) -> None:
+        """完整 ID 与短号指向同条目时只处理一次并保存公开 ID 快照。"""
+        first = MemeEntry(
+            id=85,
+            image_path="新三国/a.webp",
+            text="甲",
+            collection_id=1,
+            local_id=3,
+            collection_name="新三国",
+        )
+        second = MemeEntry(
+            id=86,
+            image_path="甄嬛传/b.webp",
+            text="乙",
+            collection_id=2,
+            local_id=1,
+            collection_name="甄嬛传",
+        )
+        with (
+            patch("bot.plugins.delete.is_authorized", return_value=True),
+            patch(
+                "bot.plugins.delete.session_manager.activate_chat", return_value=True
+            ),
+            patch(
+                "bot.plugins.delete.resolve_entry_argument",
+                new=AsyncMock(side_effect=[first, first, second]),
+            ) as mock_resolve,
+            patch("bot.plugins.delete.session_manager.create_selection"),
+            patch("bot.plugins.delete.session_manager.reset_current_task"),
+            patch("bot.plugins.delete.timeout_session", new_callable=AsyncMock),
+        ):
+            event = _make_event(text="/del 1.3 003 2.1")
+            matcher = _make_matcher()
+            _run_handler(
+                handle_delete(
+                    _make_bot(), event, matcher, args=_make_message("1.3 003 2.1")
+                )
+            )  # type: ignore[arg-type]
+
+        assert [call.args[1] for call in mock_resolve.await_args_list] == [
+            "1.3",
+            "003",
+            "2.1",
+        ]
+        assert matcher.state["entry_ids"] == [85, 86]
+        assert matcher.state["public_ids"] == {
+            85: MemePublicId(1, 3),
+            86: MemePublicId(2, 1),
+        }
+        summary = extract_message_text(matcher.send.await_args[0][0])
+        assert "1.3, 甲" in summary
+        assert summary.count("1.3, 甲") == 1
+        assert "2.1, 乙" in summary
+
+    def test_result_merges_parse_and_racing_not_found_in_order(self) -> None:
+        """最终结果应先展示解析期未找到，再展示执行竞态未找到。"""
+        with (
+            patch("bot.plugins.delete.session_manager.handler_context"),
+            patch("bot.plugins.delete.session_manager.deactivate_chat"),
+            patch("bot.plugins.delete.get_index_manager") as mock_get_im,
+        ):
+            manager = MagicMock()
+            manager.delete = AsyncMock(
+                return_value=MagicMock(
+                    deleted_ids=[85],
+                    not_found_ids=[86],
+                    failed_ids=[],
+                )
+            )
+            manager.add_user_timeout = 60
+            mock_get_im.return_value = manager
+            matcher = _make_matcher(
+                state={
+                    "entry_ids": [85, 86],
+                    "public_ids": {
+                        85: MemePublicId(1, 3),
+                        86: MemePublicId(2, 1),
+                    },
+                    "not_found_public_ids": ["3.7", "2.1", "1.999"],
+                }
+            )
+            _run_handler(
+                got_confirm(
+                    _make_bot(),
+                    _make_event(text="确认"),
+                    matcher,
+                    _make_message("确认"),
+                )
+            )  # type: ignore[arg-type]
+
+        text = extract_message_text(matcher.finish.await_args[0][0])
+        assert "成功：1.3" in text
+        assert "未找到：3.7、2.1、1.999" in text
+        assert text.count("2.1") == 1
+
+    def test_result_uses_public_id_snapshot_after_racing_delete(self) -> None:
+        """执行期未找到与失败结果都应使用删除前公开 ID 快照。"""
+        with (
+            patch("bot.plugins.delete.session_manager.handler_context"),
+            patch("bot.plugins.delete.session_manager.deactivate_chat"),
+            patch("bot.plugins.delete.get_index_manager") as mock_get_im,
+        ):
+            manager = MagicMock()
+            manager.delete = AsyncMock(
+                return_value=MagicMock(
+                    deleted_ids=[85],
+                    not_found_ids=[86],
+                    failed_ids=[(87, "文件移动失败")],
+                )
+            )
+            manager.add_user_timeout = 60
+            mock_get_im.return_value = manager
+            matcher = _make_matcher(
+                state={
+                    "entry_ids": [85, 86, 87],
+                    "public_ids": {
+                        85: MemePublicId(1, 3),
+                        86: MemePublicId(2, 1),
+                        87: MemePublicId(0, 42),
+                    },
+                }
+            )
+            event = _make_event(text="确认")
+            _run_handler(
+                got_confirm(_make_bot(), event, matcher, _make_message("确认"))
+            )  # type: ignore[arg-type]
+
+        text = extract_message_text(matcher.finish.await_args[0][0])
+        assert "成功：1.3" in text
+        assert "未找到：2.1" in text
+        assert "ID:0.42 原因:『文件移动失败』" in text
+        assert "85" not in text
+        assert "86" not in text
+        assert "87" not in text
 
 
 # ---------------------------------------------------------------------------
@@ -248,8 +545,8 @@ class TestGotConfirm:
             im = MagicMock()
             im.delete = AsyncMock(
                 return_value=MagicMock(
-                    deleted_ids=[42, 43],
-                    not_found_ids=[44],
+                    deleted_ids=[42],
+                    not_found_ids=[43],
                     failed_ids=[],
                 )
             )
@@ -259,7 +556,10 @@ class TestGotConfirm:
             bot = _make_bot()
             event = _make_event(text="确认")
             matcher = _make_matcher(
-                state={"entry_ids": [42, 43], "not_found_ids": [44]}
+                state={
+                    "entry_ids": [42, 43],
+                    "public_ids": {42: MemePublicId(0, 42), 43: MemePublicId(0, 43)},
+                }
             )
 
             _run_handler(
@@ -270,8 +570,8 @@ class TestGotConfirm:
             matcher.finish.assert_awaited_once()
             msg = matcher.finish.await_args[0][0]
             assert "删除结果如下" in extract_message_text(msg)
-            assert "成功：42、43" in extract_message_text(msg)
-            assert "未找到：44" in extract_message_text(msg)
+            assert "成功：0.42" in extract_message_text(msg)
+            assert "未找到：0.43" in extract_message_text(msg)
 
     def test_confirm_yes_english(self) -> None:
         """用户回复 yes → 调用 delete。"""
@@ -293,7 +593,9 @@ class TestGotConfirm:
 
             bot = _make_bot()
             event = _make_event(text="yes")
-            matcher = _make_matcher(state={"entry_ids": [42]})
+            matcher = _make_matcher(
+                state={"entry_ids": [42], "public_ids": {42: MemePublicId(0, 42)}}
+            )
 
             _run_handler(
                 got_confirm(bot, event, matcher, _make_message(event.get_plaintext()))
@@ -321,14 +623,19 @@ class TestGotConfirm:
 
             bot = _make_bot()
             event = _make_event(text="确认")
-            matcher = _make_matcher(state={"entry_ids": [42, 45]})
+            matcher = _make_matcher(
+                state={
+                    "entry_ids": [42, 45],
+                    "public_ids": {42: MemePublicId(0, 42), 45: MemePublicId(0, 45)},
+                }
+            )
 
             _run_handler(
                 got_confirm(bot, event, matcher, _make_message(event.get_plaintext()))
             )  # type: ignore[arg-type]
 
             msg = matcher.finish.await_args[0][0]
-            assert "失败：id:45 原因:『文件移动失败』" in extract_message_text(msg)
+            assert "失败：ID:0.45 原因:『文件移动失败』" in extract_message_text(msg)
 
     def test_cancel(self) -> None:
         """用户回复其他内容 → 回复已取消删除。"""
@@ -339,7 +646,10 @@ class TestGotConfirm:
             bot = _make_bot()
             event = _make_event(text="不")
             matcher = _make_matcher(
-                state={"entry_ids": [42, 43], "not_found_ids": [44]}
+                state={
+                    "entry_ids": [42, 43],
+                    "public_ids": {42: MemePublicId(0, 42), 43: MemePublicId(0, 43)},
+                }
             )
 
             _run_handler(
@@ -388,7 +698,9 @@ class TestGotConfirm:
 
             bot = _make_bot()
             event = _make_event(text="确认")
-            matcher = _make_matcher(state={"entry_ids": [42]})
+            matcher = _make_matcher(
+                state={"entry_ids": [42], "public_ids": {42: MemePublicId(0, 42)}}
+            )
 
             _run_handler(
                 got_confirm(bot, event, matcher, _make_message(event.get_plaintext()))
@@ -415,18 +727,17 @@ class TestShortCommandDelete:
                 "bot.plugins.delete.session_manager.activate_chat",
                 return_value=True,
             ),
-            patch("bot.plugins.delete.get_metadata_store") as mock_store,
+            patch(
+                "bot.plugins.delete.resolve_entry_argument",
+                new=AsyncMock(
+                    side_effect=[_make_entry(12, "文本"), _make_entry(42, "文本")]
+                ),
+            ),
             patch("bot.plugins.delete.session_manager.create_selection"),
             patch("bot.plugins.delete.session_manager.reset_current_task"),
             patch("bot.plugins.delete.timeout_session", new_callable=MagicMock),
             patch("bot.plugins.delete.asyncio.create_task"),
         ):
-            entry = MagicMock()
-            entry.text = "文本"
-            store = MagicMock()
-            store.get_entry.return_value = entry
-            mock_store.return_value = store
-
             matcher = _make_matcher()
             _run_handler(
                 handle_delete(

@@ -5,6 +5,7 @@
 """
 
 import asyncio
+import threading
 from pathlib import Path
 
 import pytest
@@ -12,13 +13,16 @@ import pytest
 from typing import cast
 
 from bot.engine.ai_matcher import AIMatcher
+from bot.engine.collection_manager import CollectionManager, CollectionNotFoundError
 from bot.engine.index_manager import (
     AddResult,
+    CollectionSelectionExpiredError,
     CompressionError,
     DuplicateTextError,
     EmbeddingError,
     IndexAddCancelledError,
     IndexCorruptedError,
+    FileSystemSnapshot,
     IndexManager,
     OcrError,
     RefreshInProgressError,
@@ -32,7 +36,16 @@ from bot.engine.keyword_searcher import KeywordSearcher
 from bot.engine.metadata_store import MemeEntry
 from bot.engine.random_searcher import RandomSearcher
 from bot.engine.semantic_searcher import SemanticSearcher
-from bot.engine.vector_store import VectorHit
+from bot.engine.types import (
+    GLOBAL_COLLECTION_NAME,
+    CollectionSelection,
+    CollectionSummary,
+    MemeCollection,
+    MemePublicId,
+    ScopeLike,
+)
+from bot.engine.vector_store import VectorHit, VectorRecord
+from bot.session import ChatScope
 
 # 哨兵值，区分「不修改字段」与显式的 None
 _UNSET = object()
@@ -48,6 +61,10 @@ class FakeMetadataStore:
 
     def __init__(self) -> None:
         self._entries: dict[int, MemeEntry] = {}
+        self._collections: dict[int, MemeCollection] = {}
+        self._collection_name_to_id: dict[str, int] = {}
+        self._entries_by_collection: dict[int, dict[int, int]] = {0: {}}
+        self._selected_collections: dict[tuple[int, str, int], int] = {}
         self._next_auto = 1
         self.add_order: list[int] = []
 
@@ -58,10 +75,28 @@ class FakeMetadataStore:
         pass
 
     def get_all_entries(self) -> dict[int, MemeEntry]:
-        return dict(self._entries)
+        return self.get_entries()
+
+    def get_entries(self, collection_id: int | None = None) -> dict[int, MemeEntry]:
+        if collection_id is None:
+            return dict(self._entries)
+        result: dict[int, MemeEntry] = {}
+        for local_id, eid in self._entries_by_collection.get(collection_id, {}).items():
+            entry = self._entries.get(eid)
+            if entry is not None:
+                result[eid] = entry
+        return result
 
     def get_entry(self, entry_id: int) -> MemeEntry | None:
         return self._entries.get(entry_id)
+
+    def get_entry_by_public_id(self, public_id: MemePublicId) -> MemeEntry | None:
+        eid = self._entries_by_collection.get(public_id.collection_id, {}).get(
+            public_id.local_id
+        )
+        if eid is None:
+            return None
+        return self._entries.get(eid)
 
     def get_by_filename(self, image_path: str) -> MemeEntry | None:
         for e in self._entries.values():
@@ -69,9 +104,9 @@ class FakeMetadataStore:
                 return e
         return None
 
-    def get_id_by_text(self, text: str) -> int | None:
+    def get_id_by_text(self, text: str, *, collection_id: int = 0) -> int | None:
         for eid, e in self._entries.items():
-            if e.text == text:
+            if e.collection_id == collection_id and e.text == text:
                 return eid
         return None
 
@@ -84,32 +119,134 @@ class FakeMetadataStore:
                 return i
         return max(ids) + 1
 
+    def find_next_local_id(self, collection_id: int) -> int:
+        local_ids = set(self._entries_by_collection.get(collection_id, {}))
+        if not local_ids:
+            return 1
+        for i in range(1, max(local_ids) + 2):
+            if i not in local_ids:
+                return i
+        return max(local_ids) + 1
+
     def entry_count(self) -> int:
         return len(self._entries)
+
+    def collection_entry_count(self, collection_id: int | None) -> int:
+        if collection_id is None:
+            return len(self._entries)
+        return len(self._entries_by_collection.get(collection_id, {}))
 
     def get_all_text(self) -> list[tuple[int, str]]:
         return [(eid, e.text) for eid, e in sorted(self._entries.items())]
 
-    def add(self, image_path, text, speaker=None, tags=None) -> int:
-        eid = self.find_next_id()
-        self._entries[eid] = MemeEntry(
-            id=eid, image_path=image_path, text=text, speaker=speaker, tags=tags or []
+    def create_collection(self, name: str) -> MemeCollection:
+        collection_id = 1 if not self._collections else max(self._collections) + 1
+        collection = MemeCollection(id=collection_id, name=name)
+        self._collections[collection_id] = collection
+        self._collection_name_to_id[name] = collection_id
+        self._entries_by_collection.setdefault(collection_id, {})
+        return collection
+
+    def get_collection(self, collection_id: int) -> MemeCollection | None:
+        return self._collections.get(collection_id)
+
+    def get_collection_by_name(self, name: str) -> MemeCollection | None:
+        collection_id = self._collection_name_to_id.get(name)
+        if collection_id is None:
+            return None
+        return self._collections.get(collection_id)
+
+    def list_collections(self) -> list[MemeCollection]:
+        return [self._collections[key] for key in sorted(self._collections)]
+
+    def get_selected_collection(self, scope: ScopeLike) -> int:
+        return self._selected_collections.get(
+            (scope.user_id, scope.chat_type, scope.chat_id), 0
         )
+
+    def set_selected_collection(self, scope: ScopeLike, collection_id: int) -> None:
+        self._selected_collections[(scope.user_id, scope.chat_type, scope.chat_id)] = (
+            collection_id
+        )
+
+    def delete_collection_and_reset_scopes(self, collection_id: int) -> int:
+        collection = self._collections.pop(collection_id)
+        self._collection_name_to_id.pop(collection.name)
+        self._entries_by_collection.pop(collection_id, None)
+        reset = 0
+        for scope, selected_id in list(self._selected_collections.items()):
+            if selected_id == collection_id:
+                self._selected_collections[scope] = 0
+                reset += 1
+        return reset
+
+    def _collection_name(self, collection_id: int) -> str:
+        if collection_id == 0:
+            return GLOBAL_COLLECTION_NAME
+        return self._collections[collection_id].name
+
+    def add(
+        self,
+        image_path,
+        text,
+        speaker=None,
+        tags=None,
+        *,
+        collection_id: int = 0,
+    ) -> int:
+        eid = self.find_next_id()
+        local_id = self.find_next_local_id(collection_id)
+        self._entries[eid] = MemeEntry(
+            id=eid,
+            image_path=image_path,
+            text=text,
+            speaker=speaker,
+            tags=sorted(set(tags or [])),
+            collection_id=collection_id,
+            local_id=local_id,
+            collection_name=self._collection_name(collection_id),
+        )
+        self._entries_by_collection.setdefault(collection_id, {})[local_id] = eid
         self.add_order.append(eid)
         return eid
 
-    def add_with_id(self, entry_id, image_path, text, speaker=None, tags=None) -> int:
+    def add_with_id(
+        self,
+        entry_id,
+        image_path,
+        text,
+        speaker=None,
+        tags=None,
+        *,
+        collection_id: int = 0,
+        local_id: int | None = None,
+    ) -> int:
+        final_local_id = local_id if local_id is not None else entry_id
         self._entries[entry_id] = MemeEntry(
             id=entry_id,
             image_path=image_path,
             text=text,
             speaker=speaker,
-            tags=tags or [],
+            tags=sorted(set(tags or [])),
+            collection_id=collection_id,
+            local_id=final_local_id,
+            collection_name=self._collection_name(collection_id),
+        )
+        self._entries_by_collection.setdefault(collection_id, {})[final_local_id] = (
+            entry_id
         )
         return entry_id
 
     def update(
-        self, entry_id, *, image_path=_UNSET, text=_UNSET, speaker=_UNSET, tags=None
+        self,
+        entry_id,
+        *,
+        image_path=_UNSET,
+        text=_UNSET,
+        speaker=_UNSET,
+        tags=None,
+        collection_id=_UNSET,
+        local_id=_UNSET,
     ) -> bool:
         e = self._entries.get(entry_id)
         if e is None:
@@ -118,17 +255,38 @@ class FakeMetadataStore:
         new_text = cast(str, text if text is not _UNSET else e.text)
         new_speaker = cast(str | None, speaker if speaker is not _UNSET else e.speaker)
         new_tags = tags if tags is not None else e.tags
+        new_collection_id = cast(
+            int, collection_id if collection_id is not _UNSET else e.collection_id
+        )
+        new_local_id = cast(int, local_id if local_id is not _UNSET else e.local_id)
+
+        if new_collection_id != e.collection_id or new_local_id != e.local_id:
+            self._entries_by_collection[e.collection_id].pop(e.local_id, None)
+            self._entries_by_collection.setdefault(new_collection_id, {})[
+                new_local_id
+            ] = entry_id
+
         self._entries[entry_id] = MemeEntry(
             id=entry_id,
             image_path=new_image,
             text=new_text,
             speaker=new_speaker,
             tags=new_tags,
+            collection_id=new_collection_id,
+            local_id=new_local_id,
+            collection_name=self._collection_name(new_collection_id),
         )
         return True
 
     def remove(self, entry_id) -> bool:
-        return self._entries.pop(entry_id, None) is not None
+        entry = self._entries.pop(entry_id, None)
+        if entry is None:
+            return False
+        collection_entries = self._entries_by_collection.get(entry.collection_id)
+        if collection_entries is not None:
+            if collection_entries.get(entry.local_id) == entry_id:
+                del collection_entries[entry.local_id]
+        return True
 
 
 class FakeVectorStore:
@@ -136,7 +294,9 @@ class FakeVectorStore:
 
     def __init__(self) -> None:
         self._vecs: dict[int, list[float]] = {}
+        self._collection_ids: dict[int, int] = {}
         self.upsert_error_for: set[int] | None = None  # 触发这些 id 的 upsert 抛错
+        self.upsert_write_then_error_for: set[int] | None = None
 
     def load(self) -> None:
         pass
@@ -147,24 +307,37 @@ class FakeVectorStore:
     def count(self) -> int:
         return len(self._vecs)
 
-    async def upsert(self, entry_id, embedding) -> None:
+    async def upsert(self, entry_id, embedding, *, collection_id: int = 0) -> None:
         if self.upsert_error_for is not None and entry_id in self.upsert_error_for:
             raise RuntimeError(f"upsert failed for {entry_id}")
         self._vecs[entry_id] = list(embedding)
+        self._collection_ids[entry_id] = collection_id
+        if (
+            self.upsert_write_then_error_for is not None
+            and entry_id in self.upsert_write_then_error_for
+        ):
+            raise RuntimeError(f"upsert committed then failed for {entry_id}")
 
     async def remove(self, entry_id) -> None:
         self._vecs.pop(entry_id, None)
+        self._collection_ids.pop(entry_id, None)
 
     async def remove_many(self, entry_ids) -> None:
         for i in entry_ids:
             self._vecs.pop(i, None)
+            self._collection_ids.pop(i, None)
 
     async def query(
-        self, query_embedding: list[float], n_results: int | None = 10
+        self,
+        query_embedding: list[float],
+        n_results: int | None = 10,
+        *,
+        collection_id: int | None = None,
     ) -> list[VectorHit]:
         sims = [
             (eid, sum(a * b for a, b in zip(query_embedding, vec)))
             for eid, vec in self._vecs.items()
+            if collection_id is None or self._collection_ids.get(eid) == collection_id
         ]
         sims.sort(key=lambda x: -x[1])
         if n_results is None:
@@ -172,13 +345,46 @@ class FakeVectorStore:
         return [VectorHit(entry_id=eid, similarity=s) for eid, s in sims[:n_results]]
 
     async def rebuild_all(self, items) -> None:
-        self._vecs = {eid: list(vec) for eid, vec in items}
+        self._vecs = {}
+        self._collection_ids = {}
+        for item in items:
+            if len(item) == 2:
+                eid, vec = item
+                collection_id = 0
+            else:
+                eid, vec, collection_id = item
+            self._vecs[eid] = list(vec)
+            self._collection_ids[eid] = collection_id
 
     async def get_all_ids(self) -> set[int]:
         return set(self._vecs.keys())
 
     def has(self, entry_id) -> bool:
         return entry_id in self._vecs
+
+    async def get_collection_ids(self) -> dict[int, int | None]:
+        return dict(self._collection_ids)
+
+    async def update_collection_id(self, entry_id: int, collection_id: int) -> None:
+        if entry_id in self._vecs:
+            self._collection_ids[entry_id] = collection_id
+
+    async def snapshot_records(self, entry_ids: list[int]) -> list[VectorRecord]:
+        return [
+            VectorRecord(
+                entry_id=entry_id,
+                embedding=list(self._vecs[entry_id]),
+                metadata={"collection_id": self._collection_ids[entry_id]},
+            )
+            for entry_id in entry_ids
+        ]
+
+    async def restore_records(self, records: list[VectorRecord]) -> None:
+        for record in records:
+            self._vecs[record.entry_id] = list(record.embedding)
+            self._collection_ids[record.entry_id] = int(
+                record.metadata["collection_id"]
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -247,9 +453,11 @@ def index_manager(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     )
     random_searcher = RandomSearcher(metadata_store, keyword_searcher)
     semantic_searcher = SemanticSearcher(metadata_store, vector_store)
+    from bot.engine.collection_manager import CollectionManager
     from bot.engine.combined_searcher import CombinedSearcher
 
     combined_searcher = CombinedSearcher(metadata_store, keyword_searcher)
+    collection_manager = CollectionManager(metadata_store)
 
     manager = IndexManager(
         metadata_store=metadata_store,
@@ -263,9 +471,16 @@ def index_manager(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         random_searcher=random_searcher,
         semantic_searcher=semantic_searcher,
         combined_searcher=combined_searcher,
+        collection_manager=collection_manager,
     )
     asyncio.run(manager.load())
     return manager
+
+
+@pytest.fixture
+def collection_manager(index_manager: IndexManager):
+    """返回 IndexManager 内部构造的 CollectionManager。"""
+    return index_manager._collection_manager
 
 
 # ---------------------------------------------------------------------------
@@ -533,6 +748,46 @@ class TestAdd:
     """IndexManager.add() 单元测试。"""
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("relative_path", ["../outside.jpg", "/tmp/outside.jpg"])
+    async def test_add_rejects_unsafe_relative_path_before_pipeline(
+        self,
+        index_manager: IndexManager,
+        relative_path: str,
+    ) -> None:
+        """绝对路径和父目录逃逸必须在调用 provider 前拒绝。"""
+
+        class FailIfCalledOptimizer:
+            async def optimize(self, image_path: str) -> OptimizeResult:
+                raise AssertionError("非法路径不应调用 optimizer")
+
+        outside = Path(index_manager._memes_dir).parent / "outside.jpg"
+        outside.write_bytes(b"outside")
+        index_manager._optimizer = FailIfCalledOptimizer()
+
+        with pytest.raises(ValueError, match="relative_path"):
+            await index_manager.add(relative_path, collection_id=99)
+
+        assert outside.read_bytes() == b"outside"
+
+    @pytest.mark.asyncio
+    async def test_add_rejects_symlink_path_before_pipeline(
+        self, index_manager: IndexManager, tmp_path: Path
+    ) -> None:
+        """指向 memes 外部的符号链接不得作为 add 输入。"""
+        outside = tmp_path / "outside.jpg"
+        outside.write_bytes(b"outside")
+        link = Path(index_manager._memes_dir) / "linked.jpg"
+        try:
+            link.symlink_to(outside)
+        except OSError:
+            pytest.skip("当前平台不支持创建符号链接")
+
+        with pytest.raises(ValueError, match="relative_path"):
+            await index_manager.add("linked.jpg")
+
+        assert outside.read_bytes() == b"outside"
+
+    @pytest.mark.asyncio
     async def test_add_passes_speaker_and_tags(
         self, index_manager: IndexManager
     ) -> None:
@@ -544,6 +799,23 @@ class TestAdd:
         assert entry is not None
         assert entry.speaker == "小明"
         assert entry.tags == ["吐槽"]
+
+    @pytest.mark.asyncio
+    async def test_add_returns_persisted_speaker_and_tags(
+        self, index_manager: IndexManager
+    ) -> None:
+        """AddResult 应返回 MetadataStore 规范化后的持久快照。"""
+        image_path = Path(index_manager._memes_dir) / "normalized.jpg"
+        image_path.write_bytes(b"fake")
+
+        result = await index_manager.add(
+            "normalized.jpg",
+            speaker="小明",
+            tags=["乙", "甲", "乙"],
+        )
+
+        assert result.speaker == "小明"
+        assert result.tags == sorted({"乙", "甲"})
 
     @pytest.mark.asyncio
     async def test_add_duplicate_replaces_speaker_and_tags(
@@ -648,6 +920,622 @@ class TestAdd:
         assert not (Path(index_manager._memes_dir) / "new.jpg").exists()
 
     @pytest.mark.asyncio
+    async def test_add_duplicate_archive_failure_restores_old_state(
+        self, index_manager: IndexManager
+    ) -> None:
+        """旧图归档失败时应恢复 SQLite、向量并清理新图。"""
+
+        class ConstantOcrProvider:
+            async def ocr(self, image_path: str) -> str:
+                return "相同文本"
+
+            async def close(self) -> None:
+                pass
+
+        index_manager._ocr_provider = ConstantOcrProvider()
+        memes_dir = Path(index_manager._memes_dir)
+        old_path = memes_dir / "old.jpg"
+        new_path = memes_dir / "new.jpg"
+        old_path.write_bytes(b"old")
+        first = await index_manager.add("old.jpg")
+        assert first.entry_id is not None
+        vector_store = cast(FakeVectorStore, index_manager._vector_store)
+        old_vector = list(vector_store._vecs[first.entry_id])
+        new_path.write_bytes(b"new")
+        index_manager._embedding_provider = FakeEmbeddingProvider([9.0] * 1024)
+
+        def fail_archive(filename: str) -> str:
+            raise OSError("archive failed")
+
+        index_manager._move_to_replaced = fail_archive  # ty: ignore[invalid-assignment]
+
+        with pytest.raises(OSError, match="archive failed"):
+            await index_manager.add("new.jpg")
+
+        entry = index_manager._metadata_store.get_entry(first.entry_id)
+        assert entry is not None
+        assert entry.image_path == "old.jpg"
+        assert vector_store._vecs[first.entry_id] == old_vector
+        assert old_path.read_bytes() == b"old"
+        assert not new_path.exists()
+
+    @pytest.mark.asyncio
+    async def test_add_duplicate_upsert_commit_then_error_restores_old_vector(
+        self, index_manager: IndexManager
+    ) -> None:
+        """替换 upsert 已落库后抛错时应恢复旧向量快照。"""
+
+        class ConstantOcrProvider:
+            async def ocr(self, image_path: str) -> str:
+                return "相同文本"
+
+            async def close(self) -> None:
+                pass
+
+        index_manager._ocr_provider = ConstantOcrProvider()
+        memes_dir = Path(index_manager._memes_dir)
+        (memes_dir / "old.jpg").write_bytes(b"old")
+        first = await index_manager.add("old.jpg")
+        assert first.entry_id is not None
+        vector_store = cast(FakeVectorStore, index_manager._vector_store)
+        old_vector = list(vector_store._vecs[first.entry_id])
+        (memes_dir / "new.jpg").write_bytes(b"new")
+        index_manager._embedding_provider = FakeEmbeddingProvider([9.0] * 1024)
+        vector_store.upsert_write_then_error_for = {first.entry_id}
+
+        with pytest.raises(EmbeddingError):
+            await index_manager.add("new.jpg")
+
+        assert vector_store._vecs[first.entry_id] == old_vector
+        entry = index_manager._metadata_store.get_entry(first.entry_id)
+        assert entry is not None
+        assert entry.image_path == "old.jpg"
+
+    @pytest.mark.asyncio
+    async def test_add_uses_global_collection_by_default(
+        self, index_manager: IndexManager
+    ) -> None:
+        """未指定目标合集时写入全局，并返回公开 ID 与合集名称。"""
+        image_path = Path(index_manager._memes_dir) / "global.jpg"
+        image_path.write_bytes(b"fake")
+
+        result = await index_manager.add("global.jpg")
+
+        assert result.public_id == MemePublicId(0, 1)
+        assert result.collection_name == GLOBAL_COLLECTION_NAME
+        entry = index_manager._metadata_store.get_entry(result.entry_id or 0)
+        assert entry is not None
+        assert entry.collection_id == 0
+        vector_store = cast(FakeVectorStore, index_manager._vector_store)
+        assert vector_store._collection_ids[entry.id] == 0
+
+    @pytest.mark.asyncio
+    async def test_add_assigns_public_id_in_target_collection(
+        self, index_manager: IndexManager
+    ) -> None:
+        """普通合集新增写入 SQLite 与 Chroma，并返回持久条目的公开字段。"""
+        collection = index_manager._metadata_store.create_collection("新三国")
+        image_path = Path(index_manager._memes_dir) / "新三国" / "a.webp"
+        image_path.parent.mkdir()
+        image_path.write_bytes(b"image")
+
+        result = await index_manager.add(
+            "新三国/a.webp",
+            collection_id=collection.id,
+        )
+
+        assert result.public_id == MemePublicId(collection.id, 1)
+        assert result.collection_name == "新三国"
+        assert result.entry_id is not None
+        entry = index_manager._metadata_store.get_entry(result.entry_id)
+        assert entry is not None
+        assert entry.collection_id == collection.id
+        vector_store = cast(FakeVectorStore, index_manager._vector_store)
+        assert vector_store._collection_ids[entry.id] == collection.id
+
+    @pytest.mark.asyncio
+    async def test_add_allows_same_text_in_different_collections(
+        self, index_manager: IndexManager
+    ) -> None:
+        """跨合集相同 OCR 文本应分别入库。"""
+
+        class ConstantOcrProvider:
+            async def ocr(self, image_path: str) -> str:
+                return "相同文本"
+
+            async def close(self) -> None:
+                pass
+
+        index_manager._ocr_provider = ConstantOcrProvider()
+        first = index_manager._metadata_store.create_collection("新三国")
+        second = index_manager._metadata_store.create_collection("甄嬛传")
+        for collection, filename in ((first, "a.webp"), (second, "b.webp")):
+            path = Path(index_manager._memes_dir) / collection.name / filename
+            path.parent.mkdir()
+            path.write_bytes(collection.name.encode())
+
+        first_result = await index_manager.add("新三国/a.webp", collection_id=first.id)
+        second_result = await index_manager.add(
+            "甄嬛传/b.webp", collection_id=second.id
+        )
+
+        assert first_result.entry_id != second_result.entry_id
+        assert first_result.public_id == MemePublicId(first.id, 1)
+        assert second_result.public_id == MemePublicId(second.id, 1)
+
+    @pytest.mark.asyncio
+    async def test_add_duplicate_in_collection_preserves_public_id(
+        self, index_manager: IndexManager
+    ) -> None:
+        """同合集替换复用内部 ID 和合集内编号。"""
+
+        class ConstantOcrProvider:
+            async def ocr(self, image_path: str) -> str:
+                return "相同文本"
+
+            async def close(self) -> None:
+                pass
+
+        index_manager._ocr_provider = ConstantOcrProvider()
+        collection = index_manager._metadata_store.create_collection("新三国")
+        directory = Path(index_manager._memes_dir) / collection.name
+        directory.mkdir()
+        (directory / "old.webp").write_bytes(b"old")
+        first = await index_manager.add("新三国/old.webp", collection_id=collection.id)
+        (directory / "new.webp").write_bytes(b"new")
+
+        replaced = await index_manager.add(
+            "新三国/new.webp", collection_id=collection.id
+        )
+
+        assert replaced.reason == "replaced"
+        assert replaced.entry_id == first.entry_id
+        assert replaced.public_id == first.public_id == MemePublicId(collection.id, 1)
+        assert replaced.collection_name == collection.name
+
+    @pytest.mark.asyncio
+    async def test_add_rejects_collection_deleted_during_pipeline(
+        self, index_manager: IndexManager
+    ) -> None:
+        """管线处理中合集被删除时，清理转换后的实际文件且不误删其他文件。"""
+        pipeline_started = asyncio.Event()
+        resume_pipeline = asyncio.Event()
+
+        class ConvertingOptimizer:
+            async def optimize(self, image_path: str) -> OptimizeResult:
+                source = Path(image_path)
+                target = source.with_suffix(".webp")
+                target.write_bytes(source.read_bytes())
+                source.unlink()
+                return OptimizeResult(4, 3, 1, output_path=str(target))
+
+        class BlockingOcrProvider:
+            async def ocr(self, image_path: str) -> str:
+                pipeline_started.set()
+                await resume_pipeline.wait()
+                return "并发删除"
+
+            async def close(self) -> None:
+                pass
+
+        index_manager._optimizer = ConvertingOptimizer()
+        index_manager._ocr_provider = BlockingOcrProvider()
+        collection = index_manager._metadata_store.create_collection("新三国")
+        directory = Path(index_manager._memes_dir) / collection.name
+        directory.mkdir()
+        source = directory / "a.jpg"
+        final_path = directory / "a.webp"
+        unrelated = directory / "keep.webp"
+        source.write_bytes(b"image")
+        unrelated.write_bytes(b"keep")
+
+        add_task = asyncio.create_task(
+            index_manager.add("新三国/a.jpg", collection_id=collection.id)
+        )
+        await pipeline_started.wait()
+        metadata_store = cast(FakeMetadataStore, index_manager._metadata_store)
+        metadata_store.delete_collection_and_reset_scopes(collection.id)
+        resume_pipeline.set()
+
+        with pytest.raises(CollectionNotFoundError):
+            await add_task
+        assert not source.exists()
+        assert not final_path.exists()
+        assert unrelated.read_bytes() == b"keep"
+        assert index_manager._metadata_store.entry_count() == 0
+
+    @pytest.mark.asyncio
+    async def test_add_serializes_optimizer_with_refresh_for_same_target(
+        self, index_manager: IndexManager
+    ) -> None:
+        """add 与 refresh 的同父目录同 stem 优化必须共享目标锁。"""
+        first_entered = asyncio.Event()
+        release_first = asyncio.Event()
+
+        class BlockingOptimizer:
+            def __init__(self) -> None:
+                self.active = 0
+                self.max_active = 0
+                self.calls = 0
+
+            async def optimize(self, image_path: str) -> OptimizeResult:
+                self.calls += 1
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+                if self.calls == 1:
+                    first_entered.set()
+                    await release_first.wait()
+                self.active -= 1
+                return OptimizeResult(4, 4, 0, output_path=image_path)
+
+        optimizer = BlockingOptimizer()
+        index_manager._optimizer = optimizer
+        memes_dir = Path(index_manager._memes_dir)
+        (memes_dir / "same.jpg").write_bytes(b"first")
+        first = asyncio.create_task(index_manager._process_image_pipeline("same.jpg"))
+        await first_entered.wait()
+        (memes_dir / "same.png").write_bytes(b"second")
+        second = asyncio.create_task(index_manager._process_image_pipeline("same.png"))
+        await asyncio.sleep(0.05)
+
+        assert optimizer.calls == 1
+        release_first.set()
+        await asyncio.gather(first, second)
+        assert optimizer.max_active == 1
+
+    @pytest.mark.asyncio
+    async def test_optimizer_lock_registry_releases_unique_keys(
+        self, index_manager: IndexManager
+    ) -> None:
+        """大量顺序唯一 key 完成后目标锁注册表应回到空状态。"""
+        memes_dir = Path(index_manager._memes_dir)
+        for index in range(50):
+            filename = f"unique-{index}.jpg"
+            (memes_dir / filename).write_bytes(b"image")
+            await index_manager._process_image_pipeline(filename)
+
+        assert index_manager._optimizer_target_locks == {}
+
+    @pytest.mark.asyncio
+    async def test_optimizer_lock_registry_cleans_cancelled_waiter(
+        self, index_manager: IndexManager
+    ) -> None:
+        """同 key waiter 取消后引用计数与注册表必须完整清理。"""
+        first_entered = asyncio.Event()
+        release_first = asyncio.Event()
+
+        class BlockingOptimizer:
+            async def optimize(self, image_path: str) -> OptimizeResult:
+                first_entered.set()
+                await release_first.wait()
+                return OptimizeResult(4, 4, 0, output_path=image_path)
+
+        index_manager._optimizer = BlockingOptimizer()
+        memes_dir = Path(index_manager._memes_dir)
+        (memes_dir / "wait.jpg").write_bytes(b"first")
+        (memes_dir / "wait.png").write_bytes(b"second")
+        first = asyncio.create_task(index_manager._process_image_pipeline("wait.jpg"))
+        await first_entered.wait()
+        waiter = asyncio.create_task(index_manager._process_image_pipeline("wait.png"))
+        await asyncio.sleep(0.05)
+
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        release_first.set()
+        await first
+
+        assert index_manager._optimizer_target_locks == {}
+
+    @pytest.mark.asyncio
+    async def test_optimizer_context_exit_cancel_cleans_registry_and_output(
+        self, index_manager: IndexManager
+    ) -> None:
+        """optimizer 返回后退出上下文被取消仍应清理引用与任务输出。"""
+        optimizer_ready = asyncio.Event()
+        allow_optimizer_return = asyncio.Event()
+
+        class CreatingOptimizer:
+            async def optimize(self, image_path: str) -> OptimizeResult:
+                source = Path(image_path)
+                target = source.with_suffix(".webp")
+                target.write_bytes(source.read_bytes())
+                source.unlink()
+                optimizer_ready.set()
+                await allow_optimizer_return.wait()
+                return OptimizeResult(4, 3, 1, output_path=str(target))
+
+        index_manager._optimizer = CreatingOptimizer()
+        source = Path(index_manager._memes_dir) / "exit-cancel.jpg"
+        final_path = source.with_suffix(".webp")
+        source.write_bytes(b"image")
+        task = asyncio.create_task(index_manager._process_image_pipeline(source.name))
+        await optimizer_ready.wait()
+        await index_manager._optimizer_registry_guard.acquire()
+        allow_optimizer_return.set()
+        await asyncio.sleep(0)
+        task.cancel()
+        index_manager._optimizer_registry_guard.release()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert not final_path.exists()
+        assert index_manager._optimizer_target_locks == {}
+
+    @pytest.mark.asyncio
+    async def test_cancelled_optimizer_stays_locked_until_background_finishes(
+        self, index_manager: IndexManager
+    ) -> None:
+        """外部取消后仍等待 optimizer 真正结束，并阻止同目标任务进入。"""
+        first_entered = asyncio.Event()
+        release_first = threading.Event()
+        second_entered = asyncio.Event()
+        calls = 0
+
+        class ThreadStyleOptimizer:
+            async def optimize(self, image_path: str) -> OptimizeResult:
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    first_entered.set()
+                    await asyncio.to_thread(release_first.wait)
+                    source = Path(image_path)
+                    target = source.with_suffix(".webp")
+                    target.write_bytes(source.read_bytes())
+                    source.unlink()
+                    return OptimizeResult(4, 3, 1, output_path=str(target))
+                second_entered.set()
+                return OptimizeResult(4, 4, 0, output_path=image_path)
+
+        index_manager._optimizer = ThreadStyleOptimizer()
+        memes_dir = Path(index_manager._memes_dir)
+        first_source = memes_dir / "thread.jpg"
+        second_source = memes_dir / "thread.png"
+        first_output = first_source.with_suffix(".webp")
+        first_source.write_bytes(b"first")
+        second_source.write_bytes(b"second")
+        first = asyncio.create_task(
+            index_manager._process_image_pipeline(first_source.name)
+        )
+        await first_entered.wait()
+        first.cancel()
+        second = asyncio.create_task(
+            index_manager._process_image_pipeline(second_source.name)
+        )
+        await asyncio.sleep(0.05)
+
+        assert not first.done()
+        assert not second_entered.is_set()
+        first.cancel()
+        await asyncio.sleep(0.05)
+        assert not first.done()
+        assert not second_entered.is_set()
+        first.cancel()
+        await asyncio.sleep(0.05)
+        assert not first.done()
+        assert not second_entered.is_set()
+        release_first.set()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        await second
+        assert not first_output.exists()
+        assert index_manager._optimizer_target_locks == {}
+
+    @pytest.mark.asyncio
+    async def test_cancelled_optimizer_consumes_background_exception(
+        self, index_manager: IndexManager
+    ) -> None:
+        """外部取消优先传播，并消费 optimizer 随后产生的异常。"""
+        optimizer_entered = asyncio.Event()
+        release_optimizer = threading.Event()
+
+        class FailingThreadStyleOptimizer:
+            async def optimize(self, image_path: str) -> OptimizeResult:
+                optimizer_entered.set()
+                await asyncio.to_thread(release_optimizer.wait)
+                raise RuntimeError("background failure")
+
+        index_manager._optimizer = FailingThreadStyleOptimizer()
+        source = Path(index_manager._memes_dir) / "background.jpg"
+        source.write_bytes(b"image")
+        task = asyncio.create_task(index_manager._process_image_pipeline(source.name))
+        await optimizer_entered.wait()
+        task.cancel()
+        release_optimizer.set()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert index_manager._optimizer_target_locks == {}
+
+    @pytest.mark.asyncio
+    async def test_pipeline_failure_does_not_delete_other_task_output(
+        self, index_manager: IndexManager
+    ) -> None:
+        """等待目标锁的任务失败时不得删除前一任务创建的输出。"""
+        first_optimizer_entered = asyncio.Event()
+        allow_first_create = asyncio.Event()
+        first_ocr_entered = asyncio.Event()
+        allow_first_ocr = asyncio.Event()
+
+        class SharedOutputOptimizer:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def optimize(self, image_path: str) -> OptimizeResult:
+                self.calls += 1
+                target = Path(image_path).with_name("same.webp")
+                if self.calls == 1:
+                    first_optimizer_entered.set()
+                    await allow_first_create.wait()
+                    target.write_bytes(b"first-output")
+                return OptimizeResult(4, 3, 1, output_path=str(target))
+
+        class SecondFailingOcrProvider:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def ocr(self, image_path: str) -> str:
+                self.calls += 1
+                if self.calls == 1:
+                    first_ocr_entered.set()
+                    await allow_first_ocr.wait()
+                    return "第一张"
+                raise RuntimeError("second failed")
+
+            async def close(self) -> None:
+                pass
+
+        index_manager._optimizer = SharedOutputOptimizer()
+        index_manager._ocr_provider = SecondFailingOcrProvider()
+        memes_dir = Path(index_manager._memes_dir)
+        (memes_dir / "same.jpg").write_bytes(b"first")
+        (memes_dir / "same.png").write_bytes(b"second")
+        first = asyncio.create_task(index_manager._process_image_pipeline("same.jpg"))
+        await first_optimizer_entered.wait()
+        second = asyncio.create_task(index_manager._process_image_pipeline("same.png"))
+        await asyncio.sleep(0.05)
+        allow_first_create.set()
+        await first_ocr_entered.wait()
+
+        with pytest.raises(OcrError):
+            await second
+        assert (memes_dir / "same.webp").read_bytes() == b"first-output"
+        allow_first_ocr.set()
+        await first
+
+    @pytest.mark.asyncio
+    async def test_add_cleans_created_optimizer_output_when_ocr_fails(
+        self, index_manager: IndexManager
+    ) -> None:
+        """转换新建的最终文件在 OCR 失败后应清理。"""
+
+        class ConvertingOptimizer:
+            async def optimize(self, image_path: str) -> OptimizeResult:
+                source = Path(image_path)
+                target = source.with_suffix(".webp")
+                target.write_bytes(source.read_bytes())
+                source.unlink()
+                return OptimizeResult(4, 3, 1, output_path=str(target))
+
+        class FailingOcrProvider:
+            async def ocr(self, image_path: str) -> str:
+                raise RuntimeError("ocr failed")
+
+            async def close(self) -> None:
+                pass
+
+        index_manager._optimizer = ConvertingOptimizer()
+        index_manager._ocr_provider = FailingOcrProvider()
+        source = Path(index_manager._memes_dir) / "failed.jpg"
+        final_path = source.with_suffix(".webp")
+        source.write_bytes(b"image")
+
+        with pytest.raises(OcrError):
+            await index_manager.add("failed.jpg")
+
+        assert not source.exists()
+        assert not final_path.exists()
+
+    @pytest.mark.asyncio
+    async def test_add_cleans_created_optimizer_output_when_ocr_cancelled(
+        self, index_manager: IndexManager
+    ) -> None:
+        """转换后取消 OCR 时应清理本任务新建输出并原样传播取消。"""
+        ocr_entered = asyncio.Event()
+
+        class ConvertingOptimizer:
+            async def optimize(self, image_path: str) -> OptimizeResult:
+                source = Path(image_path)
+                target = source.with_suffix(".webp")
+                target.write_bytes(source.read_bytes())
+                source.unlink()
+                return OptimizeResult(4, 3, 1, output_path=str(target))
+
+        class BlockingOcrProvider:
+            async def ocr(self, image_path: str) -> str:
+                ocr_entered.set()
+                await asyncio.Event().wait()
+                raise AssertionError("不可达")
+
+            async def close(self) -> None:
+                pass
+
+        index_manager._optimizer = ConvertingOptimizer()
+        index_manager._ocr_provider = BlockingOcrProvider()
+        source = Path(index_manager._memes_dir) / "cancelled.jpg"
+        final_path = source.with_suffix(".webp")
+        source.write_bytes(b"image")
+        task = asyncio.create_task(index_manager.add("cancelled.jpg"))
+        await ocr_entered.wait()
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert not source.exists()
+        assert not final_path.exists()
+
+    @pytest.mark.asyncio
+    async def test_add_preserves_preexisting_output_when_ocr_cancelled(
+        self, index_manager: IndexManager
+    ) -> None:
+        """取消 OCR 时不得删除 optimizer 返回的预存输出。"""
+        ocr_entered = asyncio.Event()
+
+        class ExistingOutputOptimizer:
+            async def optimize(self, image_path: str) -> OptimizeResult:
+                return OptimizeResult(4, 4, 0, output_path=image_path)
+
+        class BlockingOcrProvider:
+            async def ocr(self, image_path: str) -> str:
+                ocr_entered.set()
+                await asyncio.Event().wait()
+                raise AssertionError("不可达")
+
+            async def close(self) -> None:
+                pass
+
+        index_manager._optimizer = ExistingOutputOptimizer()
+        index_manager._ocr_provider = BlockingOcrProvider()
+        source = Path(index_manager._memes_dir) / "existing-cancelled.jpg"
+        source.write_bytes(b"original")
+        task = asyncio.create_task(index_manager.add(source.name))
+        await ocr_entered.wait()
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert source.read_bytes() == b"original"
+
+    @pytest.mark.asyncio
+    async def test_add_preserves_preexisting_optimizer_output_when_ocr_fails(
+        self, index_manager: IndexManager
+    ) -> None:
+        """optimizer 返回预存文件时，pipeline 失败不得误删该文件。"""
+
+        class ExistingOutputOptimizer:
+            async def optimize(self, image_path: str) -> OptimizeResult:
+                return OptimizeResult(4, 4, 0, output_path=image_path)
+
+        class FailingOcrProvider:
+            async def ocr(self, image_path: str) -> str:
+                raise RuntimeError("ocr failed")
+
+            async def close(self) -> None:
+                pass
+
+        index_manager._optimizer = ExistingOutputOptimizer()
+        index_manager._ocr_provider = FailingOcrProvider()
+        source = Path(index_manager._memes_dir) / "existing.jpg"
+        source.write_bytes(b"original")
+
+        with pytest.raises(OcrError):
+            await index_manager.add("existing.jpg")
+
+        assert source.read_bytes() == b"original"
+
+    @pytest.mark.asyncio
     async def test_add_no_text_moves_file(self, index_manager: IndexManager) -> None:
         """无文字图片 add() 应移入 meme_no_text/ 并返回 reason=no_text。"""
 
@@ -665,6 +1553,8 @@ class TestAdd:
 
         result = await index_manager.add("blank.jpg")
         assert result.reason == "no_text"
+        assert result.public_id is None
+        assert result.collection_name is None
         assert result.moved_to is not None
         assert not (memes_dir / "blank.jpg").exists()
         assert Path(result.moved_to).exists()
@@ -973,10 +1863,19 @@ class TestConcurrencyAndDrain:
             embedding: list[float],
             speaker: str | None = None,
             tags: list[str] | None = None,
+            *,
+            collection_id: int = 0,
         ) -> AddResult:
             in_flight.set()
             await asyncio.sleep(0.3)
-            return await original_write(filename, text, embedding, speaker, tags)
+            return await original_write(
+                filename,
+                text,
+                embedding,
+                speaker,
+                tags,
+                collection_id=collection_id,
+            )
 
         index_manager._write_entry = slow_write  # ty: ignore[invalid-assignment]
 
@@ -1033,6 +1932,350 @@ class TestConcurrencyAndDrain:
 class TestRefresh:
     """IndexManager.refresh() 去重归档测试。"""
 
+    def test_scan_assigns_nested_files_to_first_directory(
+        self, index_manager: IndexManager
+    ) -> None:
+        """一级目录定义合集，深层图片仍归属该一级目录。"""
+        memes_dir = Path(index_manager._memes_dir)
+        (memes_dir / "root.webp").write_bytes(b"root")
+        nested = memes_dir / "新三国" / "截图"
+        nested.mkdir(parents=True)
+        (nested / "a.webp").write_bytes(b"nested")
+        hidden = memes_dir / "新三国" / ".cache"
+        hidden.mkdir()
+        (hidden / "ignored.webp").write_bytes(b"hidden")
+
+        snapshot = index_manager._scan_meme_files()
+
+        assert snapshot.files == {
+            "root.webp": None,
+            "新三国/截图/a.webp": "新三国",
+        }
+        assert snapshot.directories == {"新三国"}
+        assert snapshot.directories_with_images == {"新三国"}
+
+    def test_scan_skips_hidden_image_files(self, index_manager: IndexManager) -> None:
+        """根目录及合集目录中的隐藏图片文件均不参与扫描。"""
+        memes_dir = Path(index_manager._memes_dir)
+        (memes_dir / ".root.webp").write_bytes(b"hidden")
+        collection_dir = memes_dir / "新三国"
+        collection_dir.mkdir()
+        (collection_dir / ".hidden.webp").write_bytes(b"hidden")
+
+        snapshot = index_manager._scan_meme_files()
+
+        assert snapshot.files == {}
+        assert snapshot.directories == {"新三国"}
+        assert snapshot.directories_with_images == set()
+
+    def test_scan_skips_hidden_root_directory(
+        self, index_manager: IndexManager
+    ) -> None:
+        """隐藏一级目录及其整棵子树不参与扫描。"""
+        hidden = Path(index_manager._memes_dir) / ".hidden"
+        hidden.mkdir()
+        (hidden / "ignored.webp").write_bytes(b"hidden")
+
+        snapshot = index_manager._scan_meme_files()
+
+        assert snapshot.files == {}
+        assert snapshot.directories == set()
+
+    def test_scan_skips_symlinked_files_and_directories(
+        self, index_manager: IndexManager, tmp_path: Path
+    ) -> None:
+        """扫描不跟随文件或目录符号链接。"""
+        memes_dir = Path(index_manager._memes_dir)
+        outside_file = tmp_path / "outside.webp"
+        outside_file.write_bytes(b"outside")
+        outside_dir = tmp_path / "outside-dir"
+        outside_dir.mkdir()
+        (outside_dir / "nested.webp").write_bytes(b"outside")
+        try:
+            (memes_dir / "linked.webp").symlink_to(outside_file)
+            (memes_dir / "linked-dir").symlink_to(outside_dir, target_is_directory=True)
+        except OSError:
+            pytest.skip("当前平台不支持创建符号链接")
+
+        snapshot = index_manager._scan_meme_files()
+
+        assert snapshot.files == {}
+        assert snapshot.directories == set()
+
+    @pytest.mark.asyncio
+    async def test_refresh_creates_collection_only_for_directory_with_image(
+        self, index_manager: IndexManager
+    ) -> None:
+        """仅递归含受支持图片的新一级目录登记为合集。"""
+        memes_dir = Path(index_manager._memes_dir)
+        (memes_dir / "空目录").mkdir()
+        with_image = memes_dir / "新三国"
+        with_image.mkdir()
+        (with_image / "a.webp").write_bytes(b"image")
+
+        result = await index_manager.refresh()
+
+        assert result.collections_added == 1
+        assert index_manager._metadata_store.get_collection_by_name("空目录") is None
+        collection = index_manager._metadata_store.get_collection_by_name("新三国")
+        assert collection is not None
+        assert collection.id == 1
+
+    @pytest.mark.asyncio
+    async def test_refresh_preserves_registered_collection_when_empty(
+        self, index_manager: IndexManager
+    ) -> None:
+        """已登记合集变为空目录时，只要一级目录存在就保留。"""
+        memes_dir = Path(index_manager._memes_dir)
+        (memes_dir / "新三国").mkdir()
+        collection = index_manager._metadata_store.create_collection("新三国")
+
+        result = await index_manager.refresh()
+
+        assert result.collections_deleted == 0
+        assert index_manager._metadata_store.get_collection(collection.id) == collection
+
+    @pytest.mark.asyncio
+    async def test_refresh_deletes_missing_collection_and_resets_scopes(
+        self, index_manager: IndexManager
+    ) -> None:
+        """一级目录消失后删除空合集，并把引用它的窗口回退到全部合集。"""
+        collection = index_manager._metadata_store.create_collection("新三国")
+        index_manager._metadata_store.set_selected_collection(
+            ChatScope(1, "private", 1), collection.id
+        )
+
+        result = await index_manager.refresh()
+
+        assert result.collections_deleted == 1
+        assert result.scopes_reset == 1
+        assert index_manager._metadata_store.get_collection(collection.id) is None
+        assert (
+            index_manager._metadata_store.get_selected_collection(
+                ChatScope(1, "private", 1)
+            )
+            == 0
+        )
+
+    @pytest.mark.asyncio
+    async def test_refresh_adds_nested_entry_with_collection_metadata(
+        self, index_manager: IndexManager
+    ) -> None:
+        """新增深层图片时 SQLite 与 Chroma 都写入其一级合集编号。"""
+        nested = Path(index_manager._memes_dir) / "新三国" / "截图"
+        nested.mkdir(parents=True)
+        (nested / "a.webp").write_bytes(b"image")
+
+        result = await index_manager.refresh()
+
+        entry = next(iter(index_manager._metadata_store.get_all_entries().values()))
+        vector_store = cast(FakeVectorStore, index_manager._vector_store)
+        assert result.added == 1
+        assert entry.image_path == "新三国/截图/a.webp"
+        assert entry.collection_id == 1
+        assert vector_store._collection_ids[entry.id] == 1
+
+    @pytest.mark.asyncio
+    async def test_refresh_dedupes_only_within_collection(
+        self, index_manager: IndexManager
+    ) -> None:
+        """相同 OCR 文本可跨合集入库，但同一合集内仍去重。"""
+
+        class ConstantOcrProvider:
+            async def ocr(self, image_path: str) -> str:
+                return "相同文本"
+
+            async def close(self) -> None:
+                pass
+
+        index_manager._ocr_provider = ConstantOcrProvider()
+        memes_dir = Path(index_manager._memes_dir)
+        for name in ("甲", "乙"):
+            directory = memes_dir / name
+            directory.mkdir()
+            (directory / "a.webp").write_bytes(b"image")
+
+        result = await index_manager.refresh()
+
+        assert result.added == 2
+        assert result.deduped == 0
+        assert {
+            entry.collection_id
+            for entry in index_manager._metadata_store.get_all_entries().values()
+        } == {1, 2}
+
+    @pytest.mark.asyncio
+    async def test_refresh_continues_when_missing_vector_reembed_fails(
+        self, index_manager: IndexManager
+    ) -> None:
+        """缺失向量重建失败只记录文件，不对不存在向量修复 metadata。"""
+
+        class FailingEmbeddingProvider:
+            async def embed(self, text: str) -> list[float]:
+                if text == "失败文本":
+                    raise RuntimeError("embed failed")
+                return [1.0]
+
+            async def close(self) -> None:
+                pass
+
+        collection = index_manager._metadata_store.create_collection("新三国")
+        failed_id = index_manager._metadata_store.add(
+            "新三国/failed.webp", "失败文本", collection_id=collection.id
+        )
+        existing_id = index_manager._metadata_store.add("root.webp", "全局文本")
+        vector_store = cast(FakeVectorStore, index_manager._vector_store)
+        await vector_store.upsert(existing_id, [1.0], collection_id=0)
+
+        async def strict_update_collection_id(
+            entry_id: int, collection_id: int
+        ) -> None:
+            if entry_id not in vector_store._vecs:
+                raise ValueError(f"vector {entry_id} not found")
+            vector_store._collection_ids[entry_id] = collection_id
+
+        vector_store.update_collection_id = strict_update_collection_id  # ty: ignore[invalid-assignment]
+        index_manager._embedding_provider = FailingEmbeddingProvider()
+        collection_dir = Path(index_manager._memes_dir) / "新三国"
+        collection_dir.mkdir()
+        (collection_dir / "failed.webp").write_bytes(b"image")
+        (Path(index_manager._memes_dir) / "root.webp").write_bytes(b"image")
+
+        result = await index_manager.refresh()
+
+        assert result.failed == ["新三国/failed.webp"]
+        assert failed_id not in vector_store._vecs
+        assert vector_store._collection_ids == {existing_id: 0}
+
+    @pytest.mark.asyncio
+    async def test_refresh_continues_when_missing_vector_upsert_fails(
+        self, index_manager: IndexManager
+    ) -> None:
+        """缺失向量 upsert 失败只记录该图片，并继续处理其他缺失向量。"""
+        first_id = index_manager._metadata_store.add("first.webp", "甲")
+        failed_id = index_manager._metadata_store.add("failed.webp", "乙")
+        existing_id = index_manager._metadata_store.add("existing.webp", "丙")
+        for filename in ("first.webp", "failed.webp", "existing.webp"):
+            (Path(index_manager._memes_dir) / filename).write_bytes(b"image")
+        vector_store = cast(FakeVectorStore, index_manager._vector_store)
+        await vector_store.upsert(existing_id, [1.0], collection_id=0)
+        await vector_store.upsert(999, [2.0], collection_id=0)
+        vector_store.upsert_error_for = {failed_id}
+
+        result = await index_manager.refresh()
+
+        assert result.failed == ["failed.webp"]
+        assert vector_store.has(first_id)
+        assert not vector_store.has(failed_id)
+        assert vector_store.has(existing_id)
+        assert not vector_store.has(999)
+
+    @pytest.mark.asyncio
+    async def test_refresh_missing_vector_keeps_collection_metadata(
+        self, index_manager: IndexManager
+    ) -> None:
+        """阶段0补写缺失向量后不会因旧 ID 快照跳过或覆盖合集元数据。"""
+        collection = index_manager._metadata_store.create_collection("新三国")
+        entry_id = index_manager._metadata_store.add(
+            "新三国/a.webp", "文本", collection_id=collection.id
+        )
+        directory = Path(index_manager._memes_dir) / "新三国"
+        directory.mkdir()
+        (directory / "a.webp").write_bytes(b"image")
+        vector_store = cast(FakeVectorStore, index_manager._vector_store)
+        other_id = index_manager._metadata_store.add("root.webp", "全局")
+        await vector_store.upsert(other_id, [1.0], collection_id=0)
+        (Path(index_manager._memes_dir) / "root.webp").write_bytes(b"image")
+
+        await index_manager.refresh()
+
+        assert vector_store._collection_ids[entry_id] == collection.id
+
+    @pytest.mark.asyncio
+    async def test_refresh_repairs_vector_collection_metadata(
+        self, index_manager: IndexManager
+    ) -> None:
+        """阶段0以 SQLite 为准修复 Chroma 的 collection_id。"""
+        collection = index_manager._metadata_store.create_collection("新三国")
+        entry_id = index_manager._metadata_store.add(
+            "新三国/a.webp", "文本", collection_id=collection.id
+        )
+        vector_store = cast(FakeVectorStore, index_manager._vector_store)
+        await vector_store.upsert(entry_id, [1.0], collection_id=0)
+        directory = Path(index_manager._memes_dir) / "新三国"
+        directory.mkdir()
+        (directory / "a.webp").write_bytes(b"image")
+
+        await index_manager.refresh()
+
+        assert vector_store._collection_ids[entry_id] == collection.id
+
+    @pytest.mark.asyncio
+    async def test_pipeline_preserves_nested_relative_path(
+        self, index_manager: IndexManager
+    ) -> None:
+        """优化输出路径仍以 memes/ 为基准返回完整相对路径。"""
+        nested = Path(index_manager._memes_dir) / "新三国" / "截图"
+        nested.mkdir(parents=True)
+        (nested / "a.jpg").write_bytes(b"image")
+        index_manager._optimizer = FakeOptimizer(output_path=str(nested / "a.webp"))
+
+        final_path, _, _ = await index_manager._process_image_pipeline(
+            "新三国/截图/a.jpg"
+        )
+
+        assert final_path == "新三国/截图/a.webp"
+
+    @pytest.mark.asyncio
+    async def test_refresh_moves_nested_no_text_image_by_basename(
+        self, index_manager: IndexManager
+    ) -> None:
+        """深层无文字图片移出 memes/ 时不在归档目录复制合集层级。"""
+
+        class EmptyOcrProvider:
+            async def ocr(self, image_path: str) -> str:
+                return ""
+
+            async def close(self) -> None:
+                pass
+
+        index_manager._ocr_provider = EmptyOcrProvider()
+        nested = Path(index_manager._memes_dir) / "新三国" / "截图"
+        nested.mkdir(parents=True)
+        (nested / "blank.webp").write_bytes(b"image")
+
+        result = await index_manager.refresh()
+
+        assert result.no_text_moved == 1
+        assert not (nested / "blank.webp").exists()
+        assert (Path(index_manager._no_text_dir) / "blank.webp").exists()
+
+    @pytest.mark.asyncio
+    async def test_refresh_moves_nested_duplicate_image_by_basename(
+        self, index_manager: IndexManager
+    ) -> None:
+        """深层重复图片归档时不在归档目录复制合集层级。"""
+
+        class ConstantOcrProvider:
+            async def ocr(self, image_path: str) -> str:
+                return "重复文本"
+
+            async def close(self) -> None:
+                pass
+
+        index_manager._ocr_provider = ConstantOcrProvider()
+        nested = Path(index_manager._memes_dir) / "新三国" / "截图"
+        nested.mkdir(parents=True)
+        (nested / "old.webp").write_bytes(b"old")
+        await index_manager.refresh()
+        (nested / "new.webp").write_bytes(b"new")
+
+        result = await index_manager.refresh()
+
+        assert result.deduped == 1
+        assert not (nested / "new.webp").exists()
+        assert (Path(index_manager._replaced_dir) / "new.webp").exists()
+
     @pytest.mark.asyncio
     async def test_refresh_dedup_moves_duplicate_to_replaced(
         self, index_manager: IndexManager
@@ -1062,6 +2305,89 @@ class TestRefresh:
         assert result.added == 0
         assert not (memes_dir / "new.jpg").exists()
         assert (replaced_dir / "new.jpg").exists()
+
+    @pytest.mark.asyncio
+    async def test_refresh_vector_delete_failure_restores_sqlite_and_continues(
+        self, index_manager: IndexManager
+    ) -> None:
+        """向量删除失败时恢复 SQLite 条目，且继续清理后续缺失图片。"""
+        metadata_store = cast(FakeMetadataStore, index_manager._metadata_store)
+        vector_store = cast(FakeVectorStore, index_manager._vector_store)
+        collection = metadata_store.create_collection("新三国")
+        (Path(index_manager._memes_dir) / collection.name).mkdir()
+        failed_id = metadata_store.add(
+            "新三国/failed.webp",
+            "失败",
+            speaker="甲",
+            tags=["标签"],
+            collection_id=collection.id,
+        )
+        deleted_id = metadata_store.add("deleted.webp", "成功")
+        (Path(index_manager._memes_dir) / "new.webp").write_bytes(b"image")
+        await vector_store.upsert(failed_id, [1.0], collection_id=collection.id)
+        await vector_store.upsert(deleted_id, [2.0], collection_id=0)
+        original_remove = vector_store.remove
+
+        async def remove_with_failure(entry_id: int) -> None:
+            if entry_id == failed_id:
+                raise RuntimeError("remove failed")
+            await original_remove(entry_id)
+
+        vector_store.remove = remove_with_failure  # ty: ignore[invalid-assignment]
+
+        result = await index_manager.refresh()
+
+        restored = metadata_store.get_entry(failed_id)
+        assert result.added == 1
+        assert result.deleted == 1
+        assert result.failed == ["新三国/failed.webp"]
+        assert restored is not None
+        assert restored.id == failed_id
+        assert restored.image_path == "新三国/failed.webp"
+        assert restored.collection_id == collection.id
+        assert restored.local_id == 1
+        assert restored.text == "失败"
+        assert restored.speaker == "甲"
+        assert restored.tags == ["标签"]
+        assert vector_store.has(failed_id)
+        assert metadata_store.get_by_filename("deleted.webp") is None
+        reused = metadata_store.get_entry(deleted_id)
+        assert reused is not None
+        assert reused.image_path == "new.webp"
+        assert vector_store.has(deleted_id)
+
+    @pytest.mark.asyncio
+    async def test_refresh_remove_error_after_vector_deleted_keeps_final_deletion(
+        self, index_manager: IndexManager
+    ) -> None:
+        """向量已删除后才抛错时，不恢复 SQLite，并继续删除消失合集。"""
+        metadata_store = cast(FakeMetadataStore, index_manager._metadata_store)
+        vector_store = cast(FakeVectorStore, index_manager._vector_store)
+        collection = metadata_store.create_collection("待删除合集")
+        entry_id = metadata_store.add(
+            "待删除合集/deleted.webp",
+            "已删除",
+            speaker="乙",
+            tags=["旧图"],
+            collection_id=collection.id,
+        )
+        await vector_store.upsert(entry_id, [1.0], collection_id=collection.id)
+        original_remove = vector_store.remove
+
+        async def remove_then_fail(target_id: int) -> None:
+            await original_remove(target_id)
+            raise RuntimeError("remove failed after delete")
+
+        vector_store.remove = remove_then_fail  # ty: ignore[invalid-assignment]
+
+        result = await index_manager.refresh()
+
+        assert result.deleted == 1
+        assert result.collections_deleted == 1
+        assert result.failed == []
+        assert metadata_store.get_entry(entry_id) is None
+        assert not vector_store.has(entry_id)
+        assert metadata_store.get_collection(collection.id) is None
 
     @pytest.mark.asyncio
     async def test_refresh_no_text_moved(self, index_manager: IndexManager) -> None:
@@ -1098,7 +2424,7 @@ async def test_scan_meme_files_called_once_per_sync(
     call_count = 0
     original = index_manager._scan_meme_files
 
-    def counting_scan() -> set[str]:
+    def counting_scan() -> FileSystemSnapshot:
         nonlocal call_count
         call_count += 1
         return original()
@@ -1273,6 +2599,483 @@ class TestCombinedSearch:
             await index_manager.search_combined("加班", ["小明"], [])
 
 
+class TestCollectionSearch:
+    """Task 6: 合集过滤与选择解析测试。"""
+
+    def test_collection_selection_expired_error_is_runtime_error(self) -> None:
+        """选择快照失效异常应是明确的运行时业务错误。"""
+        assert issubclass(CollectionSelectionExpiredError, RuntimeError)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("replacement_name", ["新合集", "旧合集"])
+    async def test_random_snapshot_rejects_reused_collection_after_refresh(
+        self,
+        index_manager: IndexManager,
+        replacement_name: str,
+    ) -> None:
+        """刷新回退 scope 后，即使编号被同名或异名合集复用也拒绝换批。"""
+        store = cast(FakeMetadataStore, index_manager._metadata_store)
+        scope = ChatScope(user_id=1, chat_type="private", chat_id=1)
+        old_collection = store.create_collection("旧合集")
+        old_dir = index_manager._memes_dir / old_collection.name
+        old_dir.mkdir()
+        old_file = old_dir / "old.webp"
+        old_file.write_bytes(b"old")
+        old_entry_id = store.add(
+            "旧合集/old.webp", "旧合集文本", collection_id=old_collection.id
+        )
+        await index_manager._vector_store.upsert(
+            old_entry_id,
+            [float(ord("旧"))] * 1024,
+            collection_id=old_collection.id,
+        )
+        store.set_selected_collection(scope, old_collection.id)
+        selection, _results = await index_manager.random_search_for_scope(scope)
+
+        old_file.unlink()
+        old_dir.rmdir()
+        await index_manager.refresh()
+        replacement_dir = index_manager._memes_dir / replacement_name
+        replacement_dir.mkdir()
+        (replacement_dir / "new.webp").write_bytes(b"new")
+        await index_manager.refresh()
+        replacement = store.get_collection(old_collection.id)
+        assert replacement is not None
+        assert replacement.name == replacement_name
+        assert store.get_selected_collection(scope) == 0
+
+        with pytest.raises(CollectionSelectionExpiredError):
+            await index_manager.random_search_for_scope_snapshot(scope, None, selection)
+
+    @pytest.mark.asyncio
+    async def test_random_snapshot_searches_when_selection_is_unchanged(
+        self, index_manager: IndexManager
+    ) -> None:
+        """普通合集选择未变化时按首次 selection 继续随机搜索。"""
+        store = cast(FakeMetadataStore, index_manager._metadata_store)
+        scope = ChatScope(user_id=1, chat_type="private", chat_id=1)
+        collection = store.create_collection("旧合集")
+        store.add("旧合集/a.webp", "文本", collection_id=collection.id)
+        store.set_selected_collection(scope, collection.id)
+        selection, _results = await index_manager.random_search_for_scope(scope)
+
+        results = await index_manager.random_search_for_scope_snapshot(
+            scope, None, selection
+        )
+
+        assert [result.collection_id for result in results] == [collection.id]
+
+    @pytest.mark.asyncio
+    async def test_random_snapshot_searches_all_when_global_is_unchanged(
+        self, index_manager: IndexManager
+    ) -> None:
+        """全部合集选择未变化时仍允许全库换批。"""
+        store = cast(FakeMetadataStore, index_manager._metadata_store)
+        scope = ChatScope(user_id=1, chat_type="private", chat_id=1)
+        collection = store.create_collection("合集")
+        store.add("合集/a.webp", "文本", collection_id=collection.id)
+        selection, _results = await index_manager.random_search_for_scope(scope)
+
+        results = await index_manager.random_search_for_scope_snapshot(
+            scope, None, selection
+        )
+
+        assert [result.collection_id for result in results] == [collection.id]
+
+    @pytest.mark.asyncio
+    async def test_scope_search_blocks_refresh_after_selection_snapshot(
+        self, index_manager: IndexManager
+    ) -> None:
+        """scope 选择与实际搜索共用读锁，刷新不能在两者间复用合集编号。"""
+        store = cast(FakeMetadataStore, index_manager._metadata_store)
+        scope = ChatScope(user_id=1, chat_type="private", chat_id=1)
+        old_collection = store.create_collection("旧合集")
+        old_entry_id = store.add(
+            "旧合集/old.webp", "旧合集文本", collection_id=old_collection.id
+        )
+        store.set_selected_collection(scope, old_collection.id)
+        vector_store = cast(FakeVectorStore, index_manager._vector_store)
+        await vector_store.upsert(
+            old_entry_id,
+            [float(ord("旧"))] * 1024,
+            collection_id=old_collection.id,
+        )
+
+        entered_query = asyncio.Event()
+        release_query = asyncio.Event()
+        original_query = vector_store.query
+
+        async def blocking_query(
+            query_embedding: list[float],
+            n_results: int | None = 10,
+            *,
+            collection_id: int | None = None,
+        ) -> list[VectorHit]:
+            entered_query.set()
+            await release_query.wait()
+            return await original_query(
+                query_embedding,
+                n_results,
+                collection_id=collection_id,
+            )
+
+        vector_store.query = blocking_query  # ty: ignore[invalid-assignment]
+        search_task = asyncio.create_task(
+            index_manager.semantic_search_for_scope(scope, "旧", limit=None)
+        )
+        await entered_query.wait()
+
+        old_dir = index_manager._memes_dir / "旧合集"
+        old_dir.mkdir()
+        (old_dir / "old.webp").write_bytes(b"old")
+        old_dir.rename(index_manager._memes_dir / "新合集")
+        refresh_task = asyncio.create_task(index_manager.refresh())
+        await asyncio.sleep(0)
+
+        assert refresh_task.done() is False
+        assert store.get_collection(old_collection.id) == old_collection
+
+        release_query.set()
+        results = await search_task
+        assert [result.text for result in results] == ["旧合集文本"]
+
+        await refresh_task
+        replacement = store.get_collection(old_collection.id)
+        assert replacement is not None
+        assert replacement.name == "新合集"
+        assert store.get_selected_collection(scope) == 0
+
+    @pytest.mark.asyncio
+    async def test_search_uses_requested_collection(
+        self, index_manager: IndexManager
+    ) -> None:
+        """关键词搜索按 collection_id 过滤。"""
+        store = index_manager._metadata_store
+        first = store.create_collection("新三国")
+        second = store.create_collection("甄嬛传")
+        store.add("新三国/a.webp", "相同关键词", collection_id=first.id)
+        store.add("甄嬛传/b.webp", "相同关键词", collection_id=second.id)
+
+        results = await index_manager.search("关键词", collection_id=first.id)
+
+        assert [str(result.public_id) for result in results] == ["1.1"]
+
+    @pytest.mark.asyncio
+    async def test_search_none_collection_uses_all_entries(
+        self, index_manager: IndexManager
+    ) -> None:
+        """collection_id=None 时搜索全库。"""
+        store = index_manager._metadata_store
+        first = store.create_collection("新三国")
+        second = store.create_collection("甄嬛传")
+        store.add("新三国/a.webp", "相同关键词", collection_id=first.id)
+        store.add("甄嬛传/b.webp", "相同关键词", collection_id=second.id)
+
+        results = await index_manager.search("关键词", collection_id=None)
+
+        assert {result.collection_id for result in results} == {1, 2}
+
+    @pytest.mark.asyncio
+    async def test_resolve_entry_uses_scope_short_id(
+        self,
+        index_manager: IndexManager,
+        collection_manager: "CollectionManager",
+    ) -> None:
+        """resolve_entry 使用当前合集的短号解析。"""
+        scope = ChatScope(user_id=1, chat_type="private", chat_id=1)
+        collection = index_manager._metadata_store.create_collection("新三国")
+        index_manager._metadata_store.add(
+            "新三国/a.webp", "文本", collection_id=collection.id
+        )
+        collection_manager.set_selected(scope, collection.id)
+
+        entry = await index_manager.resolve_entry(scope, "001")
+
+        assert entry.public_id == MemePublicId(1, 1)
+
+    @pytest.mark.asyncio
+    async def test_info_ranks_speakers_in_selected_range(
+        self, index_manager: IndexManager
+    ) -> None:
+        """info 按 collection_id 范围统计并排行。"""
+        first = index_manager._metadata_store.create_collection("新三国")
+        second = index_manager._metadata_store.create_collection("甄嬛传")
+        index_manager._metadata_store.add(
+            "新三国/a.webp", "甲", speaker="曹操", collection_id=first.id
+        )
+        index_manager._metadata_store.add(
+            "甄嬛传/b.webp", "乙", speaker="皇后", collection_id=second.id
+        )
+
+        info = await index_manager.info(collection_id=first.id)
+
+        assert info.entry_count == 2
+        assert info.current_entry_count == 1
+        assert info.collection_count == 2
+        assert info.speaker_ranking == [("曹操", 1)]
+
+    @pytest.mark.asyncio
+    async def test_random_search_filters_by_collection(
+        self, index_manager: IndexManager
+    ) -> None:
+        """random_search 按 collection_id 过滤。"""
+        store = index_manager._metadata_store
+        first = store.create_collection("新三国")
+        second = store.create_collection("甄嬛传")
+        store.add("新三国/a.webp", "甲", collection_id=first.id)
+        store.add("甄嬛传/b.webp", "乙", collection_id=second.id)
+
+        results = await index_manager.random_search(None, collection_id=first.id)
+
+        assert len(results) == 1
+        assert results[0].collection_id == first.id
+
+    @pytest.mark.asyncio
+    async def test_semantic_search_filters_by_collection(
+        self, index_manager: IndexManager
+    ) -> None:
+        """semantic_search 按 collection_id 过滤。"""
+        store = index_manager._metadata_store
+        vs = cast(FakeVectorStore, index_manager._vector_store)
+        first = store.create_collection("新三国")
+        second = store.create_collection("甄嬛传")
+        # MockEmbeddingProvider 按首字符生成向量：a=97, b=98
+        eid_a = store.add("新三国/a.webp", "apple", collection_id=first.id)
+        eid_b = store.add("甄嬛传/b.webp", "banana", collection_id=second.id)
+        await vs.upsert(eid_a, [97.0] * 1024, collection_id=first.id)
+        await vs.upsert(eid_b, [98.0] * 1024, collection_id=second.id)
+
+        results = await index_manager.semantic_search("apple", collection_id=second.id)
+
+        assert len(results) == 1
+        assert results[0].collection_id == second.id
+        assert results[0].text == "banana"
+
+    @pytest.mark.asyncio
+    async def test_search_combined_filters_by_collection(
+        self, index_manager: IndexManager
+    ) -> None:
+        """search_combined 按 collection_id 过滤。"""
+        store = index_manager._metadata_store
+        first = store.create_collection("新三国")
+        second = store.create_collection("甄嬛传")
+        store.add("新三国/a.webp", "加班", collection_id=first.id)
+        store.add("甄嬛传/b.webp", "加班", collection_id=second.id)
+
+        results = await index_manager.search_combined(
+            "加班", [], [], collection_id=second.id
+        )
+
+        assert len(results) == 1
+        assert results[0].collection_id == second.id
+
+    @pytest.mark.asyncio
+    async def test_ai_match_filters_by_collection(
+        self, index_manager: IndexManager
+    ) -> None:
+        """ai_match 按 collection_id 过滤。"""
+        store = index_manager._metadata_store
+        vs = cast(FakeVectorStore, index_manager._vector_store)
+        first = store.create_collection("新三国")
+        second = store.create_collection("甄嬛传")
+        eid_a = store.add("新三国/a.webp", "apple", collection_id=first.id)
+        eid_b = store.add("甄嬛传/b.webp", "banana", collection_id=second.id)
+        await vs.upsert(eid_a, [97.0] * 1024, collection_id=first.id)
+        await vs.upsert(eid_b, [98.0] * 1024, collection_id=second.id)
+
+        result = await index_manager.ai_match("banana", collection_id=first.id)
+
+        assert result is not None
+        assert result.public_id.collection_id == first.id
+        assert result.text == "apple"
+
+
+# ---------------------------------------------------------------------------
+# Task 6: 合集管理方法直接测试
+# ---------------------------------------------------------------------------
+
+
+class TestCollectionManagement:
+    """IndexManager 合集管理方法单元测试。"""
+
+    @pytest.mark.asyncio
+    async def test_get_selected_collection(
+        self,
+        index_manager: IndexManager,
+        collection_manager: CollectionManager,
+    ) -> None:
+        """get_selected_collection 返回当前作用域选择。"""
+        scope = ChatScope(user_id=1, chat_type="private", chat_id=1)
+        collection = index_manager._metadata_store.create_collection("新三国")
+        collection_manager.set_selected(scope, collection.id)
+
+        selection = await index_manager.get_selected_collection(scope)
+
+        assert selection == CollectionSelection(
+            collection_id=collection.id, name=collection.name
+        )
+
+    @pytest.mark.asyncio
+    async def test_validate_collection_selection_rejects_reused_collection(
+        self,
+        index_manager: IndexManager,
+        collection_manager: CollectionManager,
+    ) -> None:
+        """scope 回退后即使同名合集复用编号，旧选择快照也必须失效。"""
+        scope = ChatScope(user_id=1, chat_type="private", chat_id=1)
+        store = cast(FakeMetadataStore, index_manager._metadata_store)
+        original = store.create_collection("旧合集")
+        collection_manager.set_selected(scope, original.id)
+        expected = await index_manager.get_selected_collection(scope)
+
+        store.delete_collection_and_reset_scopes(original.id)
+        replacement = store.create_collection("旧合集")
+        assert replacement.id == original.id
+
+        with pytest.raises(CollectionSelectionExpiredError):
+            await index_manager.validate_collection_selection(scope, expected)
+
+    @pytest.mark.asyncio
+    async def test_validate_collection_selection_accepts_unchanged_snapshot(
+        self,
+        index_manager: IndexManager,
+        collection_manager: CollectionManager,
+    ) -> None:
+        """当前 scope 完整选择未变化时校验成功。"""
+        scope = ChatScope(user_id=1, chat_type="private", chat_id=1)
+        collection = index_manager._metadata_store.create_collection("新三国")
+        collection_manager.set_selected(scope, collection.id)
+        expected = await index_manager.get_selected_collection(scope)
+
+        await index_manager.validate_collection_selection(scope, expected)
+
+    @pytest.mark.asyncio
+    async def test_add_write_rejects_expired_selection_and_cleans_pipeline_file(
+        self,
+        index_manager: IndexManager,
+        collection_manager: CollectionManager,
+    ) -> None:
+        """管线后 scope 回退时写锁校验应拒绝写入并清理最终文件。"""
+        scope = ChatScope(user_id=1, chat_type="private", chat_id=1)
+        collection = index_manager._metadata_store.create_collection("旧合集")
+        collection_manager.set_selected(scope, collection.id)
+        expected = await index_manager.get_selected_collection(scope)
+        image = index_manager._memes_dir / "旧合集/a.jpg"
+        image.parent.mkdir()
+        image.write_bytes(b"image")
+        cast(
+            FakeMetadataStore, index_manager._metadata_store
+        ).delete_collection_and_reset_scopes(collection.id)
+        replacement = index_manager._metadata_store.create_collection("新合集")
+        assert replacement.id == collection.id
+
+        with pytest.raises(CollectionSelectionExpiredError):
+            await index_manager.add(
+                "旧合集/a.jpg",
+                collection_id=collection.id,
+                scope=scope,
+                expected_selection=expected,
+            )
+
+        assert index_manager._metadata_store.entry_count() == 0
+        assert not image.exists()
+
+    @pytest.mark.asyncio
+    async def test_get_selected_collection_read_lock_timeout(
+        self, index_manager: IndexManager
+    ) -> None:
+        """写锁持有期间 get_selected_collection 读锁超时。"""
+        scope = ChatScope(user_id=1, chat_type="private", chat_id=1)
+        index_manager.read_timeout = 0.01
+
+        async with index_manager._rwlock.write():
+            with pytest.raises(asyncio.TimeoutError):
+                await index_manager.get_selected_collection(scope)
+
+    @pytest.mark.asyncio
+    async def test_list_collections(
+        self,
+        index_manager: IndexManager,
+        collection_manager: CollectionManager,
+    ) -> None:
+        """list_collections 返回全部合集入口与普通合集摘要。"""
+        scope = ChatScope(user_id=1, chat_type="private", chat_id=1)
+        index_manager._metadata_store.add("全局.webp", "全局条目")
+        first = index_manager._metadata_store.create_collection("新三国")
+        index_manager._metadata_store.add("新三国/a.webp", "甲", collection_id=first.id)
+        collection_manager.set_selected(scope, first.id)
+
+        summaries = await index_manager.list_collections(scope)
+
+        assert summaries == [
+            CollectionSummary(
+                collection_id=0,
+                name="全部合集",
+                entry_count=2,
+                selected=False,
+            ),
+            CollectionSummary(
+                collection_id=first.id,
+                name=first.name,
+                entry_count=1,
+                selected=True,
+            ),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_list_collections_read_lock_timeout(
+        self, index_manager: IndexManager
+    ) -> None:
+        """写锁持有期间 list_collections 读锁超时。"""
+        scope = ChatScope(user_id=1, chat_type="private", chat_id=1)
+        index_manager.read_timeout = 0.01
+
+        async with index_manager._rwlock.write():
+            with pytest.raises(asyncio.TimeoutError):
+                await index_manager.list_collections(scope)
+
+    @pytest.mark.asyncio
+    async def test_switch_collection(
+        self,
+        index_manager: IndexManager,
+        collection_manager: CollectionManager,
+    ) -> None:
+        """switch_collection 切换当前作用域合集。"""
+        scope = ChatScope(user_id=1, chat_type="private", chat_id=1)
+        collection = index_manager._metadata_store.create_collection("新三国")
+
+        selection = await index_manager.switch_collection(scope, str(collection.id))
+
+        assert selection.collection_id == collection.id
+        assert collection_manager.get_selected(scope).collection_id == collection.id
+
+    @pytest.mark.asyncio
+    async def test_switch_collection_by_name(
+        self,
+        index_manager: IndexManager,
+        collection_manager: CollectionManager,
+    ) -> None:
+        """switch_collection 支持按合集名称切换。"""
+        scope = ChatScope(user_id=1, chat_type="private", chat_id=1)
+        collection = index_manager._metadata_store.create_collection("新三国")
+
+        selection = await index_manager.switch_collection(scope, collection.name)
+
+        assert selection.collection_id == collection.id
+        assert collection_manager.get_selected(scope).collection_id == collection.id
+
+    @pytest.mark.asyncio
+    async def test_switch_collection_not_found(
+        self, index_manager: IndexManager
+    ) -> None:
+        """switch_collection 目标不存在时抛 CollectionNotFoundError。"""
+        scope = ChatScope(user_id=1, chat_type="private", chat_id=1)
+        from bot.engine.collection_manager import CollectionNotFoundError
+
+        with pytest.raises(CollectionNotFoundError):
+            await index_manager.switch_collection(scope, "不存在")
+
+
 # ---------------------------------------------------------------------------
 # F8: _get_chroma_ids 改用 get_all_ids
 # ---------------------------------------------------------------------------
@@ -1323,6 +3126,8 @@ async def test_add_timeout_cancels_enqueued_future(
         embedding: list[float],
         speaker: str | None = None,
         tags: list[str] | None = None,
+        *,
+        collection_id: int = 0,
     ) -> AddResult:
         await hang_event.wait()
         raise AssertionError("不应走到这里")
@@ -1373,6 +3178,8 @@ async def test_write_worker_skips_cancelled_future(
         embedding: list[float],
         speaker: str | None = None,
         tags: list[str] | None = None,
+        *,
+        collection_id: int = 0,
     ) -> AddResult:
         write_calls.append(filename)
         return AddResult(entry_id=1, reason="added", text=text)
@@ -1642,6 +3449,199 @@ class TestSyncConvertsToWebp:
         assert sync_result.added == 2
         paths = {e.image_path for e in md.get_all_entries().values()}
         assert paths == {"a.webp", "b.webp"}
+
+    @pytest.mark.asyncio
+    async def test_sync_reserves_same_stem_webp_targets_before_optimization(
+        self, tmp_path: Path
+    ) -> None:
+        """同目录同 stem 转 WebP 时，每个优化任务必须拥有独立输出路径。"""
+        md = FakeMetadataStore()
+        vs = FakeVectorStore()
+        memes = tmp_path / "memes"
+        memes.mkdir()
+        (memes / "dup.jpg").write_bytes(b"jpg")
+        (memes / "dup.png").write_bytes(b"png")
+
+        class RacingOptimizer:
+            """模拟真实转换的检查竞争、目标覆盖和源文件删除。"""
+
+            def __init__(self) -> None:
+                self._entered = 0
+                self._both_entered = asyncio.Event()
+
+            async def optimize(self, image_path: str) -> OptimizeResult:
+                source = Path(image_path)
+                target = resolve_unique_filename(source.parent, f"{source.stem}.webp")
+                self._entered += 1
+                if self._entered == 2:
+                    self._both_entered.set()
+                try:
+                    await asyncio.wait_for(self._both_entered.wait(), timeout=0.05)
+                except TimeoutError:
+                    pass
+                target.write_bytes(source.read_bytes())
+                source.unlink()
+                return OptimizeResult(100, 80, 20, output_path=str(target))
+
+        im = IndexManager(
+            md,
+            vs,
+            str(memes),
+            ocr_provider=CountingOcrProvider(),
+            embedding_provider=FakeEmbeddingProvider(),
+            optimizer=RacingOptimizer(),
+        )
+
+        sync_result = await im.refresh()
+
+        assert sync_result.added == 2
+        paths = {entry.image_path for entry in md.get_all_entries().values()}
+        assert paths == {"dup.webp", "dup_1.webp"}
+        assert all((memes / path).is_file() for path in paths)
+
+    @pytest.mark.asyncio
+    async def test_sync_serializes_casefolded_webp_targets(
+        self, tmp_path: Path
+    ) -> None:
+        """大小写折叠后同目标的源图片必须串行转换。"""
+        md = FakeMetadataStore()
+        vs = FakeVectorStore()
+        memes = tmp_path / "memes"
+        memes.mkdir()
+        (memes / "A.jpg").write_bytes(b"upper")
+        (memes / "a.png").write_bytes(b"lower")
+
+        class CaseInsensitiveRacingOptimizer:
+            """在任意平台模拟大小写不敏感目标选择与覆盖。"""
+
+            def __init__(self) -> None:
+                self._entered = 0
+                self._both_entered = asyncio.Event()
+
+            async def optimize(self, image_path: str) -> OptimizeResult:
+                source = Path(image_path)
+                existing = {path.name.casefold() for path in source.parent.iterdir()}
+                stem = source.stem.casefold()
+                candidate = f"{stem}.webp"
+                suffix = 1
+                while candidate.casefold() in existing:
+                    candidate = f"{stem}_{suffix}.webp"
+                    suffix += 1
+                target = source.parent / candidate
+                self._entered += 1
+                if self._entered == 2:
+                    self._both_entered.set()
+                try:
+                    await asyncio.wait_for(self._both_entered.wait(), timeout=0.05)
+                except TimeoutError:
+                    pass
+                target.write_bytes(source.read_bytes())
+                source.unlink()
+                return OptimizeResult(100, 80, 20, output_path=str(target))
+
+        im = IndexManager(
+            md,
+            vs,
+            str(memes),
+            ocr_provider=CountingOcrProvider(),
+            embedding_provider=FakeEmbeddingProvider(),
+            optimizer=CaseInsensitiveRacingOptimizer(),
+        )
+
+        result = await im.refresh()
+
+        assert result.added == 2
+        paths = {entry.image_path for entry in md.get_all_entries().values()}
+        assert paths == {"a.webp", "a_1.webp"}
+        assert all((memes / path).is_file() for path in paths)
+
+    @pytest.mark.asyncio
+    async def test_sync_releases_same_stem_lock_before_ocr(
+        self, tmp_path: Path
+    ) -> None:
+        """同 stem 转换串行完成后，OCR 阶段恢复并发。"""
+        md = FakeMetadataStore()
+        vs = FakeVectorStore()
+        memes = tmp_path / "memes"
+        memes.mkdir()
+        (memes / "dup.jpg").write_bytes(b"jpg")
+        (memes / "dup.png").write_bytes(b"png")
+
+        class NoopOptimizer:
+            async def optimize(self, image_path: str) -> OptimizeResult:
+                return OptimizeResult(100, 80, 20, output_path=image_path)
+
+        class BarrierOcrProvider:
+            def __init__(self) -> None:
+                self._entered = 0
+                self._both_entered = asyncio.Event()
+
+            async def ocr(self, image_path: str) -> str:
+                self._entered += 1
+                if self._entered == 2:
+                    self._both_entered.set()
+                await asyncio.wait_for(self._both_entered.wait(), timeout=0.1)
+                return Path(image_path).suffix
+
+            async def close(self) -> None:
+                pass
+
+        im = IndexManager(
+            md,
+            vs,
+            str(memes),
+            ocr_provider=BarrierOcrProvider(),
+            embedding_provider=FakeEmbeddingProvider(),
+            optimizer=NoopOptimizer(),
+        )
+
+        result = await im.refresh()
+
+        assert result.added == 2
+        assert result.failed == []
+
+    @pytest.mark.asyncio
+    async def test_sync_keeps_same_stem_optimization_parallel_across_parents(
+        self, tmp_path: Path
+    ) -> None:
+        """不同父目录的同 stem 图片仍可并发优化。"""
+        md = FakeMetadataStore()
+        vs = FakeVectorStore()
+        memes = tmp_path / "memes"
+        for name in ("甲", "乙"):
+            directory = memes / name
+            directory.mkdir(parents=True)
+            (directory / "dup.jpg").write_bytes(name.encode())
+
+        class BarrierOptimizer:
+            def __init__(self) -> None:
+                self._entered = 0
+                self._both_entered = asyncio.Event()
+
+            async def optimize(self, image_path: str) -> OptimizeResult:
+                source = Path(image_path)
+                self._entered += 1
+                if self._entered == 2:
+                    self._both_entered.set()
+                await asyncio.wait_for(self._both_entered.wait(), timeout=0.1)
+                return OptimizeResult(100, 80, 20, output_path=str(source))
+
+        im = IndexManager(
+            md,
+            vs,
+            str(memes),
+            ocr_provider=PerFileOcrProvider(),
+            embedding_provider=FakeEmbeddingProvider(),
+            optimizer=BarrierOptimizer(),
+        )
+
+        result = await im.refresh()
+
+        assert result.added == 2
+        assert {entry.image_path for entry in md.get_all_entries().values()} == {
+            "甲/dup.jpg",
+            "乙/dup.jpg",
+        }
 
     @pytest.mark.asyncio
     async def test_sync_dedups_same_stem_final_filename(self, tmp_path: Path) -> None:

@@ -1,6 +1,6 @@
-"""/del 命令插件 — 按 id 删除一个或多个表情包。
+"""/del 命令插件 — 按公开 ID 删除一个或多个表情包。
 
-授权用户私聊中发送 /del <entry_id>...，
+授权用户私聊中发送 /del <公开ID>...，
 Bot 发送摘要确认消息，用户回复「确认」或「yes」后执行删除。
 """
 
@@ -16,10 +16,21 @@ from nonebot.params import Arg, CommandArg
 from nonebot.rule import to_me
 
 from bot import reply as reply_utils
-from bot.app_state import get_index_manager, get_metadata_store
+from bot.app_state import get_index_manager
 from bot.auth import is_authorized, log_unauthorized
+from bot.engine.collection_manager import (
+    InvalidPublicIdError,
+    MemeNotFoundError,
+    ShortIdUnavailableError,
+)
 from bot.engine.index_manager import IndexAddCancelledError, RefreshInProgressError
+from bot.engine.metadata_store import MemeEntry
+from bot.engine.types import MemePublicId
 from bot.log_context import generate_request_id, set_request_id
+from bot.plugins._collection_utils import (
+    public_id_error_message,
+    resolve_entry_argument,
+)
 from bot.plugins._help_text import HELP_TEXT
 from bot.plugins._search_utils import got_intercept_bypass
 from bot.session import ChatScope, session_manager, timeout_session
@@ -89,51 +100,57 @@ async def handle_delete(
                 await reply_utils.finish(event, matcher, "用法：/del <id>...")
                 return
 
-            entry_ids: list[int] = []
+            entries: list[MemeEntry] = []
+            seen_entry_ids: set[int] = set()
+            not_found_public_ids: list[str] = []
+            seen_not_found_public_ids: set[str] = set()
             for token in tokens:
                 try:
-                    entry_ids.append(int(token))
-                except ValueError:
+                    entry = await resolve_entry_argument(event, token)
+                except asyncio.TimeoutError:
                     session_manager.deactivate_chat(scope)
-                    await reply_utils.finish(event, matcher, "id 必须为数字")
+                    await reply_utils.finish(event, matcher, "索引更新较慢，请稍后再试")
                     return
-
-            # 去重，保持顺序
-            entry_ids = list(dict.fromkeys(entry_ids))
-            logger.debug("/del 目标 entry_ids: %s", entry_ids)
-
-            # 查询每个 id
-            store = get_metadata_store()
-            found: list[tuple[int, str]] = []
-            not_found_ids: list[int] = []
-            for eid in entry_ids:
-                entry = store.get_entry(eid)
-                if entry is None:
-                    not_found_ids.append(eid)
-                else:
-                    found.append((eid, entry.text))
+                except MemeNotFoundError as exc:
+                    public_id = str(exc.args[0]) if exc.args else token
+                    if public_id not in seen_not_found_public_ids:
+                        seen_not_found_public_ids.add(public_id)
+                        not_found_public_ids.append(public_id)
+                    continue
+                except (ShortIdUnavailableError, InvalidPublicIdError) as exc:
+                    session_manager.deactivate_chat(scope)
+                    await reply_utils.finish(
+                        event, matcher, public_id_error_message(exc)
+                    )
+                    return
+                if entry.id not in seen_entry_ids:
+                    seen_entry_ids.add(entry.id)
+                    entries.append(entry)
 
             logger.debug(
-                "/del 找到 %d 条，未找到 %d 条", len(found), len(not_found_ids)
+                "/del 目标 entry_ids=%s, 未找到 public_ids=%s",
+                [entry.id for entry in entries],
+                not_found_public_ids,
             )
 
-            if not found:
+            if not entries:
                 session_manager.deactivate_chat(scope)
                 await reply_utils.finish(event, matcher, "未找到任何表情包")
                 return
 
-            # 构建摘要确认消息
             lines = ["确认删除以下表情包？回复「确认」执行删除，回复其他内容取消。"]
-            for eid, text in found:
-                lines.append(f"{eid}, {_truncate_text(text)}")
-            if not_found_ids:
-                lines.append(f"未找到 id：{', '.join(str(i) for i in not_found_ids)}")
+            for entry in entries:
+                lines.append(f"{entry.public_id}, {_truncate_text(entry.text)}")
+            if not_found_public_ids:
+                lines.append("未找到 ID：" + "、".join(not_found_public_ids))
 
             await reply_utils.send(event, matcher, "\n".join(lines))
 
-            # 存入 state
-            matcher.state["entry_ids"] = [eid for eid, _ in found]
-            matcher.state["not_found_ids"] = not_found_ids
+            matcher.state["entry_ids"] = [entry.id for entry in entries]
+            matcher.state["public_ids"] = {
+                entry.id: entry.public_id for entry in entries
+            }
+            matcher.state["not_found_public_ids"] = not_found_public_ids
 
             # 注册超时
             selection_id = str(uuid.uuid4())
@@ -177,9 +194,14 @@ async def got_confirm(
                 if text.strip().lower() in ("确认", "yes", "y"):
                     session_manager.remove_selection(scope)
 
+                    entry_ids: list[int] = matcher.state["entry_ids"]
+                    public_ids: dict[int, MemePublicId] = matcher.state["public_ids"]
+                    parse_not_found_ids = list(
+                        matcher.state.get("not_found_public_ids", [])
+                    )
                     try:
                         result = await asyncio.wait_for(
-                            get_index_manager().delete(matcher.state["entry_ids"]),
+                            get_index_manager().delete(entry_ids),
                             timeout=get_index_manager().add_user_timeout,
                         )
                     except asyncio.TimeoutError:
@@ -216,16 +238,24 @@ async def got_confirm(
                         lines = ["删除结果如下:"]
                         if result.deleted_ids:
                             lines.append(
-                                "成功：" + "、".join(str(i) for i in result.deleted_ids)
+                                "成功："
+                                + "、".join(
+                                    str(public_ids[i]) for i in result.deleted_ids
+                                )
                             )
-                        if result.not_found_ids:
-                            lines.append(
-                                "未找到："
-                                + "、".join(str(i) for i in result.not_found_ids)
+                        not_found_ids = list(
+                            dict.fromkeys(
+                                [
+                                    *parse_not_found_ids,
+                                    *(str(public_ids[i]) for i in result.not_found_ids),
+                                ]
                             )
+                        )
+                        if not_found_ids:
+                            lines.append("未找到：" + "、".join(not_found_ids))
                         if result.failed_ids:
                             failed_parts = [
-                                f"id:{eid} 原因:『{reason}』"
+                                f"ID:{public_ids[eid]} 原因:『{reason}』"
                                 for eid, reason in result.failed_ids
                             ]
                             lines.append("失败：" + "、".join(failed_parts))

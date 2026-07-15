@@ -5,7 +5,7 @@ import pytest
 from bot.engine.combined_searcher import CombinedSearcher
 from bot.engine.keyword_searcher import KeywordSearcher
 from bot.engine.metadata_store import MemeEntry
-from bot.engine.types import SearchResult
+from bot.engine.types import MemePublicId, SearchResult
 
 
 class MockMetadataStore:
@@ -194,6 +194,80 @@ class TestPackageExport:
         from bot.app_state import get_combined_searcher
 
         assert callable(get_combined_searcher)
+
+
+class TestSearchIn:
+    """search_in：在显式传入的 entries 子集上组合检索。"""
+
+    def test_search_in_only_uses_supplied_entries(self) -> None:
+        entries = {
+            2: MemeEntry(
+                id=2,
+                image_path="新三国/a.webp",
+                text="文本",
+                tags=["三国"],
+                collection_id=1,
+                local_id=1,
+                collection_name="新三国",
+            )
+        }
+        metadata_store = MockMetadataStore({})
+        combined = CombinedSearcher(metadata_store, KeywordSearcher(metadata_store))
+
+        results = combined.search_in(entries, None, [], ["三国"])
+
+        assert [result.public_id for result in results] == [MemePublicId(1, 1)]
+
+    def test_search_in_with_keyword_filters_subset(self) -> None:
+        entries = {
+            1: MemeEntry(id=1, image_path="a.jpg", text="加班到凌晨"),
+            2: MemeEntry(
+                id=2,
+                image_path="新三国/a.webp",
+                text="丞相发笑",
+                collection_id=1,
+                local_id=1,
+                collection_name="新三国",
+            ),
+        }
+        metadata_store = MockMetadataStore(entries)
+        combined = CombinedSearcher(metadata_store, KeywordSearcher(metadata_store))
+
+        results = combined.search_in(entries, "丞相", [], [])
+
+        assert [result.entry_id for result in results] == [2]
+        assert results[0].public_id == MemePublicId(1, 1)
+
+    def test_search_delegates_to_search_in(self, combined: CombinedSearcher) -> None:
+        """search() 作为全库兼容包装委托给 search_in()。"""
+        results = combined.search("凌晨", ["小明"], [])
+        assert len(results) == 1
+        assert results[0].entry_id == 1
+
+
+class TestCollectionIdentity:
+    """搜索结果应携带合集身份字段。"""
+
+    def test_collection_identity_preserved(self) -> None:
+        entries = {
+            1: MemeEntry(
+                id=1,
+                image_path="新三国/a.webp",
+                text="丞相发笑",
+                tags=["三国"],
+                collection_id=1,
+                local_id=3,
+                collection_name="新三国",
+            ),
+        }
+        metadata_store = MockMetadataStore(entries)
+        combined = CombinedSearcher(metadata_store, KeywordSearcher(metadata_store))
+
+        results = combined.search_in(entries, None, [], ["三国"])
+
+        assert len(results) == 1
+        assert results[0].public_id == MemePublicId(1, 3)
+        assert results[0].collection_name == "新三国"
 
 
 class TestShuffleWithinSimilarityGroups:
