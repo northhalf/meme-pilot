@@ -49,10 +49,9 @@ class SemanticSearcher:
             n_results=limit,
             collection_id=collection_id,
         )
-        entries = self.metadata_store.get_all_entries()
         results: list[SearchResult] = []
         for hit in hits:
-            entry = entries.get(hit.entry_id)
+            entry = self.metadata_store.get_entry(hit.entry_id)
             if entry is None:
                 logger.warning(
                     "召回 hit 的 metadata 缺失，跳过：entry_id=%s", hit.entry_id

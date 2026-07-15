@@ -292,7 +292,7 @@ class TestGetEntry:
         assert entry.image_path == "a.jpg"
         assert entry.text == "加班心累"
         assert entry.speaker == "小明"
-        assert entry.tags == ["吐槽"]
+        assert entry.tags == ("吐槽",)
 
     @pytest.mark.asyncio
     async def test_get_entry_not_found(self, index_manager: IndexManager) -> None:

@@ -8,6 +8,7 @@ import logging
 import os
 import sqlite3
 import threading
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 
 from bot.log_context import timed
@@ -131,7 +132,7 @@ class MemeEntry:
         image_path: memes/ 目录下相对路径。
         text: OCR 去除所有空白后的文本。
         speaker: 说话人，可空。
-        tags: 标记词列表。
+        tags: 标记词元组（不可变）。
         collection_id: 所属合集编号，0 表示全局根目录。
         local_id: 合集内正整数编号。
         collection_name: 所属合集名称。
@@ -141,10 +142,22 @@ class MemeEntry:
     image_path: str
     text: str
     speaker: str | None = None
-    tags: list[str] = field(default_factory=list)
+    tags: Sequence[str] = field(default_factory=tuple)
     collection_id: int = 0
     local_id: int = 1
     collection_name: str = GLOBAL_COLLECTION_NAME
+
+    def __post_init__(self) -> None:
+        """规范化 tags 为不可变 tuple。
+
+        frozen dataclass 无法直接赋值，用 object.__setattr__ 绕过冻结，
+        保证无论构造时传入 list 还是 tuple 都规范化为 tuple，使实例完全
+        不可变，_snapshot_entry 可安全零拷贝返回原对象引用。
+
+        Args:
+            self: 当前 MemeEntry 实例。
+        """
+        object.__setattr__(self, "tags", tuple(self.tags))
 
     @property
     def public_id(self) -> MemePublicId:
@@ -928,7 +941,7 @@ class MetadataStore:
                 ),
                 text=final_text,
                 speaker=speaker if speaker is not _UNSET else old_entry.speaker,
-                tags=sorted(set(tags)) if tags is not None else old_entry.tags,
+                tags=tuple(sorted(set(tags))) if tags is not None else old_entry.tags,
                 collection_id=final_collection_id,
                 local_id=final_local_id,
                 collection_name=self._collection_name(final_collection_id),
@@ -971,15 +984,18 @@ class MetadataStore:
 
     @staticmethod
     def _snapshot_entry(entry: MemeEntry) -> MemeEntry:
-        """复制条目及其可变标签列表供公开读取返回。
+        """返回缓存条目供公开读取。
+
+        MemeEntry 为 frozen + 全字段不可变（tags 为 tuple），无需复制即可
+        安全共享引用，零拷贝。
 
         Args:
             entry: 缓存内条目。
 
         Returns:
-            tags 与缓存不共享的条目快照。
+            缓存内同一对象引用。
         """
-        return replace(entry, tags=list(entry.tags))
+        return entry
 
     def _clear_caches(self) -> None:
         """清空全部内存缓存，调用方已持锁。"""
@@ -1210,7 +1226,7 @@ class MetadataStore:
                 image_path=str(row["image_path"]),
                 text=text,
                 speaker=(str(row["speaker"]) if row["speaker"] is not None else None),
-                tags=[],
+                tags=(),
                 collection_id=collection_id,
                 local_id=local_id,
                 collection_name=collection_name,
@@ -1219,6 +1235,9 @@ class MetadataStore:
             collection_entries[local_id] = entry_id
             text_to_id[(collection_id, text)] = entry_id
 
+        # 累积标签到 tags_by_meme（frozen MemeEntry 的 tags 为不可变 tuple，
+        # 不能原地 append；先聚合，再用 replace 给对应 entry 补充 tags）。
+        tags_by_meme: dict[int, list[str]] = {}
         seen_tags: set[tuple[int, str]] = set()
         for row in tag_rows:
             meme_id = int(row["meme_id"])
@@ -1232,7 +1251,11 @@ class MetadataStore:
                     f"标签 {tag!r} 指向不存在的表情包 {meme_id}"
                 )
             seen_tags.add(tag_key)
-            entry.tags.append(tag)
+            tags_by_meme.setdefault(meme_id, []).append(tag)
+
+        # 给有标签的 entry 补充 tags（frozen 不可变，需 replace 重建）
+        for meme_id, tag_list in tags_by_meme.items():
+            entries[meme_id] = replace(entries[meme_id], tags=tuple(tag_list))
 
         selected_collections: dict[ChatScope, int] = {}
         for row in conn.execute(
@@ -1365,7 +1388,7 @@ class MetadataStore:
             image_path=image_path,
             text=text,
             speaker=speaker,
-            tags=sorted(set(tags or [])),
+            tags=tuple(sorted(set(tags or []))),
             collection_id=collection_id,
             local_id=local_id,
             collection_name=self._collection_name(collection_id),

@@ -12,9 +12,10 @@ from bot.engine.vector_store import VectorHit, VectorStore
 
 
 def MockMetadataStore(entries: dict[int, MemeEntry]) -> MetadataStore:
-    """构造模拟 MetadataStore，get_all_entries 返回预定义的 entries 字典。"""
+    """构造模拟 MetadataStore，get_entry / get_all_entries 返回预定义 entries。"""
     mock = MagicMock()
     mock.get_all_entries.return_value = entries
+    mock.get_entry.side_effect = lambda entry_id: entries.get(entry_id)
     return cast(MetadataStore, mock)
 
 

@@ -242,7 +242,7 @@ class AIMatcher:
                     text=entry.text,
                     similarity=hit.similarity,
                     speaker=entry.speaker,
-                    tags=entry.tags,
+                    tags=list(entry.tags),
                     collection_id=entry.collection_id,
                     local_id=entry.local_id,
                     collection_name=entry.collection_name,

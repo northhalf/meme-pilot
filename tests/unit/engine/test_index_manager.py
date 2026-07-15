@@ -797,7 +797,7 @@ class TestAdd:
         entry = metadata_store.get_by_filename("text.jpg")
         assert entry is not None
         assert entry.speaker == "小明"
-        assert entry.tags == ["吐槽"]
+        assert entry.tags == ("吐槽",)
 
     @pytest.mark.asyncio
     async def test_add_returns_persisted_speaker_and_tags(
@@ -838,7 +838,7 @@ class TestAdd:
         entry = index_manager._metadata_store.get_entry(1)
         assert entry is not None
         assert entry.speaker == "新说话人"
-        assert entry.tags == ["新标签"]
+        assert entry.tags == ("新标签",)
 
         # 验证旧图已被归档到 memes_replaced/
         replaced_dir = Path(index_manager._replaced_dir)
@@ -912,7 +912,7 @@ class TestAdd:
         entry = index_manager._metadata_store.get_entry(old_id)
         assert entry is not None
         assert entry.speaker == "旧说话人"
-        assert entry.tags == ["旧标签"]
+        assert entry.tags == ("旧标签",)
 
         # 验证旧图仍在 memes/（upsert 失败时不应移动旧图），新图应已被清理
         assert (Path(index_manager._memes_dir) / "old.jpg").exists()
@@ -2351,7 +2351,7 @@ class TestRefresh:
         assert restored.local_id == 1
         assert restored.text == "失败"
         assert restored.speaker == "甲"
-        assert restored.tags == ["标签"]
+        assert restored.tags == ("标签",)
         assert vector_store.has(failed_id)
         assert metadata_store.get_by_filename("deleted.webp") is None
         reused = metadata_store.get_entry(deleted_id)

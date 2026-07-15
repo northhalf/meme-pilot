@@ -2210,7 +2210,7 @@ class IndexManager:
                         entry.image_path,
                         entry.text,
                         entry.speaker,
-                        entry.tags,
+                        list(entry.tags),
                         collection_id=entry.collection_id,
                         local_id=entry.local_id,
                     )
@@ -2451,7 +2451,7 @@ class IndexManager:
             old_entry = await asyncio.to_thread(self._metadata_store.get_entry, old_id)
             old_image_path = old_entry.image_path if old_entry else ""
             old_speaker = old_entry.speaker if old_entry else None
-            old_tags = old_entry.tags if old_entry else []
+            old_tags = list(old_entry.tags) if old_entry else []
             old_collection_id = old_entry.collection_id if old_entry else collection_id
             vector_store = self._vector_store
             old_vector_records = await vector_store.snapshot_records([old_id])
@@ -2575,6 +2575,10 @@ class IndexManager:
     def _scan_meme_files(self) -> FileSystemSnapshot:
         """递归扫描 memes/，且不跟随任何符号链接。
 
+        使用 os.scandir 的 DirEntry 缓存判定 symlink/类型，避免 os.walk +
+        Path.is_symlink 对每个文件重复 lstat；在 bind mount / WSL2 下显著
+        降低扫描耗时。
+
         Returns:
             包含图片路径、一级目录和含图片目录的文件系统快照。
         """
@@ -2585,35 +2589,77 @@ class IndexManager:
         for entry in os.scandir(self._memes_dir):
             if entry.is_symlink():
                 continue
-            if (
-                not entry.name.startswith(".")
-                and entry.is_file()
-                and Path(entry.name).suffix.lower() in self.SUPPORTED_EXTENSIONS
-            ):
-                files[entry.name] = None
+            name = entry.name
+            if name.startswith("."):
                 continue
-            if not entry.is_dir() or entry.name.startswith("."):
+            if entry.is_file(follow_symlinks=False):
+                if self._has_supported_ext(name):
+                    files[name] = None
                 continue
-            directories.add(entry.name)
-            for root, dir_names, file_names in os.walk(entry.path, followlinks=False):
-                dir_names[:] = [
-                    name
-                    for name in dir_names
-                    if not name.startswith(".") and not (Path(root) / name).is_symlink()
-                ]
-                for filename in file_names:
-                    path = Path(root) / filename
-                    if (
-                        filename.startswith(".")
-                        or path.is_symlink()
-                        or path.suffix.lower() not in self.SUPPORTED_EXTENSIONS
-                    ):
-                        continue
-                    relative_path = path.relative_to(self._memes_dir).as_posix()
-                    files[relative_path] = entry.name
-                    directories_with_images.add(entry.name)
+            if not entry.is_dir(follow_symlinks=False):
+                continue
+            directories.add(name)
+            if self._scan_collection_dir(entry, name, files):
+                directories_with_images.add(name)
 
         return FileSystemSnapshot(files, directories, directories_with_images)
+
+    def _scan_collection_dir(
+        self,
+        top_entry: "os.DirEntry[str]",
+        collection_name: str,
+        files: dict[str, str | None],
+    ) -> bool:
+        """递归扫描单个合集目录，登记受支持图片，不跟随符号链接。
+
+        用显式栈替代 os.walk，保留 DirEntry 以复用 d_type 缓存，避免对每个
+        文件单独 lstat 判定 symlink。
+
+        Args:
+            top_entry: 合集一级目录的 DirEntry。
+            collection_name: 合集一级目录名，作为 image_path 的归属标记。
+            files: 待填充的相对路径 -> 合集名映射。
+
+        Returns:
+            该合集是否含至少一张受支持图片。
+        """
+        has_image = False
+        memes_root = self._memes_dir
+        stack: list["os.DirEntry[str]"] = [top_entry]
+        while stack:
+            current = stack.pop()
+            for entry in os.scandir(current):
+                if entry.is_symlink():
+                    continue
+                name = entry.name
+                if name.startswith("."):
+                    continue
+                if entry.is_file(follow_symlinks=False):
+                    if not self._has_supported_ext(name):
+                        continue
+                    relative_path = os.path.relpath(
+                        entry.path, memes_root
+                    ).replace(os.sep, "/")
+                    files[relative_path] = collection_name
+                    has_image = True
+                elif entry.is_dir(follow_symlinks=False):
+                    stack.append(entry)
+        return has_image
+
+    @staticmethod
+    def _has_supported_ext(name: str) -> bool:
+        """判断文件名扩展名是否受支持（避免 Path 对象分配）。
+
+        Args:
+            name: 文件名。
+
+        Returns:
+            扩展名（含点、小写）在 SUPPORTED_EXTENSIONS 中时返回 True。
+        """
+        dot = name.rfind(".")
+        if dot < 0:
+            return False
+        return name[dot:].lower() in IndexManager.SUPPORTED_EXTENSIONS
 
     @asynccontextmanager
     async def _optimizer_target_lock(self, filename: str) -> AsyncIterator[None]:

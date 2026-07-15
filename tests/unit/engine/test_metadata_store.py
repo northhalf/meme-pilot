@@ -1844,14 +1844,14 @@ class TestTransactionAtomicity:
         cached = store.get_entry(entry_id)
         assert cached is not None
         assert cached.text == "原文"
-        assert cached.tags == ["旧标签"]
+        assert cached.tags == ("旧标签",)
         assert store.get_id_by_text("失败文本") is None
 
         assert store.update(entry_id, speaker="说话人") is True
         entry = store.get_entry(entry_id)
         assert entry is not None
         assert entry.text == "原文"
-        assert entry.tags == ["旧标签"]
+        assert entry.tags == ("旧标签",)
         assert entry.speaker == "说话人"
 
         store.close()
@@ -1865,7 +1865,7 @@ class TestTagsAndCascade:
         eid = store.add("a.jpg", "甲", tags=["搞笑", "猫"])
         entry = store.get_entry(eid)
         assert entry is not None
-        assert entry.tags == ["搞笑", "猫"]
+        assert entry.tags == ("搞笑", "猫")
 
     def test_cascade_delete_removes_tags(self, store: MetadataStore) -> None:
         eid = store.add("a.jpg", "甲", tags=["搞笑"])
@@ -1874,14 +1874,14 @@ class TestTagsAndCascade:
         store.add_with_id(eid, "b.jpg", "乙")
         entry = store.get_entry(eid)
         assert entry is not None
-        assert entry.tags == []
+        assert entry.tags == ()
 
     def test_update_replaces_tags(self, store: MetadataStore) -> None:
         eid = store.add("a.jpg", "甲", tags=["旧"])
         store.update(eid, tags=["新1", "新2"])
         entry = store.get_entry(eid)
         assert entry is not None
-        assert entry.tags == ["新1", "新2"]
+        assert entry.tags == ("新1", "新2")
 
 
 class TestPersistence:
@@ -1942,7 +1942,7 @@ class TestDuplicateEntryError:
         assert entry is not None
         assert entry.public_id == MemePublicId(collection.id, 4)
         assert entry.collection_name == collection.name
-        assert entry.tags == ["标签"]
+        assert entry.tags == ("标签",)
         assert store.get_entry_by_public_id(MemePublicId(collection.id, 4)) == entry
         assert store.get_id_by_text("甲", collection_id=collection.id) == 7
 
@@ -2049,7 +2049,7 @@ class TestFrozenAndEntriesCache:
         s2.load()
         assert 1 in s2._entries
         assert s2._entries[1].text == "甲"
-        assert s2._entries[1].tags == ["搞笑", "猫"]
+        assert s2._entries[1].tags == ("搞笑", "猫")
         assert s2._text_to_id == {(0, "甲"): 1}
         s2.close()
 
@@ -2062,13 +2062,13 @@ class TestWriteMaintainsEntriesCache:
         eid = store.add("a.jpg", "甲", tags=["搞笑", "猫"])
         assert eid in store._entries
         assert store._entries[eid].text == "甲"
-        assert store._entries[eid].tags == ["搞笑", "猫"]
+        assert store._entries[eid].tags == ("搞笑", "猫")
         assert store._text_to_id[(0, "甲")] == eid
 
     def test_add_dedup_sort_tags_in_cache(self, store: MetadataStore) -> None:
         """缓存 tags 去重 + 字典序排序，与 SQL 存储一致。"""
         eid = store.add("b.jpg", "乙", tags=["x", "x", "a"])
-        assert store._entries[eid].tags == ["a", "x"]
+        assert store._entries[eid].tags == ("a", "x")
         # 与 get_entry（当前仍走 SQL）返回的 tags 一致
         entry = store.get_entry(eid)
         assert entry is not None
@@ -2078,7 +2078,7 @@ class TestWriteMaintainsEntriesCache:
         """add_with_id 同步维护 _entries。"""
         store.add_with_id(5, "e.jpg", "戊", tags=["t"])
         assert 5 in store._entries
-        assert store._entries[5].tags == ["t"]
+        assert store._entries[5].tags == ("t",)
         assert store._text_to_id[(0, "戊")] == 5
 
     def test_update_refreshes_entries_cache(self, store: MetadataStore) -> None:
@@ -2086,7 +2086,7 @@ class TestWriteMaintainsEntriesCache:
         eid = store.add("a.jpg", "甲", tags=["旧"])
         store.update(eid, text="乙", tags=["新1", "新2"])
         assert store._entries[eid].text == "乙"
-        assert store._entries[eid].tags == ["新1", "新2"]
+        assert store._entries[eid].tags == ("新1", "新2")
         assert (0, "甲") not in store._text_to_id
         assert store._text_to_id[(0, "乙")] == eid
 
@@ -2123,38 +2123,42 @@ class TestReadPathHitsCache:
             lambda store, entry_id: store.get_entry_by_public_id(MemePublicId(0, 1)),
         ],
     )
-    def test_public_entry_reads_return_independent_tags(
+    def test_public_entry_reads_return_immutable_tags(
         self,
         store: MetadataStore,
         reader: Any,
     ) -> None:
-        """修改任一公开读取结果的 tags 不影响缓存或 SQLite。"""
+        """公开读取结果的 tags 为不可变 tuple，外部无法修改以污染缓存。"""
         entry_id = store.add("a.jpg", "甲", tags=["原标签"])
         entry = reader(store, entry_id)
         assert entry is not None
 
-        entry.tags.append("外部修改")
+        # tags 为不可变 tuple，append 抛 AttributeError，缓存天然防污染
+        with pytest.raises(AttributeError):
+            entry.tags.append("外部修改")
 
         reread = store.get_entry(entry_id)
         assert reread is not None
-        assert reread.tags == ["原标签"]
-        assert store._entries[entry_id].tags == ["原标签"]
+        assert reread.tags == ("原标签",)
+        assert store._entries[entry_id].tags == ("原标签",)
         store.close()
         store.load()
         reloaded = store.get_entry(entry_id)
         assert reloaded is not None
-        assert reloaded.tags == ["原标签"]
+        assert reloaded.tags == ("原标签",)
 
-    def test_get_all_entries_returns_new_dict_and_entry_snapshots(
+    def test_get_all_entries_returns_new_dict_with_immutable_entries(
         self, store: MetadataStore
     ) -> None:
-        """全量读取返回新 dict 和不共享 tags 的条目快照。"""
+        """全量读取返回新 dict；entry 为不可变快照，零拷贝共享缓存引用。"""
         entry_id = store.add("a.jpg", "甲", tags=["标签"])
         result = store.get_all_entries()
 
+        # dict 仍是新对象，不泄漏缓存 dict
         assert result is not store._entries
-        assert result[entry_id] is not store._entries[entry_id]
-        assert result[entry_id].tags is not store._entries[entry_id].tags
+        # entry 为 frozen + tuple tags 不可变，零拷贝共享缓存引用
+        assert result[entry_id] is store._entries[entry_id]
+        assert result[entry_id].tags == ("标签",)
 
     def test_get_all_entries_no_sql_after_cache(self, store: MetadataStore) -> None:
         """缓存命中后多次 get_all_entries 不触发 SQL。

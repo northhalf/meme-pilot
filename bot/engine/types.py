@@ -143,7 +143,7 @@ class SearchResult:
             text=entry.text,
             similarity=similarity,
             speaker=entry.speaker,
-            tags=entry.tags,
+            tags=list(entry.tags),
             collection_id=entry.collection_id,
             local_id=entry.local_id,
             collection_name=entry.collection_name,

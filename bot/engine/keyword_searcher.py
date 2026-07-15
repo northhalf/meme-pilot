@@ -87,6 +87,8 @@ class KeywordSearcher:
             Exception: jieba 默认词典初始化失败时原样传播。
         """
         jieba.initialize()
+        # 触发 jieba.posseg 词性词典加载，避免首次模糊搜索回退路径承担初始化耗时
+        pseg.lcut("预热")
         logger.info("关键词搜索预热完成")
 
     @staticmethod
