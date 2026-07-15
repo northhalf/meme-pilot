@@ -169,6 +169,7 @@ class MetadataStore:
         self._lock = threading.RLock()
         self._text_to_id: dict[tuple[int, str], int] = {}
         self._entries: dict[int, MemeEntry] = {}
+        # collection_id -> [local_id, entries_id]
         self._entries_by_collection: dict[int, dict[int, int]] = {}
         self._collections: dict[int, MemeCollection] = {}
         self._collection_name_to_id: dict[str, int] = {}
