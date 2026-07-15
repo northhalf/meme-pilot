@@ -100,7 +100,7 @@ def _preview() -> MovePreview:
         target_collection_id=2,
         target_collection_name="甄嬛传",
         expected_public_id=MemePublicId(2, 5),
-        source_snapshot=MoveSourceSnapshot(_source(), (11, 22)),
+        source_snapshot=MoveSourceSnapshot(_source(), (11, 22, 33)),
     )
 
 

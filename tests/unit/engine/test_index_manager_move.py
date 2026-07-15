@@ -755,7 +755,7 @@ async def test_move_restores_file_when_secure_move_succeeds_then_raises(
         *,
         first_suffix: int = 1,
         target_filename: str | None = None,
-        expected_source_identity: tuple[int, int] | None = None,
+        expected_source_identity: tuple[int, int, int] | None = None,
     ):
         nonlocal calls
         calls += 1

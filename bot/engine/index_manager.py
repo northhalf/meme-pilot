@@ -176,11 +176,11 @@ class MoveSourceSnapshot:
 
     Attributes:
         entry: 移动前的源表情包条目。
-        file_identity: 源文件的 (st_dev, st_ino) 身份标识，用于校验源文件未被替换。
+        file_identity: 源文件的 (st_dev, st_ino, st_ctime_ns) 身份标识，用于校验源文件未被替换。
     """
 
     entry: MemeEntry
-    file_identity: tuple[int, int]
+    file_identity: tuple[int, int, int]
 
 
 @dataclass(frozen=True, slots=True)

@@ -33,7 +33,7 @@ class SecureMoveResult:
     target_created: bool
     source_removed: bool
     target_dir_created: bool
-    target_identity: tuple[int, int]
+    target_identity: tuple[int, int, int]
 
 
 class SecureMoveError(OSError):
@@ -47,7 +47,7 @@ class SecureMoveError(OSError):
         target_created: bool = False,
         source_removed: bool = False,
         target_dir_created: bool = False,
-        target_identity: tuple[int, int] | None = None,
+        target_identity: tuple[int, int, int] | None = None,
     ) -> None:
         """初始化安全移动异常。
 
@@ -57,7 +57,7 @@ class SecureMoveError(OSError):
             target_created: 当前任务是否创建了目标目录项。
             source_removed: 源目录项最终是否已移除。
             target_dir_created: 当前任务是否创建了目标目录。
-            target_identity: 当前任务创建目标文件的设备号与 inode。
+            target_identity: 当前任务创建目标文件的设备号、inode 与元数据变更时间。
         """
         self.relative_path = relative_path
         self.target_created = target_created
@@ -164,6 +164,21 @@ def _same_inode(left: os.stat_result, right: os.stat_result) -> bool:
     return left.st_dev == right.st_dev and left.st_ino == right.st_ino
 
 
+def _stat_identity(stat_result: os.stat_result) -> tuple[int, int, int]:
+    """返回 stat 快照的文件身份（设备号、inode、元数据变更纳秒时间）。
+
+    纳秒级 ``st_ctime_ns`` 在文件被删除重建时必然变化，可弥补部分文件系统
+    复用 inode 导致仅凭 ``(st_dev, st_ino)`` 无法识别替换的缺陷。
+
+    Args:
+        stat_result: 文件的 stat 快照。
+
+    Returns:
+        ``(st_dev, st_ino, st_ctime_ns)`` 三元组。
+    """
+    return (stat_result.st_dev, stat_result.st_ino, stat_result.st_ctime_ns)
+
+
 def _directory_still_bound(
     root_fd: int,
     parts: tuple[str, ...],
@@ -214,15 +229,15 @@ def _original_entry_removed(
 def get_regular_file_identity(
     root_dir: Path,
     relative_path: Path,
-) -> tuple[int, int]:
-    """通过安全目录 FD 返回根目录内普通文件的设备号与 inode。
+) -> tuple[int, int, int]:
+    """通过安全目录 FD 返回根目录内普通文件的设备号、inode 与元数据变更时间。
 
     Args:
         root_dir: 已验证的文件根目录。
         relative_path: 根目录内规范相对文件路径。
 
     Returns:
-        普通文件的 ``(st_dev, st_ino)``。
+        普通文件的 ``(st_dev, st_ino, st_ctime_ns)``。
 
     Raises:
         SecureMoveError: 平台不支持、路径不安全、经过符号链接或不是普通文件。
@@ -247,7 +262,7 @@ def get_regular_file_identity(
         file_stat = os.fstat(file_fd)
         if not stat.S_ISREG(file_stat.st_mode):
             raise SecureMoveError("源图片路径必须是普通文件")
-        return file_stat.st_dev, file_stat.st_ino
+        return _stat_identity(file_stat)
     except SecureMoveError:
         raise
     except OSError as exc:
@@ -315,7 +330,7 @@ def secure_move_file(
     *,
     first_suffix: int = 1,
     target_filename: str | None = None,
-    expected_source_identity: tuple[int, int] | None = None,
+    expected_source_identity: tuple[int, int, int] | None = None,
 ) -> SecureMoveResult:
     """在绑定目录 FD 下原子认领目标并安全移动普通文件。
 
@@ -329,7 +344,7 @@ def secure_move_file(
         target_relative_dir: 根目录下的目标目录相对路径；``Path('.')`` 表示根。
         first_suffix: 文件名冲突后的首个数字后缀。
         target_filename: 指定唯一目标文件名时不再尝试其他后缀，供补偿恢复使用。
-        expected_source_identity: 要求源普通文件匹配的设备号与 inode。
+        expected_source_identity: 要求源普通文件匹配的设备号、inode 与元数据变更时间。
 
     Returns:
         安全移动结果及最终状态。
@@ -356,7 +371,7 @@ def secure_move_file(
     target_name: str | None = None
     target_created = source_removed = target_dir_created = False
     relative_path: Path | None = None
-    target_identity: tuple[int, int] | None = None
+    target_identity: tuple[int, int, int] | None = None
     source_stat: os.stat_result | None = None
     try:
         root_fd = os.open(root_dir, _directory_flags())
@@ -372,7 +387,7 @@ def secure_move_file(
         source_stat = os.fstat(source_fd)
         if not stat.S_ISREG(source_stat.st_mode):
             raise SecureMoveError("源图片路径必须是普通文件")
-        source_identity = (source_stat.st_dev, source_stat.st_ino)
+        source_identity = _stat_identity(source_stat)
         if (
             expected_source_identity is not None
             and source_identity != expected_source_identity
@@ -419,7 +434,7 @@ def secure_move_file(
                 continue
             target_created = True
             created_stat = os.fstat(target_file_fd)
-            target_identity = (created_stat.st_dev, created_stat.st_ino)
+            target_identity = _stat_identity(created_stat)
             break
         if target_name is None or relative_path is None:
             raise SecureMoveError("无法原子认领不冲突的目标文件名")
@@ -428,7 +443,7 @@ def secure_move_file(
             raise SecureMoveError("目标目录身份在文件提交前发生变化")
         _copy_file_data(source_fd, target_file_fd, source_stat)
         target_file_stat = os.fstat(target_file_fd)
-        target_identity = (target_file_stat.st_dev, target_file_stat.st_ino)
+        target_identity = _stat_identity(target_file_stat)
         os.close(target_file_fd)
         target_file_fd = -1
 
@@ -448,11 +463,7 @@ def secure_move_file(
         )
         if (
             target_identity is None
-            or (
-                current_target.st_dev,
-                current_target.st_ino,
-            )
-            != target_identity
+            or _stat_identity(current_target) != target_identity
         ):
             raise SecureMoveError("目标文件身份在源删除前发生变化")
         if not _directory_still_bound(
@@ -506,8 +517,7 @@ def secure_move_file(
             else:
                 owns_current_target = (
                     target_identity is not None
-                    and (current_target.st_dev, current_target.st_ino)
-                    == target_identity
+                    and _stat_identity(current_target) == target_identity
                 )
                 if owns_current_target and not source_removed:
                     try:

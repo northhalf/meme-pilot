@@ -169,7 +169,7 @@ class TestSecureMoveFile:
                 Path("目标/a.webp"),
                 Path("源"),
                 target_filename="a.webp",
-                expected_source_identity=(source_stat.st_dev, source_stat.st_ino),
+                expected_source_identity=engine_utils._stat_identity(source_stat),
             )
 
         assert source.read_bytes() == b"external"
