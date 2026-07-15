@@ -1,24 +1,22 @@
 """KeywordSearcher 单元测试。"""
 
 import logging
-from unittest.mock import Mock
+from typing import cast
+from unittest.mock import MagicMock, Mock
 
 import jieba
 import pytest
 
 from bot.engine.keyword_searcher import KeywordSearcher
-from bot.engine.metadata_store import MemeEntry
+from bot.engine.metadata_store import MemeEntry, MetadataStore
 from bot.engine.types import MemePublicId, SearchResult
 
 
-class MockMetadataStore:
-    """模拟 MetadataStore，返回预定义的 entries 字典。"""
-
-    def __init__(self, entries: dict[int, MemeEntry] | None = None) -> None:
-        self._entries = entries or {}
-
-    def get_all_entries(self) -> dict[int, MemeEntry]:
-        return self._entries
+def MockMetadataStore(entries: dict[int, MemeEntry] | None = None) -> MetadataStore:
+    """构造模拟 MetadataStore，get_all_entries 返回预定义的 entries 字典。"""
+    mock = MagicMock()
+    mock.get_all_entries.return_value = entries or {}
+    return cast(MetadataStore, mock)
 
 
 @pytest.fixture

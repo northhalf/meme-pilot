@@ -1,6 +1,19 @@
-# MemePilot
+<div align="center">
+  <div style="width:200px">
+    <a href="https://github.com/northhalf/meme-pilot">
+      <img src="assets/icon.webp" alt="MemePilot" width="200">
+    </a>
+  </div>
 
-MemePilot 是一个部署在 Docker 中的 QQ 表情包机器人，帮你从本地表情包库中快速找到想要的表情包。`/query`、`/rand`、`/sim`、`/help`、`/info` 和普通文本支持群聊 @bot 使用；`/add`、`/addtag`、`/del`、`/refresh`、`/ai`、`/edittext`、`/setspeaker` 仅限私聊。`/cancel` 私聊和群聊均可使用。
+<h1>MemePilot</h1>
+
+![Status](https://img.shields.io/badge/status-active-brightgreen) ![Stage](https://img.shields.io/badge/stage-beta-blue) ![Build Status](https://github.com/northhalf/meme-pilot/actions/workflows/ci.yml/badge.svg) ![Release](https://img.shields.io/github/v/release/northhalf/meme-pilot) ![Docker Pulls](https://img.shields.io/docker/pulls/northhalf/meme-pilot) ![License](https://img.shields.io/badge/license-MIT-blue)
+
+<h5>一个部署在 Docker 中的 QQ 表情包机器人，帮你从本地表情包库中快速找到想要的表情包。</h5>
+
+</div>
+
+`/query`、`/rand`、`/sim`、`/help`、`/info` 和普通文本支持群聊 @bot 使用；`/add`、`/addtag`、`/del`、`/refresh`、`/ai`、`/edittext`、`/setspeaker` 仅限私聊。`/cancel` 私聊和群聊均可使用。
 
 隐私说明：表情包图片始终本地存储；OCR 文本会按 `OCR_PROVIDER` 配置发送给对应服务（默认 `rapidocr` 使用本地 ONNX 模型，无需联网；`paddle` 使用百度 PaddleOCR 云 API；`deepseek` 使用任意 OpenAI 兼容视觉 OCR 服务）；Embedding 调用由 `EMBEDDING_PROVIDER` 指定的服务（默认 `openai`，即 OpenAI 兼容 API）；LLM 精排调用 DeepSeek。
 

@@ -5,15 +5,18 @@
 
 import logging
 from dataclasses import dataclass, field, replace
-from typing import Protocol
+from typing import TYPE_CHECKING
 
 from bot.log_context import timed
 
-from .metadata_store import MemeEntry
-from .protocols import EmbeddingProvider, MetadataEntryProvider, VectorQueryProvider
+from .metadata_store import MemeEntry, MetadataStore
+from .protocols import EmbeddingProvider
 from .types import GLOBAL_COLLECTION_NAME, MemePublicId
 from .utils import vector_norm
-from .vector_store import VectorHit
+from .vector_store import VectorHit, VectorStore
+
+if TYPE_CHECKING:
+    from .rerank_service import RerankService
 
 logger = logging.getLogger(__name__)
 
@@ -54,22 +57,6 @@ class AIMatchCandidate:
             当前候选所属合集编号和合集内编号。
         """
         return MemePublicId(self.collection_id, self.local_id)
-
-
-class RerankProvider(Protocol):
-    """候选精排服务协议。"""
-
-    async def rerank(self, description: str, candidates: list[AIMatchCandidate]) -> int:
-        """从候选中选出最匹配的临时序号。
-
-        Args:
-            description: 用户自然语言描述。
-            candidates: embedding 阶段 Top N 候选。
-
-        Returns:
-            1-based 临时候选序号；返回 0 表示放弃精排。
-        """
-        ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,10 +106,10 @@ class AIMatcher:
 
     def __init__(
         self,
-        metadata_store: MetadataEntryProvider,
-        vector_store: VectorQueryProvider,
+        metadata_store: MetadataStore,
+        vector_store: VectorStore,
         embedding_provider: EmbeddingProvider,
-        rerank_provider: RerankProvider | None = None,
+        rerank_provider: "RerankService | None" = None,
         limit: int = 10,
     ) -> None:
         """初始化 AI 匹配器。

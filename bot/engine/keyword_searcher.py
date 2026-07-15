@@ -11,8 +11,7 @@ import pylcs
 
 from bot.log_context import timed
 
-from .metadata_store import MemeEntry
-from .protocols import MetadataStoreProvider
+from .metadata_store import MemeEntry, MetadataStore
 from .types import SearchResult
 
 logger = logging.getLogger(__name__)
@@ -63,7 +62,7 @@ class KeywordSearcher:
 
     def __init__(
         self,
-        metadata_store: MetadataStoreProvider,
+        metadata_store: MetadataStore,
         threshold: float = 60.0,
         limit: int | None = None,
     ) -> None:

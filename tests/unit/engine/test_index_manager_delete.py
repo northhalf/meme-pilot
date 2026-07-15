@@ -1,6 +1,7 @@
 """IndexManager.delete() 单元测试。"""
 
 from pathlib import Path
+from typing import cast
 
 import pytest
 import pytest_asyncio
@@ -9,8 +10,10 @@ from bot.engine.index_manager import (
     DeleteResult,
     IndexManager,
 )
-from bot.engine.metadata_store import MemeEntry
-from bot.engine.types import MemeCollection, MemePublicId, ScopeLike
+from bot.engine.metadata_store import MemeEntry, MetadataStore
+from bot.engine.types import MemeCollection, MemePublicId
+from bot.engine.vector_store import VectorStore
+from bot.session import ChatScope
 
 
 # ---------------------------------------------------------------------------
@@ -133,10 +136,10 @@ class FakeMetadataStore:
             [e for e in self._entries.values() if e.collection_id == collection_id]
         )
 
-    def get_selected_collection(self, scope: ScopeLike) -> int:
+    def get_selected_collection(self, scope: ChatScope) -> int:
         return 0
 
-    def set_selected_collection(self, scope: ScopeLike, collection_id: int) -> None:
+    def set_selected_collection(self, scope: ChatScope, collection_id: int) -> None:
         pass
 
 
@@ -194,8 +197,8 @@ async def index_manager(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     vector_store = FakeVectorStore()
 
     manager = IndexManager(
-        metadata_store=metadata_store,
-        vector_store=vector_store,
+        metadata_store=cast(MetadataStore, metadata_store),
+        vector_store=cast(VectorStore, vector_store),
         memes_dir=str(memes_dir),
     )
     await manager.load()

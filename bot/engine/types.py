@@ -1,7 +1,7 @@
 """引擎层共用数据类型。"""
 
 from dataclasses import dataclass, field
-from typing import Protocol, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .metadata_store import MemeEntry
@@ -9,31 +9,6 @@ if TYPE_CHECKING:
 GLOBAL_COLLECTION_ID = 0
 GLOBAL_COLLECTION_NAME = "全局"
 ALL_COLLECTIONS_NAME = "全部合集"
-
-
-class ScopeLike(Protocol):
-    """CollectionManager 与存储层使用的最小只读聊天作用域接口。
-
-    Attributes:
-        user_id: 用户 ID。
-        chat_type: 聊天类型，``private`` 或 ``group``。
-        chat_id: 聊天 ID。
-    """
-
-    @property
-    def user_id(self) -> int:
-        """返回用户 ID。"""
-        ...
-
-    @property
-    def chat_type(self) -> str:
-        """返回聊天类型。"""
-        ...
-
-    @property
-    def chat_id(self) -> int:
-        """返回聊天 ID。"""
-        ...
 
 
 @dataclass(frozen=True, slots=True)

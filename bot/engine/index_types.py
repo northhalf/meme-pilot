@@ -6,10 +6,13 @@
 import asyncio
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from bot.session import ChatScope
 
 from .metadata_store import MemeEntry
-from .types import CollectionSelection, MemePublicId, ScopeLike
+from .types import CollectionSelection, MemePublicId
 
 
 @dataclass(slots=True)
@@ -116,7 +119,7 @@ class _WriteRequest:
     embedding: list[float] | None = None
     old_text: str = ""
     collection_id: int = 0
-    scope: "ScopeLike | None" = None
+    scope: "ChatScope | None" = None
     expected_selection: CollectionSelection | None = None
     target_collection_id: int = 0
     expected_source: "MoveSourceSnapshot | None" = None

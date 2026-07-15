@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, AsyncIterator, TypeVar
 
 from bot.config import read_add_command_timeout, read_read_lock_timeout
 from bot.log_context import timed
+from bot.session import ChatScope
 
 from .ai_matcher import AIMatcher, AIMatchResult
 from .collection_manager import CollectionNotFoundError
@@ -58,7 +59,6 @@ from .types import (
     GLOBAL_COLLECTION_NAME,
     CollectionSelection,
     MemePublicId,
-    ScopeLike,
     SearchResult,
 )
 from .utils import (
@@ -485,7 +485,7 @@ class IndexManager:
             return await self._ai_match_locked(description, query_vector, collection_id)
 
     async def search_for_scope(
-        self, scope: "ScopeLike", keyword: str
+        self, scope: "ChatScope", keyword: str
     ) -> list[SearchResult]:
         """在同一读锁内读取聊天合集并执行关键词搜索。
 
@@ -507,7 +507,7 @@ class IndexManager:
             return self._search_locked(keyword, selection.search_filter)
 
     async def random_search_for_scope(
-        self, scope: "ScopeLike", keyword: str | None = None
+        self, scope: "ChatScope", keyword: str | None = None
     ) -> tuple["CollectionSelection", list[SearchResult]]:
         """在同一读锁内读取聊天合集并执行随机搜索。
 
@@ -532,7 +532,7 @@ class IndexManager:
 
     async def random_search_for_scope_snapshot(
         self,
-        scope: "ScopeLike",
+        scope: "ChatScope",
         keyword: str | None,
         expected_selection: "CollectionSelection",
     ) -> list[SearchResult]:
@@ -560,7 +560,7 @@ class IndexManager:
 
     async def semantic_search_for_scope(
         self,
-        scope: "ScopeLike",
+        scope: "ChatScope",
         description: str,
         limit: int | None = 10,
     ) -> list[SearchResult]:
@@ -596,7 +596,7 @@ class IndexManager:
 
     async def search_combined_for_scope(
         self,
-        scope: "ScopeLike",
+        scope: "ChatScope",
         keyword: str | None,
         speakers: list[str],
         tags: list[str],
@@ -625,7 +625,7 @@ class IndexManager:
             )
 
     async def ai_match_for_scope(
-        self, scope: "ScopeLike", description: str
+        self, scope: "ChatScope", description: str
     ) -> AIMatchResult | None:
         """锁外生成向量，并在同一读锁内读取聊天合集和执行 AI 匹配。
 
@@ -660,7 +660,7 @@ class IndexManager:
         tags: list[str] | None = None,
         *,
         collection_id: int = 0,
-        scope: "ScopeLike | None" = None,
+        scope: "ChatScope | None" = None,
         expected_selection: CollectionSelection | None = None,
     ) -> AddResult:
         """提交 /add 任务并等待执行完成。
@@ -1002,7 +1002,7 @@ class IndexManager:
 
     async def prepare_move(
         self,
-        scope: "ScopeLike",
+        scope: "ChatScope",
         source_raw: str,
         target_raw: str,
     ) -> MovePreview:
@@ -1215,7 +1215,7 @@ class IndexManager:
             return await asyncio.to_thread(self._metadata_store.get_entry, entry_id)
 
     async def get_selected_collection(
-        self, scope: "ScopeLike"
+        self, scope: "ChatScope"
     ) -> "CollectionSelection":
         """返回聊天作用域当前选择。
 
@@ -1233,7 +1233,7 @@ class IndexManager:
 
     def _validate_collection_selection_locked(
         self,
-        scope: "ScopeLike",
+        scope: "ChatScope",
         expected_selection: CollectionSelection,
     ) -> None:
         """在已持有索引锁时校验 ChatScope 完整选择快照。
@@ -1251,7 +1251,7 @@ class IndexManager:
 
     async def validate_collection_selection(
         self,
-        scope: "ScopeLike",
+        scope: "ChatScope",
         expected_selection: CollectionSelection,
     ) -> None:
         """校验聊天作用域仍保持指定完整合集选择。
@@ -1271,7 +1271,7 @@ class IndexManager:
                 expected_selection,
             )
 
-    async def list_collections(self, scope: "ScopeLike") -> "list[CollectionSummary]":
+    async def list_collections(self, scope: "ChatScope") -> "list[CollectionSummary]":
         """返回全部合集入口和各普通合集的统计摘要。
 
         Args:
@@ -1289,7 +1289,7 @@ class IndexManager:
             )
 
     async def switch_collection(
-        self, scope: "ScopeLike", target: str
+        self, scope: "ChatScope", target: str
     ) -> "CollectionSelection":
         """解析并切换聊天作用域的当前合集。
 
@@ -1315,7 +1315,7 @@ class IndexManager:
             )
             return selection
 
-    async def resolve_entry(self, scope: "ScopeLike", raw_id: str) -> MemeEntry:
+    async def resolve_entry(self, scope: "ChatScope", raw_id: str) -> MemeEntry:
         """按当前合集的公开 ID 规则解析并查询条目。
 
         Args:

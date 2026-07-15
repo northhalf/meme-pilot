@@ -11,7 +11,6 @@ from .ai_matcher import (
     AIMatchCandidate,
     AIMatcher,
     AIMatchResult,
-    RerankProvider,
 )
 from .collection_manager import CollectionManager
 from .combined_searcher import CombinedSearcher
@@ -34,7 +33,7 @@ from .index_manager import (
 )
 from .keyword_searcher import KeywordSearcher
 from .metadata_store import MemeEntry, MetadataStore
-from .protocols import EmbeddingProvider, MetadataEntryProvider, VectorQueryProvider
+from .protocols import EmbeddingProvider
 from .provider_factory import (
     mark_embedding_unavailable,
     mark_ocr_unavailable,
@@ -98,14 +97,11 @@ except ImportError as exc:
 __all__ = [
     # protocols
     "EmbeddingProvider",
-    "MetadataEntryProvider",
     "OcrProvider",
-    "VectorQueryProvider",
     # ai_matcher
     "AIMatcher",
     "AIMatchCandidate",
     "AIMatchResult",
-    "RerankProvider",
     # collection_manager
     "CollectionManager",
     # image_optimizer

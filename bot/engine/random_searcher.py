@@ -6,8 +6,7 @@ import random
 from bot.log_context import timed
 
 from .keyword_searcher import KeywordSearcher
-from .metadata_store import MemeEntry
-from .protocols import MetadataStoreProvider
+from .metadata_store import MemeEntry, MetadataStore
 from .types import SearchResult
 
 logger = logging.getLogger(__name__)
@@ -25,7 +24,7 @@ class RandomSearcher:
 
     def __init__(
         self,
-        metadata_store: MetadataStoreProvider,
+        metadata_store: MetadataStore,
         keyword_searcher: KeywordSearcher,
     ) -> None:
         self.metadata_store = metadata_store

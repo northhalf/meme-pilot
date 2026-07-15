@@ -31,9 +31,9 @@ from bot.engine.index_manager import (
     _WriteRequest,
     resolve_unique_filename,
 )
-from bot.engine.image_optimizer import OptimizeResult
+from bot.engine.image_optimizer import ImageOptimizer, OptimizeResult
 from bot.engine.keyword_searcher import KeywordSearcher
-from bot.engine.metadata_store import MemeEntry
+from bot.engine.metadata_store import MemeEntry, MetadataStore
 from bot.engine.random_searcher import RandomSearcher
 from bot.engine.semantic_searcher import SemanticSearcher
 from bot.engine.types import (
@@ -42,9 +42,8 @@ from bot.engine.types import (
     CollectionSummary,
     MemeCollection,
     MemePublicId,
-    ScopeLike,
 )
-from bot.engine.vector_store import VectorHit, VectorRecord
+from bot.engine.vector_store import VectorHit, VectorRecord, VectorStore
 from bot.session import ChatScope
 
 # 哨兵值，区分「不修改字段」与显式的 None
@@ -64,7 +63,7 @@ class FakeMetadataStore:
         self._collections: dict[int, MemeCollection] = {}
         self._collection_name_to_id: dict[str, int] = {}
         self._entries_by_collection: dict[int, dict[int, int]] = {0: {}}
-        self._selected_collections: dict[tuple[int, str, int], int] = {}
+        self._selected_collections: dict[ChatScope, int] = {}
         self._next_auto = 1
         self.add_order: list[int] = []
 
@@ -159,15 +158,11 @@ class FakeMetadataStore:
     def list_collections(self) -> list[MemeCollection]:
         return [self._collections[key] for key in sorted(self._collections)]
 
-    def get_selected_collection(self, scope: ScopeLike) -> int:
-        return self._selected_collections.get(
-            (scope.user_id, scope.chat_type, scope.chat_id), 0
-        )
+    def get_selected_collection(self, scope: ChatScope) -> int:
+        return self._selected_collections.get(scope, 0)
 
-    def set_selected_collection(self, scope: ScopeLike, collection_id: int) -> None:
-        self._selected_collections[(scope.user_id, scope.chat_type, scope.chat_id)] = (
-            collection_id
-        )
+    def set_selected_collection(self, scope: ChatScope, collection_id: int) -> None:
+        self._selected_collections[scope] = collection_id
 
     def delete_collection_and_reset_scopes(self, collection_id: int) -> int:
         collection = self._collections.pop(collection_id)
@@ -442,8 +437,8 @@ def index_manager(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     memes_dir = tmp_path / "memes"
     memes_dir.mkdir()
-    metadata_store = FakeMetadataStore()
-    vector_store = FakeVectorStore()
+    metadata_store = cast(MetadataStore, FakeMetadataStore())
+    vector_store = cast(VectorStore, FakeVectorStore())
     keyword_searcher = KeywordSearcher(metadata_store)
     embedding_provider = MockEmbeddingProvider()
     ai_matcher = AIMatcher(
@@ -465,7 +460,7 @@ def index_manager(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         memes_dir=str(memes_dir),
         ocr_provider=MockOcrProvider(),
         embedding_provider=embedding_provider,
-        optimizer=MockOptimizer(),
+        optimizer=cast(ImageOptimizer, MockOptimizer()),
         keyword_searcher=keyword_searcher,
         ai_matcher=ai_matcher,
         random_searcher=random_searcher,
@@ -546,7 +541,11 @@ class TestLoadAndCount:
     def test_load_delegates_to_stores(self, tmp_path: Path) -> None:
         md = FakeMetadataStore()
         vs = FakeVectorStore()
-        m = IndexManager(metadata_store=md, vector_store=vs, memes_dir=str(tmp_path))
+        m = IndexManager(
+            metadata_store=cast(MetadataStore, md),
+            vector_store=cast(VectorStore, vs),
+            memes_dir=str(tmp_path),
+        )
         asyncio.run(m.load())
         assert m.entry_count == 0
 
@@ -762,7 +761,7 @@ class TestAdd:
 
         outside = Path(index_manager._memes_dir).parent / "outside.jpg"
         outside.write_bytes(b"outside")
-        index_manager._optimizer = FailIfCalledOptimizer()
+        index_manager._optimizer = cast(ImageOptimizer, FailIfCalledOptimizer())
 
         with pytest.raises(ValueError, match="relative_path"):
             await index_manager.add(relative_path, collection_id=99)
@@ -1118,7 +1117,7 @@ class TestAdd:
             async def close(self) -> None:
                 pass
 
-        index_manager._optimizer = ConvertingOptimizer()
+        index_manager._optimizer = cast(ImageOptimizer, ConvertingOptimizer())
         index_manager._ocr_provider = BlockingOcrProvider()
         collection = index_manager._metadata_store.create_collection("新三国")
         directory = Path(index_manager._memes_dir) / collection.name
@@ -1169,7 +1168,7 @@ class TestAdd:
                 return OptimizeResult(4, 4, 0, output_path=image_path)
 
         optimizer = BlockingOptimizer()
-        index_manager._optimizer = optimizer
+        index_manager._optimizer = cast(ImageOptimizer, optimizer)
         memes_dir = Path(index_manager._memes_dir)
         (memes_dir / "same.jpg").write_bytes(b"first")
         first = asyncio.create_task(index_manager._process_image_pipeline("same.jpg"))
@@ -1210,7 +1209,7 @@ class TestAdd:
                 await release_first.wait()
                 return OptimizeResult(4, 4, 0, output_path=image_path)
 
-        index_manager._optimizer = BlockingOptimizer()
+        index_manager._optimizer = cast(ImageOptimizer, BlockingOptimizer())
         memes_dir = Path(index_manager._memes_dir)
         (memes_dir / "wait.jpg").write_bytes(b"first")
         (memes_dir / "wait.png").write_bytes(b"second")
@@ -1245,7 +1244,7 @@ class TestAdd:
                 await allow_optimizer_return.wait()
                 return OptimizeResult(4, 3, 1, output_path=str(target))
 
-        index_manager._optimizer = CreatingOptimizer()
+        index_manager._optimizer = cast(ImageOptimizer, CreatingOptimizer())
         source = Path(index_manager._memes_dir) / "exit-cancel.jpg"
         final_path = source.with_suffix(".webp")
         source.write_bytes(b"image")
@@ -1287,7 +1286,7 @@ class TestAdd:
                 second_entered.set()
                 return OptimizeResult(4, 4, 0, output_path=image_path)
 
-        index_manager._optimizer = ThreadStyleOptimizer()
+        index_manager._optimizer = cast(ImageOptimizer, ThreadStyleOptimizer())
         memes_dir = Path(index_manager._memes_dir)
         first_source = memes_dir / "thread.jpg"
         second_source = memes_dir / "thread.png"
@@ -1335,7 +1334,7 @@ class TestAdd:
                 await asyncio.to_thread(release_optimizer.wait)
                 raise RuntimeError("background failure")
 
-        index_manager._optimizer = FailingThreadStyleOptimizer()
+        index_manager._optimizer = cast(ImageOptimizer, FailingThreadStyleOptimizer())
         source = Path(index_manager._memes_dir) / "background.jpg"
         source.write_bytes(b"image")
         task = asyncio.create_task(index_manager._process_image_pipeline(source.name))
@@ -1385,7 +1384,7 @@ class TestAdd:
             async def close(self) -> None:
                 pass
 
-        index_manager._optimizer = SharedOutputOptimizer()
+        index_manager._optimizer = cast(ImageOptimizer, SharedOutputOptimizer())
         index_manager._ocr_provider = SecondFailingOcrProvider()
         memes_dir = Path(index_manager._memes_dir)
         (memes_dir / "same.jpg").write_bytes(b"first")
@@ -1424,7 +1423,7 @@ class TestAdd:
             async def close(self) -> None:
                 pass
 
-        index_manager._optimizer = ConvertingOptimizer()
+        index_manager._optimizer = cast(ImageOptimizer, ConvertingOptimizer())
         index_manager._ocr_provider = FailingOcrProvider()
         source = Path(index_manager._memes_dir) / "failed.jpg"
         final_path = source.with_suffix(".webp")
@@ -1460,7 +1459,7 @@ class TestAdd:
             async def close(self) -> None:
                 pass
 
-        index_manager._optimizer = ConvertingOptimizer()
+        index_manager._optimizer = cast(ImageOptimizer, ConvertingOptimizer())
         index_manager._ocr_provider = BlockingOcrProvider()
         source = Path(index_manager._memes_dir) / "cancelled.jpg"
         final_path = source.with_suffix(".webp")
@@ -1495,7 +1494,7 @@ class TestAdd:
             async def close(self) -> None:
                 pass
 
-        index_manager._optimizer = ExistingOutputOptimizer()
+        index_manager._optimizer = cast(ImageOptimizer, ExistingOutputOptimizer())
         index_manager._ocr_provider = BlockingOcrProvider()
         source = Path(index_manager._memes_dir) / "existing-cancelled.jpg"
         source.write_bytes(b"original")
@@ -1525,7 +1524,7 @@ class TestAdd:
             async def close(self) -> None:
                 pass
 
-        index_manager._optimizer = ExistingOutputOptimizer()
+        index_manager._optimizer = cast(ImageOptimizer, ExistingOutputOptimizer())
         index_manager._ocr_provider = FailingOcrProvider()
         source = Path(index_manager._memes_dir) / "existing.jpg"
         source.write_bytes(b"original")
@@ -1918,7 +1917,11 @@ class TestConcurrencyAndDrain:
 
         md = FakeMetadataStore()
         vs = FakeVectorStore()
-        m = IndexManager(metadata_store=md, vector_store=vs, memes_dir="/tmp/memes")
+        m = IndexManager(
+            metadata_store=cast(MetadataStore, md),
+            vector_store=cast(VectorStore, vs),
+            memes_dir="/tmp/memes",
+        )
         assert not hasattr(m, "_add_concurrency")
         assert not hasattr(m, "_sync_semaphore")
 
@@ -2218,7 +2221,7 @@ class TestRefresh:
         nested = Path(index_manager._memes_dir) / "新三国" / "截图"
         nested.mkdir(parents=True)
         (nested / "a.jpg").write_bytes(b"image")
-        index_manager._optimizer = FakeOptimizer(output_path=str(nested / "a.webp"))
+        index_manager._optimizer = cast(ImageOptimizer, FakeOptimizer(output_path=str(nested / "a.webp")))
 
         final_path, _, _ = await index_manager._process_image_pipeline(
             "新三国/截图/a.jpg"
@@ -3264,12 +3267,12 @@ class TestPipelineFinalFilename:
         (memes / "a.jpg").write_bytes(b"x")
         opt = FakeOptimizer(output_path=str(memes / "a.webp"))
         im = IndexManager(
-            md,
-            vs,
+            cast(MetadataStore, md),
+            cast(VectorStore, vs),
             str(memes),
             ocr_provider=FakeOcrProvider("hello"),
             embedding_provider=FakeEmbeddingProvider(),
-            optimizer=opt,
+            optimizer=cast(ImageOptimizer, opt),
         )
         final_fn, text, _ = await im._process_image_pipeline("a.jpg")
         assert final_fn == "a.webp"
@@ -3286,12 +3289,12 @@ class TestPipelineFinalFilename:
         (memes / "a.jpg").write_bytes(b"x")
         opt = FakeOptimizer(output_path=str(memes / "a.jpg"))
         im = IndexManager(
-            md,
-            vs,
+            cast(MetadataStore, md),
+            cast(VectorStore, vs),
             str(memes),
             ocr_provider=FakeOcrProvider("hello"),
             embedding_provider=FakeEmbeddingProvider(),
-            optimizer=opt,
+            optimizer=cast(ImageOptimizer, opt),
         )
         final_fn, text, _ = await im._process_image_pipeline("a.jpg")
         assert final_fn == "a.jpg"
@@ -3305,12 +3308,12 @@ class TestPipelineFinalFilename:
         (memes / "a.jpg").write_bytes(b"x")
         opt = FakeOptimizer(raises=RuntimeError("convert fail"))
         im = IndexManager(
-            md,
-            vs,
+            cast(MetadataStore, md),
+            cast(VectorStore, vs),
             str(memes),
             ocr_provider=FakeOcrProvider("hello"),
             embedding_provider=FakeEmbeddingProvider(),
-            optimizer=opt,
+            optimizer=cast(ImageOptimizer, opt),
         )
         final_fn, text, _ = await im._process_image_pipeline("a.jpg")
         assert final_fn == "a.jpg"
@@ -3327,12 +3330,12 @@ class TestPipelineFinalFilename:
         (memes / "a.jpg").write_bytes(b"x")
         opt = FakeOptimizer(output_path=str(memes / "a.webp"))
         im = IndexManager(
-            md,
-            vs,
+            cast(MetadataStore, md),
+            cast(VectorStore, vs),
             str(memes),
             ocr_provider=FakeOcrProvider(""),
             embedding_provider=FakeEmbeddingProvider(),
-            optimizer=opt,
+            optimizer=cast(ImageOptimizer, opt),
         )
         final_fn, text, emb = await im._process_image_pipeline("a.jpg")
         assert final_fn == "a.webp"
@@ -3357,12 +3360,12 @@ class TestAddConvertsToWebp:
         (memes / "meme_001.jpg").write_bytes(b"x")
         opt = FakeOptimizer(output_path=str(memes / "meme_001.webp"))
         im = IndexManager(
-            md,
-            vs,
+            cast(MetadataStore, md),
+            cast(VectorStore, vs),
             str(memes),
             ocr_provider=FakeOcrProvider("加班"),
             embedding_provider=FakeEmbeddingProvider(),
-            optimizer=opt,
+            optimizer=cast(ImageOptimizer, opt),
         )
         result = await im.add("meme_001.jpg", speaker="小明", tags=["吐槽"])
         assert result.reason == "added"
@@ -3380,12 +3383,12 @@ class TestAddConvertsToWebp:
         (memes / "meme_002.png").write_bytes(b"x")
         opt = FakeOptimizer(raises=RuntimeError("fail"))
         im = IndexManager(
-            md,
-            vs,
+            cast(MetadataStore, md),
+            cast(VectorStore, vs),
             str(memes),
             ocr_provider=FakeOcrProvider("心累"),
             embedding_provider=FakeEmbeddingProvider(),
-            optimizer=opt,
+            optimizer=cast(ImageOptimizer, opt),
         )
         result = await im.add("meme_002.png")
         assert result.reason == "added"
@@ -3438,12 +3441,12 @@ class TestSyncConvertsToWebp:
                 return OptimizeResult(100, 80, 20, output_path=str(new_p))
 
         im = IndexManager(
-            md,
-            vs,
+            cast(MetadataStore, md),
+            cast(VectorStore, vs),
             str(memes),
             ocr_provider=PerFileOcrProvider(),
             embedding_provider=FakeEmbeddingProvider(),
-            optimizer=PerFileOptimizer(),
+            optimizer=cast(ImageOptimizer, PerFileOptimizer()),
         )
         sync_result = await im.refresh()
         assert sync_result.added == 2
@@ -3484,12 +3487,12 @@ class TestSyncConvertsToWebp:
                 return OptimizeResult(100, 80, 20, output_path=str(target))
 
         im = IndexManager(
-            md,
-            vs,
+            cast(MetadataStore, md),
+            cast(VectorStore, vs),
             str(memes),
             ocr_provider=CountingOcrProvider(),
             embedding_provider=FakeEmbeddingProvider(),
-            optimizer=RacingOptimizer(),
+            optimizer=cast(ImageOptimizer, RacingOptimizer()),
         )
 
         sync_result = await im.refresh()
@@ -3540,12 +3543,12 @@ class TestSyncConvertsToWebp:
                 return OptimizeResult(100, 80, 20, output_path=str(target))
 
         im = IndexManager(
-            md,
-            vs,
+            cast(MetadataStore, md),
+            cast(VectorStore, vs),
             str(memes),
             ocr_provider=CountingOcrProvider(),
             embedding_provider=FakeEmbeddingProvider(),
-            optimizer=CaseInsensitiveRacingOptimizer(),
+            optimizer=cast(ImageOptimizer, CaseInsensitiveRacingOptimizer()),
         )
 
         result = await im.refresh()
@@ -3587,12 +3590,12 @@ class TestSyncConvertsToWebp:
                 pass
 
         im = IndexManager(
-            md,
-            vs,
+            cast(MetadataStore, md),
+            cast(VectorStore, vs),
             str(memes),
             ocr_provider=BarrierOcrProvider(),
             embedding_provider=FakeEmbeddingProvider(),
-            optimizer=NoopOptimizer(),
+            optimizer=cast(ImageOptimizer, NoopOptimizer()),
         )
 
         result = await im.refresh()
@@ -3627,12 +3630,12 @@ class TestSyncConvertsToWebp:
                 return OptimizeResult(100, 80, 20, output_path=str(source))
 
         im = IndexManager(
-            md,
-            vs,
+            cast(MetadataStore, md),
+            cast(VectorStore, vs),
             str(memes),
             ocr_provider=PerFileOcrProvider(),
             embedding_provider=FakeEmbeddingProvider(),
-            optimizer=BarrierOptimizer(),
+            optimizer=cast(ImageOptimizer, BarrierOptimizer()),
         )
 
         result = await im.refresh()
@@ -3660,12 +3663,12 @@ class TestSyncConvertsToWebp:
                 return OptimizeResult(100, 80, 20, output_path=str(memes / "dup.webp"))
 
         im = IndexManager(
-            md,
-            vs,
+            cast(MetadataStore, md),
+            cast(VectorStore, vs),
             str(memes),
             ocr_provider=CountingOcrProvider(),
             embedding_provider=FakeEmbeddingProvider(),
-            optimizer=SameStemOptimizer(),
+            optimizer=cast(ImageOptimizer, SameStemOptimizer()),
         )
         sync_result = await im.refresh()
         assert sync_result.added == 2

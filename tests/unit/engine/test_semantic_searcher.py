@@ -1,40 +1,40 @@
 """SemanticSearcher 单元测试。"""
 
-from unittest.mock import AsyncMock, Mock
+from typing import cast
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
-from bot.engine.metadata_store import MemeEntry
+from bot.engine.metadata_store import MemeEntry, MetadataStore
 from bot.engine.semantic_searcher import SemanticSearcher
 from bot.engine.types import MemePublicId
-from bot.engine.vector_store import VectorHit
+from bot.engine.vector_store import VectorHit, VectorStore
 
 
-class MockMetadataStore:
-    def __init__(self, entries: dict[int, MemeEntry]) -> None:
-        self._entries = entries
+def MockMetadataStore(entries: dict[int, MemeEntry]) -> MetadataStore:
+    """构造模拟 MetadataStore，get_all_entries 返回预定义的 entries 字典。"""
+    mock = MagicMock()
+    mock.get_all_entries.return_value = entries
+    return cast(MetadataStore, mock)
 
-    def get_all_entries(self) -> dict[int, MemeEntry]:
-        return self._entries
 
+def MockVectorStore(hits: list[VectorHit]) -> VectorStore:
+    """构造模拟 VectorStore，count 返回 hits 数量，query 按 n_results 切片返回。"""
+    mock = MagicMock()
 
-class MockVectorStore:
-    def __init__(self, hits: list[VectorHit]) -> None:
-        self._hits = hits
-
-    def count(self) -> int:
-        return len(self._hits)
-
-    async def query(
-        self,
+    def _query(
         query_embedding: list[float],
         n_results: int | None = 10,
         *,
         collection_id: int | None = None,
     ) -> list[VectorHit]:
         if n_results is None:
-            return list(self._hits)
-        return self._hits[:n_results]
+            return list(hits)
+        return hits[:n_results]
+
+    mock.count.return_value = len(hits)
+    mock.query = AsyncMock(side_effect=_query)
+    return cast(VectorStore, mock)
 
 
 @pytest.fixture

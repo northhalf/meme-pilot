@@ -11,8 +11,9 @@ import threading
 from dataclasses import dataclass, field, replace
 
 from bot.log_context import timed
+from bot.session import ChatScope
 
-from .types import GLOBAL_COLLECTION_NAME, MemeCollection, MemePublicId, ScopeLike
+from .types import GLOBAL_COLLECTION_NAME, MemeCollection, MemePublicId
 
 logger = logging.getLogger(__name__)
 
@@ -171,9 +172,9 @@ class MetadataStore:
         self._entries: dict[int, MemeEntry] = {}
         # collection_id -> [local_id, entries_id]
         self._entries_by_collection: dict[int, dict[int, int]] = {}
-        self._collections: dict[int, MemeCollection] = {}
+        self._id_to_collections: dict[int, MemeCollection] = {}
         self._collection_name_to_id: dict[str, int] = {}
-        self._selected_collections: dict[tuple[int, str, int], int] = {}
+        self._selected_collections: dict[ChatScope, int] = {}
 
     def load(self) -> None:
         """打开当前版本数据库并重建全部内存缓存。
@@ -431,7 +432,9 @@ class MetadataStore:
             不与缓存共享的合集列表。
         """
         with self._lock:
-            return [self._collections[key] for key in sorted(self._collections)]
+            return [
+                self._id_to_collections[key] for key in sorted(self._id_to_collections)
+            ]
 
     def get_collection(self, collection_id: int) -> MemeCollection | None:
         """按编号返回普通合集。
@@ -443,7 +446,7 @@ class MetadataStore:
             对应合集；不存在或传入 0 时返回 None。
         """
         with self._lock:
-            return self._collections.get(collection_id)
+            return self._id_to_collections.get(collection_id)
 
     def get_collection_by_name(self, name: str) -> MemeCollection | None:
         """按区分大小写的精确名称返回普通合集。
@@ -458,7 +461,7 @@ class MetadataStore:
             collection_id = self._collection_name_to_id.get(name)
             if collection_id is None:
                 return None
-            return self._collections.get(collection_id)
+            return self._id_to_collections.get(collection_id)
 
     def collection_entry_count(self, collection_id: int | None) -> int:
         """返回全库或指定合集的条目数。
@@ -490,7 +493,7 @@ class MetadataStore:
             self._validate_collection_id(collection_id)
             return self._find_next_local_id(self._require_conn(), collection_id)
 
-    def get_selected_collection(self, scope: ScopeLike) -> int:
+    def get_selected_collection(self, scope: ChatScope) -> int:
         """返回 ChatScope 当前选择的合集编号。
 
         Args:
@@ -504,9 +507,7 @@ class MetadataStore:
         """
         self._validate_chat_type(scope.chat_type)
         with self._lock:
-            return self._selected_collections.get(
-                (scope.user_id, scope.chat_type, scope.chat_id), 0
-            )
+            return self._selected_collections.get(scope, 0)
 
     # ------------------------------------------------------------------
     # 写入
@@ -553,12 +554,12 @@ class MetadataStore:
                 raise
 
             collection = MemeCollection(final_collection_id, name)
-            self._collections[final_collection_id] = collection
+            self._id_to_collections[final_collection_id] = collection
             self._collection_name_to_id[name] = final_collection_id
             self._entries_by_collection[final_collection_id] = {}
             return collection
 
-    def set_selected_collection(self, scope: ScopeLike, collection_id: int) -> None:
+    def set_selected_collection(self, scope: ChatScope, collection_id: int) -> None:
         """保存 ChatScope 当前选择的合集编号。
 
         Args:
@@ -587,9 +588,7 @@ class MetadataStore:
             except Exception:
                 conn.rollback()
                 raise
-            self._selected_collections[
-                (scope.user_id, scope.chat_type, scope.chat_id)
-            ] = collection_id
+            self._selected_collections[scope] = collection_id
 
     def delete_collection_and_reset_scopes(self, collection_id: int) -> int:
         """删除空合集并原子回退所有引用它的 ChatScope。
@@ -607,7 +606,7 @@ class MetadataStore:
             conn = self._require_conn()
             if collection_id == 0:
                 raise ValueError("不能删除全局合集")
-            collection = self._collections.get(collection_id)
+            collection = self._id_to_collections.get(collection_id)
             if collection is None:
                 raise ValueError(f"collection_id={collection_id} 不存在")
             if self._entries_by_collection.get(collection_id):
@@ -640,7 +639,7 @@ class MetadataStore:
                 conn.rollback()
                 raise
 
-            del self._collections[collection_id]
+            del self._id_to_collections[collection_id]
             self._collection_name_to_id.pop(collection.name, None)
             self._entries_by_collection.pop(collection_id, None)
             for key, selected_collection_id in list(self._selected_collections.items()):
@@ -987,7 +986,7 @@ class MetadataStore:
         self._text_to_id = {}
         self._entries = {}
         self._entries_by_collection = {}
-        self._collections = {}
+        self._id_to_collections = {}
         self._collection_name_to_id = {}
         self._selected_collections = {}
 
@@ -1235,7 +1234,7 @@ class MetadataStore:
             seen_tags.add(tag_key)
             entry.tags.append(tag)
 
-        selected_collections: dict[tuple[int, str, int], int] = {}
+        selected_collections: dict[ChatScope, int] = {}
         for row in conn.execute(
             "SELECT user_id, chat_type, chat_id, selected_collection_id "
             "FROM chat_collection_scope"
@@ -1255,7 +1254,7 @@ class MetadataStore:
                     )
             if type(chat_type) is not str or chat_type not in {"private", "group"}:
                 raise sqlite3.DatabaseError(f"ChatScope chat_type 非法: {chat_type!r}")
-            key = (user_id, chat_type, chat_id)
+            key = ChatScope(user_id=user_id, chat_type=chat_type, chat_id=chat_id)
             if selected_collection_id < 0:
                 raise sqlite3.DatabaseError(
                     "ChatScope selected_collection_id 不能为负数: "
@@ -1272,7 +1271,7 @@ class MetadataStore:
                 raise sqlite3.DatabaseError(f"存在重复 ChatScope key: {key!r}")
             selected_collections[key] = selected_collection_id
 
-        self._collections = collections
+        self._id_to_collections = collections
         self._collection_name_to_id = collection_name_to_id
         self._entries = entries
         self._entries_by_collection = entries_by_collection
@@ -1302,7 +1301,7 @@ class MetadataStore:
             ValueError: 编号为负数或普通合集不存在。
         """
         if collection_id < 0 or (
-            collection_id != 0 and collection_id not in self._collections
+            collection_id != 0 and collection_id not in self._id_to_collections
         ):
             raise ValueError(f"collection_id={collection_id} 不存在")
 
@@ -1334,7 +1333,7 @@ class MetadataStore:
         """
         if collection_id == 0:
             return GLOBAL_COLLECTION_NAME
-        return self._collections[collection_id].name
+        return self._id_to_collections[collection_id].name
 
     def _make_entry(
         self,

@@ -2,9 +2,8 @@
 
 import sqlite3
 import threading
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import pytest
 
@@ -18,15 +17,20 @@ from bot.engine.metadata_store import (
     create_current_schema,
 )
 from bot.engine.types import GLOBAL_COLLECTION_NAME, MemeCollection, MemePublicId
+from bot.session import ChatScope
 
 
-@dataclass
-class _TestScope:
-    """测试用聊天作用域，chat_type 为 str 以兼容 ScopeLike。"""
+def _scope(user_id: int, chat_type: str, chat_id: int) -> ChatScope:
+    """构造测试用 ChatScope，chat_type 经 cast 满足 Literal 约束。
 
-    user_id: int
-    chat_type: str
-    chat_id: int
+    运行时不校验 chat_type（ChatScope 无 __post_init__），非法值由
+    MetadataStore._validate_chat_type 在调用处拒绝，用于覆盖非法类型用例。
+    """
+    return ChatScope(
+        user_id=user_id,
+        chat_type=cast(Literal["private", "group"], chat_type),
+        chat_id=chat_id,
+    )
 
 
 @pytest.fixture
@@ -230,7 +234,7 @@ class TestLoadAndCount:
         assert s._entries == {}
         assert s._text_to_id == {}
         assert s._entries_by_collection == {}
-        assert s._collections == {}
+        assert s._id_to_collections == {}
         assert s._collection_name_to_id == {}
         assert s._selected_collections == {}
         assert s.get_entry(entry_id) is None
@@ -668,7 +672,7 @@ class TestLifecycleConcurrency:
         assert store._conn is None
         assert store.get_entry(entry_id) is None
         assert store.get_entries() == {}
-        assert store._collections == {}
+        assert store._id_to_collections == {}
         assert store._selected_collections == {}
 
 
@@ -787,14 +791,14 @@ class TestChatScopePersistence:
         other_chat_key = (10001, "group", 20002)
         collection = store.create_collection("合集")
 
-        assert store.get_selected_collection(_TestScope(*private_key)) == 0
-        store.set_selected_collection(_TestScope(*private_key), collection.id)
-        store.set_selected_collection(_TestScope(*group_key), collection.id)
+        assert store.get_selected_collection(_scope(*private_key)) == 0
+        store.set_selected_collection(_scope(*private_key), collection.id)
+        store.set_selected_collection(_scope(*group_key), collection.id)
 
-        assert store.get_selected_collection(_TestScope(*private_key)) == collection.id
-        assert store.get_selected_collection(_TestScope(*group_key)) == collection.id
-        assert store.get_selected_collection(_TestScope(*other_chat_key)) == 0
-        assert store.get_selected_collection(_TestScope(10002, "private", 10001)) == 0
+        assert store.get_selected_collection(_scope(*private_key)) == collection.id
+        assert store.get_selected_collection(_scope(*group_key)) == collection.id
+        assert store.get_selected_collection(_scope(*other_chat_key)) == 0
+        assert store.get_selected_collection(_scope(10002, "private", 10001)) == 0
 
     def test_scope_upsert_updates_same_key_and_persists_after_reload(
         self, tmp_sqlite_path: Path
@@ -806,13 +810,13 @@ class TestChatScopePersistence:
         second = store.create_collection("合集二")
         key = (10001, "private", 10001)
 
-        store.set_selected_collection(_TestScope(*key), first.id)
-        store.set_selected_collection(_TestScope(*key), second.id)
+        store.set_selected_collection(_scope(*key), first.id)
+        store.set_selected_collection(_scope(*key), second.id)
         store.close()
 
         reloaded = MetadataStore(str(tmp_sqlite_path))
         reloaded.load()
-        assert reloaded.get_selected_collection(_TestScope(*key)) == second.id
+        assert reloaded.get_selected_collection(_scope(*key)) == second.id
         conn = reloaded._conn
         assert conn is not None
         assert (
@@ -833,9 +837,9 @@ class TestChatScopePersistence:
         collection = store.create_collection("合集")
 
         with pytest.raises(ValueError, match="chat_type"):
-            store.get_selected_collection(_TestScope(1, chat_type, 2))
+            store.get_selected_collection(_scope(1, chat_type, 2))
         with pytest.raises(ValueError, match="chat_type"):
-            store.set_selected_collection(_TestScope(1, chat_type, 2), collection.id)
+            store.set_selected_collection(_scope(1, chat_type, 2), collection.id)
 
         assert store._selected_collections == {}
 
@@ -845,9 +849,9 @@ class TestChatScopePersistence:
     ) -> None:
         """负编号和不存在的普通合集不得写入选择。"""
         with pytest.raises(ValueError, match=f"collection_id={collection_id} 不存在"):
-            store.set_selected_collection(_TestScope(1, "private", 1), collection_id)
+            store.set_selected_collection(_scope(1, "private", 1), collection_id)
 
-        assert store.get_selected_collection(_TestScope(1, "private", 1)) == 0
+        assert store.get_selected_collection(_scope(1, "private", 1)) == 0
 
     def test_set_scope_rejects_ignored_upsert(self, store: MetadataStore) -> None:
         """UPSERT 被合法触发器忽略时回滚且不发布选择缓存。"""
@@ -863,13 +867,13 @@ class TestChatScopePersistence:
         conn.commit()
 
         with pytest.raises(sqlite3.DatabaseError, match="保存 ChatScope.*影响 1 行"):
-            store.set_selected_collection(_TestScope(*key), collection.id)
+            store.set_selected_collection(_scope(*key), collection.id)
 
         assert (
             conn.execute("SELECT COUNT(*) FROM chat_collection_scope").fetchone()[0]
             == 0
         )
-        assert store.get_selected_collection(_TestScope(*key)) == 0
+        assert store.get_selected_collection(_scope(*key)) == 0
         assert store._selected_collections == {}
 
     def test_set_scope_commit_failure_rolls_back_without_cache_pollution(
@@ -879,13 +883,13 @@ class TestChatScopePersistence:
         first = store.create_collection("合集一")
         second = store.create_collection("合集二")
         key = (10001, "private", 10001)
-        store.set_selected_collection(_TestScope(*key), first.id)
+        store.set_selected_collection(_scope(*key), first.id)
         real_conn = TestTransactionAtomicity._fail_next_commit(store)
 
         with pytest.raises(sqlite3.OperationalError, match="模拟 commit 失败"):
-            store.set_selected_collection(_TestScope(*key), second.id)
+            store.set_selected_collection(_scope(*key), second.id)
 
-        assert store.get_selected_collection(_TestScope(*key)) == first.id
+        assert store.get_selected_collection(_scope(*key)) == first.id
         assert (
             real_conn.execute(
                 "SELECT selected_collection_id FROM chat_collection_scope WHERE "
@@ -980,7 +984,7 @@ class TestCorruptedChatScopes:
         assert store._text_to_id == {}
         assert store._entries == {}
         assert store._entries_by_collection == {}
-        assert store._collections == {}
+        assert store._id_to_collections == {}
         assert store._collection_name_to_id == {}
         assert store._selected_collections == {}
 
@@ -1028,9 +1032,9 @@ class TestDeleteCollectionAndResetScopes:
         unrelated_key = (10003, "private", 10003)
         global_key = (10004, "private", 10004)
         for key in reset_keys:
-            store.set_selected_collection(_TestScope(*key), deleted.id)
-        store.set_selected_collection(_TestScope(*unrelated_key), unrelated.id)
-        store.set_selected_collection(_TestScope(*global_key), 0)
+            store.set_selected_collection(_scope(*key), deleted.id)
+        store.set_selected_collection(_scope(*unrelated_key), unrelated.id)
+        store.set_selected_collection(_scope(*global_key), 0)
 
         reset_count = store.delete_collection_and_reset_scopes(deleted.id)
 
@@ -1040,10 +1044,10 @@ class TestDeleteCollectionAndResetScopes:
         assert store.list_collections() == [unrelated]
         assert deleted.id not in store._entries_by_collection
         assert all(
-            store.get_selected_collection(_TestScope(*key)) == 0 for key in reset_keys
+            store.get_selected_collection(_scope(*key)) == 0 for key in reset_keys
         )
-        assert store.get_selected_collection(_TestScope(*unrelated_key)) == unrelated.id
-        assert store.get_selected_collection(_TestScope(*global_key)) == 0
+        assert store.get_selected_collection(_scope(*unrelated_key)) == unrelated.id
+        assert store.get_selected_collection(_scope(*global_key)) == 0
         replacement = store.create_collection("复用")
         assert replacement.id == deleted.id
         store.close()
@@ -1053,11 +1057,11 @@ class TestDeleteCollectionAndResetScopes:
         assert reloaded.get_collection_by_name("待删除") is None
         assert reloaded.get_collection(replacement.id) == replacement
         assert all(
-            reloaded.get_selected_collection(_TestScope(*key)) == 0
+            reloaded.get_selected_collection(_scope(*key)) == 0
             for key in reset_keys
         )
         assert (
-            reloaded.get_selected_collection(_TestScope(*unrelated_key)) == unrelated.id
+            reloaded.get_selected_collection(_scope(*unrelated_key)) == unrelated.id
         )
         reloaded.close()
 
@@ -1068,13 +1072,13 @@ class TestDeleteCollectionAndResetScopes:
         collection = store.create_collection("非空合集")
         store.add("a.webp", "甲", collection_id=collection.id)
         key = (10001, "private", 10001)
-        store.set_selected_collection(_TestScope(*key), collection.id)
+        store.set_selected_collection(_scope(*key), collection.id)
 
         with pytest.raises(ValueError, match="仍含表情包"):
             store.delete_collection_and_reset_scopes(collection.id)
 
         assert store.get_collection(collection.id) == collection
-        assert store.get_selected_collection(_TestScope(*key)) == collection.id
+        assert store.get_selected_collection(_scope(*key)) == collection.id
 
     def test_delete_rechecks_database_after_external_entry_insert(
         self, store: MetadataStore
@@ -1082,7 +1086,7 @@ class TestDeleteCollectionAndResetScopes:
         """缓存建立后的外部条目写入也必须阻止删除合集。"""
         collection = store.create_collection("合集")
         key = (10001, "private", 10001)
-        store.set_selected_collection(_TestScope(*key), collection.id)
+        store.set_selected_collection(_scope(*key), collection.id)
         with sqlite3.connect(store._db_path) as external:
             external.execute(
                 "INSERT INTO meme "
@@ -1120,7 +1124,7 @@ class TestDeleteCollectionAndResetScopes:
         )
         assert store.get_collection(collection.id) == collection
         assert store.get_collection_by_name(collection.name) == collection
-        assert store.get_selected_collection(_TestScope(*key)) == collection.id
+        assert store.get_selected_collection(_scope(*key)) == collection.id
         assert store._entries_by_collection[collection.id] == {}
 
     @pytest.mark.parametrize("collection_id", [0, 99])
@@ -1137,7 +1141,7 @@ class TestDeleteCollectionAndResetScopes:
         """DELETE 被合法触发器忽略时回滚 scope 更新且不修改缓存。"""
         collection = store.create_collection("合集")
         key = (10001, "private", 10001)
-        store.set_selected_collection(_TestScope(*key), collection.id)
+        store.set_selected_collection(_scope(*key), collection.id)
         conn = store._conn
         assert conn is not None
         conn.execute(
@@ -1166,7 +1170,7 @@ class TestDeleteCollectionAndResetScopes:
         )
         assert store.get_collection(collection.id) == collection
         assert store.get_collection_by_name(collection.name) == collection
-        assert store.get_selected_collection(_TestScope(*key)) == collection.id
+        assert store.get_selected_collection(_scope(*key)) == collection.id
         assert store._entries_by_collection[collection.id] == {}
 
     def test_delete_rejects_unknown_scope_update_rowcount(
@@ -1175,7 +1179,7 @@ class TestDeleteCollectionAndResetScopes:
         """scope UPDATE 无法确定影响行数时回滚合集和选择。"""
         collection = store.create_collection("合集")
         key = (10001, "private", 10001)
-        store.set_selected_collection(_TestScope(*key), collection.id)
+        store.set_selected_collection(_scope(*key), collection.id)
         real_conn = store._conn
         assert real_conn is not None
 
@@ -1228,7 +1232,7 @@ class TestDeleteCollectionAndResetScopes:
             == collection.id
         )
         assert store.get_collection(collection.id) == collection
-        assert store.get_selected_collection(_TestScope(*key)) == collection.id
+        assert store.get_selected_collection(_scope(*key)) == collection.id
 
     @pytest.mark.parametrize("failure_stage", ["update", "delete", "commit"])
     def test_delete_failure_rolls_back_collection_and_scopes(
@@ -1241,7 +1245,7 @@ class TestDeleteCollectionAndResetScopes:
             (10001, "group", 20001),
         ]
         for key in keys:
-            store.set_selected_collection(_TestScope(*key), collection.id)
+            store.set_selected_collection(_scope(*key), collection.id)
         real_conn = store._conn
         assert real_conn is not None
 
@@ -1268,7 +1272,7 @@ class TestDeleteCollectionAndResetScopes:
         assert store.get_collection(collection.id) == collection
         assert store.get_collection_by_name(collection.name) == collection
         assert all(
-            store.get_selected_collection(_TestScope(*key)) == collection.id
+            store.get_selected_collection(_scope(*key)) == collection.id
             for key in keys
         )
         assert (

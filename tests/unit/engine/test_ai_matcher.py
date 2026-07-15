@@ -1,54 +1,48 @@
 """AIMatcher 单元测试。"""
 
-from typing import Any
-from unittest.mock import AsyncMock, Mock
+from typing import Any, cast
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
 from bot.engine.ai_matcher import AIMatchCandidate, AIMatchResult, AIMatcher
-from bot.engine.metadata_store import MemeEntry
+from bot.engine.metadata_store import MemeEntry, MetadataStore
+from bot.engine.rerank_service import RerankService
 from bot.engine.types import MemePublicId
-from bot.engine.vector_store import VectorHit
+from bot.engine.vector_store import VectorHit, VectorStore
 
 
-class MockVectorStore:
-    """模拟 VectorStore。"""
+def MockVectorStore(
+    hits: list[VectorHit] | None = None,
+    count: int = 0,
+    error: Exception | None = None,
+) -> VectorStore:
+    """构造模拟 VectorStore，count 返回给定值，query 按 n_results 切片返回 hits。"""
+    mock = MagicMock()
+    mock.count.return_value = count
+    hits_list = hits or []
 
-    def __init__(
-        self,
-        hits: list[VectorHit] | None = None,
-        count: int = 0,
-        error: Exception | None = None,
-    ) -> None:
-        self._hits = hits or []
-        self._count = count
-        self._error = error
-
-    async def query(
-        self,
+    def _query(
         query_embedding: list[float],
         n_results: int | None = 10,
         *,
         collection_id: int | None = None,
     ) -> list[VectorHit]:
-        if self._error is not None:
-            raise self._error
+        if error is not None:
+            raise error
         if n_results is None:
-            return list(self._hits)
-        return self._hits[:n_results]
+            return list(hits_list)
+        return hits_list[:n_results]
 
-    def count(self) -> int:
-        return self._count
+    mock.query = AsyncMock(side_effect=_query)
+    return cast(VectorStore, mock)
 
 
-class MockMetadataStore:
-    """模拟 MetadataStore，按 id 返回 MemeEntry。"""
-
-    def __init__(self, entries: dict[int, MemeEntry] | None = None) -> None:
-        self._entries = entries or {}
-
-    def get_entry(self, entry_id: int) -> MemeEntry | None:
-        return self._entries.get(entry_id)
+def MockMetadataStore(entries: dict[int, MemeEntry] | None = None) -> MetadataStore:
+    """构造模拟 MetadataStore，get_entry 按 id 返回 MemeEntry。"""
+    mock = MagicMock()
+    mock.get_entry.side_effect = (entries or {}).get
+    return cast(MetadataStore, mock)
 
 
 class MockEmbeddingProvider:
@@ -71,17 +65,14 @@ class MockEmbeddingProvider:
         pass
 
 
-class MockReranker:
-    def __init__(self, result: Any = 0, exc: Exception | None = None) -> None:
-        self._result = result
-        self._exc = exc
-        self.calls: list[tuple[str, list[AIMatchCandidate]]] = []
-
-    async def rerank(self, description: str, candidates: list[AIMatchCandidate]) -> int:
-        self.calls.append((description, candidates))
-        if self._exc is not None:
-            raise self._exc
-        return self._result
+def MockReranker(result: Any = 0, exc: Exception | None = None) -> MagicMock:
+    """构造模拟精排服务，rerank 返回 result 或抛出 exc，调用参数可经 call_args_list 检查。"""
+    mock = MagicMock()
+    if exc is not None:
+        mock.rerank = AsyncMock(side_effect=exc)
+    else:
+        mock.rerank = AsyncMock(return_value=result)
+    return mock
 
 
 def _make_entries() -> dict[int, MemeEntry]:
@@ -122,7 +113,7 @@ async def test_empty_description_returns_none_without_embedding_call() -> None:
         MockMetadataStore(),
         MockVectorStore(count=0),
         MockEmbeddingProvider(),
-        MockReranker(),
+        cast(RerankService, MockReranker()),
     )
     result = await matcher.match_with_vector("   ", _make_query_vector())
     assert result is None
@@ -201,10 +192,14 @@ class TestEmbeddingRecall:
 
     @pytest.mark.asyncio
     async def test_limit_passed_to_query(self) -> None:
-        class CountingVectorStore(MockVectorStore):
+        class _CapturingVectorStore:
+            """记录 query 收到的 n_results，返回固定单条命中。"""
+
             def __init__(self) -> None:
-                super().__init__(hits=[VectorHit(1, 0.9)], count=1)
                 self.last_n: int | None = 0
+
+            def count(self) -> int:
+                return 1
 
             async def query(
                 self,
@@ -214,22 +209,21 @@ class TestEmbeddingRecall:
                 collection_id: int | None = None,
             ) -> list[VectorHit]:
                 self.last_n = n_results
-                return await super().query(
-                    query_embedding,
-                    n_results,
-                    collection_id=collection_id,
-                )
+                return [VectorHit(1, 0.9)]
 
-        vs = CountingVectorStore()
+        vs = _CapturingVectorStore()
         matcher = AIMatcher(
-            MockMetadataStore(_make_entries()), vs, MockEmbeddingProvider(), limit=5
+            MockMetadataStore(_make_entries()),
+            cast(VectorStore, vs),
+            MockEmbeddingProvider(),
+            limit=5,
         )
         await matcher.match_with_vector("找猫", _make_query_vector())
         assert vs.last_n == 5
 
 
 class TestRerank:
-    def _matcher(self, reranker: MockReranker, limit: int = 10) -> AIMatcher:
+    def _matcher(self, reranker: MagicMock, limit: int = 10) -> AIMatcher:
         hits = [
             VectorHit(entry_id=1, similarity=0.9),
             VectorHit(entry_id=2, similarity=0.8),
@@ -262,7 +256,7 @@ class TestRerank:
             MockMetadataStore(entries),
             MockVectorStore(hits=hits, count=3),
             MockEmbeddingProvider(),
-            rerank_provider=reranker,
+            rerank_provider=cast(RerankService, reranker),
             limit=limit,
         )
 
@@ -275,14 +269,14 @@ class TestRerank:
         assert result is not None
         assert result.entry_id == 2
         assert result.source == "rerank"
-        assert [c.rank for c in reranker.calls[0][1]] == [1, 2, 3]
+        assert [c.rank for c in reranker.rerank.call_args_list[0].args[1]] == [1, 2, 3]
 
     @pytest.mark.asyncio
     async def test_limit_controls_candidates(self) -> None:
         reranker = MockReranker(result=1)
         m = self._matcher(reranker, limit=2)
         await m.match_with_vector("只看两个", _make_query_vector())
-        assert len(reranker.calls[0][1]) == 2
+        assert len(reranker.rerank.call_args_list[0].args[1]) == 2
 
     @pytest.mark.asyncio
     async def test_zero_fallbacks_top1(self) -> None:
@@ -348,7 +342,11 @@ async def test_ai_match_passes_collection_filter() -> None:
     vector_store.query = AsyncMock(return_value=[])
     metadata_store = Mock()
     embedding_provider = AsyncMock()
-    matcher = AIMatcher(metadata_store, vector_store, embedding_provider)
+    matcher = AIMatcher(
+        cast(MetadataStore, metadata_store),
+        cast(VectorStore, vector_store),
+        embedding_provider,
+    )
 
     await matcher.match_with_vector("描述", [1.0, 0.0], collection_id=2)
 

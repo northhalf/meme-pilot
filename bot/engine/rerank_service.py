@@ -3,7 +3,7 @@
 通过 OpenAI 兼容的 chat completions API 调用 DeepSeek 模型，
 从 embedding 阶段的 Top N 候选中精排出最终匹配的表情包。
 
-实现 ai_matcher.RerankProvider 协议。
+实现 ai_matcher.AIMatcher 所需的精排能力。
 """
 
 import asyncio
@@ -93,8 +93,7 @@ def _parse_rank(raw: str, max_rank: int) -> int | None:
 class RerankService:
     """DeepSeek 精排服务，通过 LLM 从候选中选出最佳匹配。
 
-    实现 ai_matcher.RerankProvider 协议，
-    可直接注入给 AIMatcher 使用。
+    可直接注入给 AIMatcher 作为精排 provider 使用。
 
     Attributes:
         _client: AsyncOpenAI 客户端。

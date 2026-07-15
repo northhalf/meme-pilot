@@ -4,8 +4,9 @@ import logging
 
 from bot.log_context import timed
 
-from .protocols import MetadataStoreProvider, VectorQueryProvider
+from .metadata_store import MetadataStore
 from .types import SearchResult
+from .vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +19,8 @@ class SemanticSearcher:
 
     def __init__(
         self,
-        metadata_store: MetadataStoreProvider,
-        vector_store: VectorQueryProvider,
+        metadata_store: MetadataStore,
+        vector_store: VectorStore,
     ) -> None:
         self.metadata_store = metadata_store
         self.vector_store = vector_store

@@ -1,8 +1,10 @@
 """表情包合集名称、公开 ID 与 ChatScope 选择解析。"""
 
 import re
-from typing import Protocol
 
+from bot.session import ChatScope
+
+from .metadata_store import MetadataStore
 from .types import (
     ALL_COLLECTIONS_NAME,
     GLOBAL_COLLECTION_ID,
@@ -10,7 +12,6 @@ from .types import (
     CollectionSummary,
     MemeCollection,
     MemePublicId,
-    ScopeLike,
 )
 
 _FULL_ID_RE = re.compile(r"^[0-9]+\.[0-9]+$", re.ASCII)
@@ -53,34 +54,6 @@ class MemeNotFoundError(ValueError):
     """未找到指定表情包条目。"""
 
 
-class CollectionStoreProtocol(Protocol):
-    """CollectionManager 所需的元数据接口。"""
-
-    def get_collection(self, collection_id: int) -> MemeCollection | None:
-        """按编号返回合集。"""
-        ...
-
-    def get_collection_by_name(self, name: str) -> MemeCollection | None:
-        """按精确名称返回合集。"""
-        ...
-
-    def list_collections(self) -> list[MemeCollection]:
-        """返回所有普通合集。"""
-        ...
-
-    def get_selected_collection(self, scope: ScopeLike) -> int:
-        """返回聊天作用域当前选择的合集编号。"""
-        ...
-
-    def set_selected_collection(self, scope: ScopeLike, collection_id: int) -> None:
-        """保存聊天作用域当前选择的合集编号。"""
-        ...
-
-    def collection_entry_count(self, collection_id: int | None) -> int:
-        """返回全库或指定合集的条目数。"""
-        ...
-
-
 class CollectionManager:
     """集中实现合集参数与公开 ID 规则。
 
@@ -88,7 +61,7 @@ class CollectionManager:
         _store: 元数据 Store
     """
 
-    def __init__(self, store: CollectionStoreProtocol) -> None:
+    def __init__(self, store: MetadataStore) -> None:
         """初始化合集管理器。
 
         Args:
@@ -177,7 +150,7 @@ class CollectionManager:
         collection = self.resolve_collection(text)
         return CollectionSelection(collection.id, collection.name)
 
-    def get_selected(self, scope: ScopeLike) -> CollectionSelection:
+    def get_selected(self, scope: ChatScope) -> CollectionSelection:
         """返回聊天作用域当前选择，失效选择自动回退到全部合集。
 
         Args:
@@ -195,7 +168,7 @@ class CollectionManager:
             return CollectionSelection(0, ALL_COLLECTIONS_NAME)
         return CollectionSelection(collection.id, collection.name)
 
-    def set_selected(self, scope: ScopeLike, collection_id: int) -> None:
+    def set_selected(self, scope: ChatScope, collection_id: int) -> None:
         """保存聊天作用域当前选择的合集编号。
 
         Args:
@@ -204,7 +177,7 @@ class CollectionManager:
         """
         self._store.set_selected_collection(scope, collection_id)
 
-    def list_summaries(self, scope: ScopeLike) -> list[CollectionSummary]:
+    def list_summaries(self, scope: ChatScope) -> list[CollectionSummary]:
         """返回全部合集入口和各普通合集的统计摘要。
 
         Args:
