@@ -248,7 +248,7 @@ cp .env.example .env
 #   COMPRESS_CONCURRENCY=5  # 可选，图片压缩并发上限
 #   CONVERT_TO_WEBP=true  # 可选，图片转 WebP 开关（默认开启）
 #   # 内存治理（默认值已内置，按需覆盖；详见 .env.example）
-#   MALLOC_ARENA_MAX=2  # 可选，glibc arena 上限，治容器 RSS 持续上涨
+#   LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libmimalloc.so.3  # 可选，用 mimalloc 接管 malloc，治容器 RSS 持续上涨
 #   ORT_INTRA_OP_NUM_THREADS=2  # 可选，onnxruntime 推理线程（原默认占满 CPU 核）
 #   ORT_INTER_OP_NUM_THREADS=1  # 可选，onnxruntime inter-op 线程
 #   READ_LOCK_TIMEOUT=00:00:30  # 可选，search/ai_match 等待写锁释放的超时
