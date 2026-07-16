@@ -89,6 +89,24 @@ class TestHandleUnknownSlashCommand:
         _assert_no_reply(call_args)
 
     @pytest.mark.asyncio
+    @patch.object(plain_text, "is_authorized", return_value=True)
+    async def test_removed_ai_command_replies_unknown(
+        self, mock_auth: MagicMock
+    ) -> None:
+        """删除后的 /ai 应进入未知命令兜底，帮助中不再展示 /ai。"""
+        _reset_mocks()
+        matcher = _make_matcher()
+
+        await handle_plain_text(
+            _make_bot(), _make_event("111", "/ai 加班心累"), matcher
+        )
+
+        matcher.finish.assert_awaited_once()
+        text = extract_message_text(matcher.finish.await_args.args[0])
+        assert "未知命令" in text
+        assert "/ai <" not in text
+
+    @pytest.mark.asyncio
     @patch.object(plain_text, "is_authorized", return_value=False)
     async def test_unauthorized_slash_command_ignored(
         self, mock_auth: MagicMock

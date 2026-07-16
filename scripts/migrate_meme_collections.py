@@ -28,8 +28,8 @@
   SQLite 无记录的受支持文件记为未索引跳过；单条迁移失败会回滚文件、SQLite
   与 Chroma 三处变更，并在新建合集但全部失败时撤销空合集与空目录。
 - ``move-root`` 的 ``target`` 为纯数字时先按合集 ID 解析，ID 不存在再按名称
-  匹配；非数字按名称精确匹配；名称须通过校验（非空、非 ``.``/``..``、不以
-  ``.`` 开头、不含路径分隔符与空字符）。
+  匹配；非数字按名称精确匹配；名称须通过 engine 领域校验（非空、非保留名、
+  不以 ``.`` 开头、不含内部空白、路径分隔符与空字符）。
 
 注意：
 - 运行前必须停止 Bot；脚本不会检测 Bot 进程是否存活。
@@ -49,6 +49,10 @@ from pathlib import Path
 from typing import Literal
 
 from bot.config import CHROMA_DIR, INDEX_DB_PATH, MEMES_DIR
+from bot.engine.collection_manager import (
+    InvalidCollectionNameError,
+    validate_collection_name,
+)
 from bot.engine.metadata_store import MemeEntry, MetadataStore, create_current_schema
 from bot.engine.types import MemeCollection, MemePublicId
 from bot.engine.utils import resolve_unique_filename
@@ -106,36 +110,6 @@ class MoveRootResult:
     unindexed_skipped: list[str]
     failed: list[tuple[str, str]]
     backup_path: Path | None = None
-
-
-class InvalidCollectionNameError(ValueError):
-    """合集名称不能映射为安全的单层目录名。"""
-
-
-def validate_collection_name(raw: str) -> str:
-    """校验并规范化合集名称。
-
-    Args:
-        raw: 用户输入的目标合集名称。
-
-    Returns:
-        去除首尾空格的合法名称。
-
-    Raises:
-        InvalidCollectionNameError: 名称为空、当前目录、父目录、隐藏名、含路径
-            分隔符或空字符。
-    """
-    name = raw.strip()
-    if (
-        not name
-        or name in {".", ".."}
-        or name.startswith(".")
-        or "/" in name
-        or "\\" in name
-        or "\x00" in name
-    ):
-        raise InvalidCollectionNameError(raw)
-    return name
 
 
 def _resolve_target_collection(store: MetadataStore, raw: str) -> MemeCollection | None:

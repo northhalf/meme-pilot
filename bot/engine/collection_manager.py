@@ -8,6 +8,7 @@ from .metadata_store import MetadataStore
 from .types import (
     ALL_COLLECTIONS_NAME,
     GLOBAL_COLLECTION_ID,
+    GLOBAL_COLLECTION_NAME,
     CollectionSelection,
     CollectionSummary,
     MemeCollection,
@@ -40,6 +41,40 @@ class CollectionNotFoundError(ValueError):
 
 class InvalidCollectionNameError(ValueError):
     """合集名称不能映射为安全的单层目录名。"""
+
+
+_RESERVED_COLLECTION_NAMES = frozenset(
+    {GLOBAL_COLLECTION_NAME, ALL_COLLECTIONS_NAME}
+)
+
+
+def validate_collection_name(raw: str) -> str:
+    """校验并规范化合集名称。
+
+    Args:
+        raw: 用户输入的合集名称。
+
+    Returns:
+        去除首尾空白后的合法名称。
+
+    Raises:
+        InvalidCollectionNameError: 名称为空、含内部空白、使用保留名，
+            或不能映射为安全单层目录。
+    """
+    name = raw.strip()
+    invalid = (
+        not name
+        or name in {".", ".."}
+        or name.startswith(".")
+        or name in _RESERVED_COLLECTION_NAMES
+        or "/" in name
+        or "\\" in name
+        or "\x00" in name
+        or any(character.isspace() for character in name)
+    )
+    if invalid:
+        raise InvalidCollectionNameError(raw)
+    return name
 
 
 class InvalidPublicIdError(ValueError):

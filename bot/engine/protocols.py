@@ -1,6 +1,7 @@
-"""engine 包共享协议定义。
+"""共享 provider 协议。
 
-各模块共用的 Protocol 集中在此，避免重复定义。
+IndexManager、SemanticSearcher 等模块通过这些协议调用外部服务，
+便于测试时注入 mock。
 """
 
 from typing import Protocol
@@ -9,8 +10,8 @@ from typing import Protocol
 class EmbeddingProvider(Protocol):
     """Embedding 服务提供者协议。
 
-    IndexManager、AIMatcher 等模块通过此协议调用 Embedding API，
-    由插件层注入具体实现（如 EmbeddingService）。
+    IndexManager、SemanticSearcher 等模块通过此协议调用 Embedding API，
+    由启动入口注入具体实现。
     """
 
     async def embed(self, text: str) -> list[float]:

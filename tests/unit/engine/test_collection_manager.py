@@ -1,18 +1,28 @@
 """CollectionManager 单元测试。"""
 
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, fields
 from pathlib import Path
 from typing import cast
 
 import pytest
 
-from bot.engine.metadata_store import MetadataStore
 from bot.engine.collection_manager import (
     CollectionManager,
     CollectionNotFoundError,
+    InvalidCollectionNameError,
     InvalidPublicIdError,
     ShortIdUnavailableError,
+    validate_collection_name,
 )
+from bot.engine.index_types import (
+    CollectionAlreadyExistsError,
+    CollectionCreateError,
+    CollectionPathConflictError,
+    CreateCollectionResult,
+    WriteOp,
+    _WriteRequest,
+)
+from bot.engine.metadata_store import MetadataStore
 from bot.engine.types import (
     ALL_COLLECTIONS_NAME,
     GLOBAL_COLLECTION_ID,
@@ -76,6 +86,71 @@ def test_collection_constants_distinguish_storage_and_selection_names() -> None:
     assert GLOBAL_COLLECTION_ID == 0
     assert GLOBAL_COLLECTION_NAME == "全局"
     assert ALL_COLLECTIONS_NAME == "全部合集"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("新三国", "新三国"),
+        ("  新三国  ", "新三国"),
+        ("collection-01", "collection-01"),
+        ("合集_01", "合集_01"),
+    ],
+)
+def test_validate_collection_name_accepts_safe_names(
+    raw: str, expected: str
+) -> None:
+    assert validate_collection_name(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "",
+        "   ",
+        ".",
+        "..",
+        ".隐藏",
+        "新 三国",
+        "新\t三国",
+        "新\n三国",
+        "新　三国",
+        "a/b",
+        r"a\b",
+        "a\x00b",
+        "全局",
+        "全部合集",
+    ],
+)
+def test_validate_collection_name_rejects_invalid_names(raw: str) -> None:
+    with pytest.raises(InvalidCollectionNameError):
+        validate_collection_name(raw)
+
+
+def test_collection_creation_result_and_errors_keep_context() -> None:
+    collection = MemeCollection(id=3, name="甄嬛传")
+
+    result = CreateCollectionResult(
+        collection=collection,
+        registered_existing_directory=True,
+    )
+    already_exists = CollectionAlreadyExistsError(collection)
+    path_conflict = CollectionPathConflictError(collection.name)
+
+    assert result.collection == collection
+    assert result.registered_existing_directory is True
+    assert already_exists.collection == collection
+    assert str(already_exists) == "合集已存在: 3:甄嬛传"
+    assert path_conflict.name == collection.name
+    assert str(path_conflict) == "合集目录路径冲突: 甄嬛传"
+    assert issubclass(CollectionCreateError, RuntimeError)
+
+
+def test_create_collection_write_request_contract() -> None:
+    request_fields = {field.name: field for field in fields(_WriteRequest)}
+
+    assert WriteOp.CREATE_COLLECTION.name == "CREATE_COLLECTION"
+    assert request_fields["collection_name"].default == ""
 
 
 def test_parse_full_id_accepts_leading_zeroes_and_normalizes_output() -> None:

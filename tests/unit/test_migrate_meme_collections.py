@@ -311,6 +311,16 @@ class TestValidateCollectionName:
         """合法名称去除首尾空格后返回。"""
         assert validate_collection_name("  新三国  ") == "新三国"
 
+    @pytest.mark.parametrize(
+        "name", ["新 三国", "新\t三国", "新　三国", "全局", "全部合集"]
+    )
+    def test_validate_collection_name_rejects_domain_invalid_names(
+        self, name: str
+    ) -> None:
+        """迁移入口应拒绝领域非法名称。"""
+        with pytest.raises(InvalidCollectionNameError):
+            validate_collection_name(name)
+
 
 class TestMoveRootPaths:
     """测试 move-root 外层路径与备份流程。"""

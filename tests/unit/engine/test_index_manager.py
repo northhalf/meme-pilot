@@ -12,7 +12,6 @@ import pytest
 
 from typing import cast
 
-from bot.engine.ai_matcher import AIMatcher
 from bot.engine.collection_manager import CollectionManager, CollectionNotFoundError
 from bot.engine.index_manager import (
     AddResult,
@@ -441,11 +440,6 @@ def index_manager(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     vector_store = cast(VectorStore, FakeVectorStore())
     keyword_searcher = KeywordSearcher(metadata_store)
     embedding_provider = MockEmbeddingProvider()
-    ai_matcher = AIMatcher(
-        metadata_store=metadata_store,
-        vector_store=vector_store,
-        embedding_provider=embedding_provider,
-    )
     random_searcher = RandomSearcher(metadata_store, keyword_searcher)
     semantic_searcher = SemanticSearcher(metadata_store, vector_store)
     from bot.engine.collection_manager import CollectionManager
@@ -462,7 +456,6 @@ def index_manager(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         embedding_provider=embedding_provider,
         optimizer=cast(ImageOptimizer, MockOptimizer()),
         keyword_searcher=keyword_searcher,
-        ai_matcher=ai_matcher,
         random_searcher=random_searcher,
         semantic_searcher=semantic_searcher,
         combined_searcher=combined_searcher,
@@ -2871,27 +2864,6 @@ class TestCollectionSearch:
 
         assert len(results) == 1
         assert results[0].collection_id == second.id
-
-    @pytest.mark.asyncio
-    async def test_ai_match_filters_by_collection(
-        self, index_manager: IndexManager
-    ) -> None:
-        """ai_match 按 collection_id 过滤。"""
-        store = index_manager._metadata_store
-        vs = cast(FakeVectorStore, index_manager._vector_store)
-        first = store.create_collection("新三国")
-        second = store.create_collection("甄嬛传")
-        eid_a = store.add("新三国/a.webp", "apple", collection_id=first.id)
-        eid_b = store.add("甄嬛传/b.webp", "banana", collection_id=second.id)
-        await vs.upsert(eid_a, [97.0] * 1024, collection_id=first.id)
-        await vs.upsert(eid_b, [98.0] * 1024, collection_id=second.id)
-
-        result = await index_manager.ai_match("banana", collection_id=first.id)
-
-        assert result is not None
-        assert result.public_id.collection_id == first.id
-        assert result.text == "apple"
-
 
 # ---------------------------------------------------------------------------
 # Task 6: 合集管理方法直接测试

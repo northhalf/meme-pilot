@@ -45,7 +45,14 @@ logger = logging.getLogger(__name__)
 DOWNLOAD_TIMEOUT = 30  # 图片下载超时（秒）
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
 
-add_cmd = on_command("add", rule=to_me(), priority=5, block=True, aliases={"a"})
+add_cmd = on_command(
+    "add",
+    rule=to_me(),
+    priority=5,
+    block=True,
+    aliases={"a"},
+    force_whitespace=True,
+)
 
 
 @add_cmd.handle()

@@ -7,16 +7,15 @@
 import logging
 
 # 从各子模块导出公共接口
-from .ai_matcher import (
-    AIMatchCandidate,
-    AIMatcher,
-    AIMatchResult,
-)
 from .collection_manager import CollectionManager
 from .combined_searcher import CombinedSearcher
 from .image_optimizer import ImageOptimizer, OptimizeResult
 from .index_manager import (
     AddResult,
+    CollectionAlreadyExistsError,
+    CollectionCreateError,
+    CollectionPathConflictError,
+    CreateCollectionResult,
     DuplicateMemeInCollectionError,
     DuplicateTextError,
     EditTextResult,
@@ -40,7 +39,6 @@ from .provider_factory import (
     register_embedding,
     register_ocr,
 )
-from .rerank_service import RerankService
 from .types import SearchResult
 from .vector_store import VectorHit, VectorStore
 
@@ -98,10 +96,6 @@ __all__ = [
     # protocols
     "EmbeddingProvider",
     "OcrProvider",
-    # ai_matcher
-    "AIMatcher",
-    "AIMatchCandidate",
-    "AIMatchResult",
     # collection_manager
     "CollectionManager",
     # image_optimizer
@@ -109,6 +103,10 @@ __all__ = [
     "OptimizeResult",
     # index_manager
     "AddResult",
+    "CollectionAlreadyExistsError",
+    "CollectionCreateError",
+    "CollectionPathConflictError",
+    "CreateCollectionResult",
     "DuplicateMemeInCollectionError",
     "DuplicateTextError",
     "EditTextResult",
@@ -138,6 +136,4 @@ __all__ = [
     "OpenAIOcrService",
     "PaddleOcrClientService",
     "RapidOcrService",
-    # rerank
-    "RerankService",
 ]

@@ -1,0 +1,7 @@
+# 本地构建加速代理；仅与 docker-compose.build.yml 组合使用
+services:
+  bot:
+    build:
+      args:
+        - http_proxy=http://127.0.0.1:10808
+        - https_proxy=http://127.0.0.1:10808

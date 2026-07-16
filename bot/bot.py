@@ -30,13 +30,11 @@ from bot.config import (
 )
 from bot.log_context import set_request_id
 from bot.engine import (
-    AIMatcher,
     CollectionManager,
     ImageOptimizer,
     IndexManager,
     KeywordSearcher,
     MetadataStore,
-    RerankService,
     VectorStore,
 )
 from bot.engine.provider_factory import (
@@ -79,10 +77,10 @@ async def _on_startup() -> None:
 
     流程：
     1. 配置日志
-    2. 创建 OCR / Embedding / Rerank / ImageOptimizer 服务
+    2. 创建 OCR / Embedding / ImageOptimizer 服务
     3. 创建 MetadataStore + VectorStore
     4. 创建 CollectionManager
-    5. 创建 AIMatcher / KeywordSearcher / RandomSearcher / SemanticSearcher / CombinedSearcher
+    5. 创建 KeywordSearcher / RandomSearcher / SemanticSearcher / CombinedSearcher
     6. 创建 IndexManager 并加载索引
     7. 注册到 app_state 供插件获取
     8. 并发执行 jieba 预热与首次索引刷新，等待完成后 Bot 才真正可用
@@ -99,8 +97,6 @@ async def _on_startup() -> None:
         read_ocr_provider(),
         read_embedding_provider(),
     )
-    rerank_service = RerankService(concurrency=read_int_env("RERANK_CONCURRENCY"))
-    logger.info("Rerank 服务已初始化")
     image_optimizer = ImageOptimizer(
         concurrency=read_int_env("COMPRESS_CONCURRENCY"),
         should_convert_to_webp=read_convert_to_webp(),
@@ -117,13 +113,7 @@ async def _on_startup() -> None:
     # 4. 创建合集管理器
     collection_manager = CollectionManager(metadata_store)
 
-    # 5. 创建搜索和匹配服务（IndexManager 内部持锁后委托调用）
-    ai_matcher = AIMatcher(
-        metadata_store=metadata_store,
-        vector_store=vector_store,
-        embedding_provider=embedding_service,
-        rerank_provider=rerank_service,
-    )
+    # 5. 创建搜索服务（IndexManager 内部持锁后委托调用）
     keyword_searcher = KeywordSearcher(metadata_store)
     random_searcher = RandomSearcher(metadata_store, keyword_searcher)
     semantic_searcher = SemanticSearcher(metadata_store, vector_store)
@@ -142,7 +132,6 @@ async def _on_startup() -> None:
         embedding_provider=embedding_service,
         optimizer=image_optimizer,
         keyword_searcher=keyword_searcher,
-        ai_matcher=ai_matcher,
         random_searcher=random_searcher,
         semantic_searcher=semantic_searcher,
         combined_searcher=combined_searcher,
@@ -159,7 +148,6 @@ async def _on_startup() -> None:
         ocr_service=ocr_service,
         embedding_service=embedding_service,
         image_optimizer=image_optimizer,
-        ai_matcher=ai_matcher,
         keyword_searcher=keyword_searcher,
         random_searcher=random_searcher,
         semantic_searcher=semantic_searcher,

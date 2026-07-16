@@ -1,12 +1,12 @@
 """Embedding 服务模块 — 通用 OpenAI 兼容 Embedding API 封装。
 
 通过 OpenAI 兼容的 embeddings API 调用向量化模型，
-为 AI 语义匹配提供文本 embedding 生成能力。
+为语义搜索和索引写入提供文本 embedding 生成能力。
 
-支持任何兼容 OpenAI embeddings API 的服务商（如 GLM、SiliconFlow、OpenAI、
-DeepSeek 等），只需配置 api_key、base_url 和 model 即可。
+支持任何兼容 OpenAI embeddings API 的服务商（如 GLM、SiliconFlow、OpenAI
+等），只需配置 api_key、base_url 和 model 即可。
 
-实现 ai_matcher.EmbeddingProvider 协议。
+实现 protocols.EmbeddingProvider 协议。
 """
 
 import asyncio
@@ -26,8 +26,8 @@ logger = logging.getLogger(__name__)
 class OpenAIEmbeddingService:
     """通用 Embedding 服务，通过 OpenAI 兼容 API 生成文本向量。
 
-    实现 ai_matcher.EmbeddingProvider 协议，
-    可直接注入给 AIMatcher 使用。
+    实现 protocols.EmbeddingProvider 协议，
+    可供 IndexManager 和 SemanticSearcher 使用。
 
     Attributes:
         _client: AsyncOpenAI 客户端。

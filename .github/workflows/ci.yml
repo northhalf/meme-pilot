@@ -51,7 +51,7 @@ jobs:
 
   # ──────────────────────────────────────────────
   # Job: 集成测试
-  #   调用真实外部 API（DeepSeek / OpenAI 兼容 Embedding+OCR / PaddleOCR）
+  #   调用真实外部 API（OpenAI 兼容 Embedding+OCR / PaddleOCR / Google Embedding）
   #   API Key 从仓库 secrets 注入；base_url/model 为非敏感配置，用明文。
   #   缺失 Key 的测试用例自动 skip；失败不阻塞构建（build 仅依赖 unit test）。
   # ──────────────────────────────────────────────
@@ -83,7 +83,6 @@ jobs:
 
       - name: Run integration tests
         env:
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           OPENAI_EMBEDDING_API_KEY: ${{ secrets.OPENAI_EMBEDDING_API_KEY }}
           OPENAI_OCR_API_KEY: ${{ secrets.OPENAI_OCR_API_KEY }}
           PADDLEOCR_ACCESS_TOKEN: ${{ secrets.PADDLEOCR_ACCESS_TOKEN }}

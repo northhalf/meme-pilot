@@ -1,13 +1,12 @@
 """共享实例管理模块。
 
 模块级单例模式，供插件获取 IndexManager、MetadataStore、VectorStore、
-OcrProvider、EmbeddingProvider、ImageOptimizer、AIMatcher、KeywordSearcher、
-RandomSearcher、SemanticSearcher、CombinedSearcher、CollectionManager。
+OcrProvider、EmbeddingProvider、ImageOptimizer、KeywordSearcher、RandomSearcher、
+SemanticSearcher、CombinedSearcher、CollectionManager。
 bot.py 启动时调用 init_app() 初始化，插件通过 get_*() 函数获取实例。
 """
 
 from .engine import (
-    AIMatcher,
     CollectionManager,
     ImageOptimizer,
     IndexManager,
@@ -28,7 +27,6 @@ _collection_manager: CollectionManager | None = None
 _ocr_service: OcrProvider | None = None
 _embedding_service: EmbeddingProvider | None = None
 _image_optimizer: ImageOptimizer | None = None
-_ai_matcher: AIMatcher | None = None
 _keyword_searcher: KeywordSearcher | None = None
 _random_searcher: RandomSearcher | None = None
 _semantic_searcher: SemanticSearcher | None = None
@@ -42,7 +40,6 @@ def init_app(
     ocr_service: OcrProvider,
     embedding_service: EmbeddingProvider,
     image_optimizer: ImageOptimizer | None = None,
-    ai_matcher: AIMatcher | None = None,
     keyword_searcher: KeywordSearcher | None = None,
     random_searcher: RandomSearcher | None = None,
     semantic_searcher: SemanticSearcher | None = None,
@@ -61,7 +58,6 @@ def init_app(
         ocr_service: OCR 服务实例。
         embedding_service: Embedding 服务实例。
         image_optimizer: 图片压缩器实例，可选。
-        ai_matcher: AI 匹配器实例，可选。
         keyword_searcher: 关键词搜索器实例，可选。
         random_searcher: 随机搜索器实例，可选。
         semantic_searcher: 语义搜索器实例，可选。
@@ -69,7 +65,7 @@ def init_app(
         collection_manager: 合集管理器实例，可选。
     """
     global _index_manager, _metadata_store, _vector_store, _collection_manager
-    global _ocr_service, _embedding_service, _image_optimizer, _ai_matcher
+    global _ocr_service, _embedding_service, _image_optimizer
     global _keyword_searcher, _random_searcher, _semantic_searcher, _combined_searcher
     _index_manager = index_manager
     _metadata_store = metadata_store
@@ -78,7 +74,6 @@ def init_app(
     _ocr_service = ocr_service
     _embedding_service = embedding_service
     _image_optimizer = image_optimizer
-    _ai_matcher = ai_matcher
     _keyword_searcher = keyword_searcher
     _random_searcher = random_searcher
     _semantic_searcher = semantic_searcher
@@ -176,20 +171,6 @@ def get_image_optimizer() -> ImageOptimizer | None:
         已初始化的 ImageOptimizer 实例，或 None（未注入时）。
     """
     return _image_optimizer
-
-
-def get_ai_matcher() -> AIMatcher:
-    """获取 AIMatcher 单例。
-
-    Returns:
-        已初始化的 AIMatcher 实例。
-
-    Raises:
-        RuntimeError: 尚未调用 init_app() 初始化。
-    """
-    if _ai_matcher is None:
-        raise RuntimeError("AIMatcher 尚未初始化，请先调用 init_app()")
-    return _ai_matcher
 
 
 def get_keyword_searcher() -> KeywordSearcher:

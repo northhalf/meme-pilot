@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from bot.session import ChatScope
 
 from .metadata_store import MemeEntry
-from .types import CollectionSelection, MemePublicId
+from .types import CollectionSelection, MemeCollection, MemePublicId
 
 
 @dataclass(slots=True)
@@ -48,8 +48,51 @@ class RefreshInProgressError(RuntimeError):
     """索引刷新进行中，新的写入请求应被拒绝。"""
 
 
+class CollectionAlreadyExistsError(RuntimeError):
+    """待创建名称已被普通合集使用。"""
+
+    def __init__(self, collection: MemeCollection) -> None:
+        """初始化重名错误。
+
+        Args:
+            collection: 已存在的合集快照。
+        """
+        self.collection = collection
+        super().__init__(f"合集已存在: {collection.id}:{collection.name}")
+
+
+class CollectionPathConflictError(RuntimeError):
+    """同名文件系统路径不是可登记的普通目录。"""
+
+    def __init__(self, name: str) -> None:
+        """初始化路径冲突错误。
+
+        Args:
+            name: 已完成领域校验的合集名称。
+        """
+        self.name = name
+        super().__init__(f"合集目录路径冲突: {name}")
+
+
+class CollectionCreateError(RuntimeError):
+    """创建合集失败且可能需要人工检查文件系统。"""
+
+
+@dataclass(frozen=True, slots=True)
+class CreateCollectionResult:
+    """创建合集后的持久状态快照。
+
+    Attributes:
+        collection: 已登记的普通合集。
+        registered_existing_directory: 是否登记了用户原本已有的目录。
+    """
+
+    collection: MemeCollection
+    registered_existing_directory: bool
+
+
 class IndexAddCancelledError(RuntimeError):
-    """/add 任务因刷新或关闭而被取消。"""
+    """写入任务因刷新或关闭而被取消。"""
 
 
 class DuplicateMemeInCollectionError(RuntimeError):
@@ -82,6 +125,7 @@ class WriteOp(Enum):
     ADD_TAG = auto()
     DELETE = auto()
     MOVE = auto()
+    CREATE_COLLECTION = auto()
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,7 +133,8 @@ class _WriteRequest:
     """写入任务单元，由 Write Worker 串行处理。
 
     Attributes:
-        op: 操作类型（ADD / EDIT_TEXT / SET_SPEAKER / ADD_TAG / DELETE / MOVE）。
+        op: 操作类型（ADD / EDIT_TEXT / SET_SPEAKER / ADD_TAG / DELETE / MOVE /
+            CREATE_COLLECTION）。
         future: 用于返回结果的 asyncio.Future。
         entry_id: EDIT_TEXT / SET_SPEAKER / ADD_TAG 时为目标 id；ADD 时为 0（store 自动分配）。
         filename: ADD 时 memes/ 下文件名。
@@ -100,6 +145,7 @@ class _WriteRequest:
         embedding: 对应的 embedding 向量元组（不可变）。
         old_text: EDIT_TEXT 旧 text（回滚用）。
         collection_id: ADD 时的目标合集编号。
+        collection_name: CREATE_COLLECTION 时已完成领域校验的合集名称。
         scope: ADD 时发起命令的 ChatScope，用于写锁内校验选择快照。
         expected_selection: ADD 时捕获的完整合集选择快照。
         target_collection_id: MOVE 时的目标合集编号。
@@ -109,7 +155,7 @@ class _WriteRequest:
     """
 
     op: WriteOp
-    future: "asyncio.Future[AddResult | EditTextResult | SetSpeakerResult | AddTagResult | DeleteResult | MoveResult]"
+    future: "asyncio.Future[AddResult | EditTextResult | SetSpeakerResult | AddTagResult | DeleteResult | MoveResult | CreateCollectionResult]"
     entry_id: int = 0
     filename: str = ""
     text: str = ""
@@ -119,6 +165,7 @@ class _WriteRequest:
     embedding: tuple[float, ...] | None = None
     old_text: str = ""
     collection_id: int = 0
+    collection_name: str = ""
     scope: "ChatScope | None" = None
     expected_selection: CollectionSelection | None = None
     target_collection_id: int = 0

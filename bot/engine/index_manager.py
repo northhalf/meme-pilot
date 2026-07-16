@@ -9,6 +9,7 @@ import asyncio
 import logging
 import os
 import shutil
+import stat
 from collections.abc import Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -18,15 +19,18 @@ from bot.config import read_add_command_timeout, read_read_lock_timeout
 from bot.log_context import timed
 from bot.session import ChatScope
 
-from .ai_matcher import AIMatcher, AIMatchResult
-from .collection_manager import CollectionNotFoundError
+from .collection_manager import CollectionNotFoundError, validate_collection_name
 from .combined_searcher import CombinedSearcher
 from .image_optimizer import ImageOptimizer, OptimizeResult
 from .index_types import (
     AddResult,
     AddTagResult,
+    CollectionAlreadyExistsError,
+    CollectionCreateError,
+    CollectionPathConflictError,
     CollectionSelectionExpiredError,
     CompressionError,
+    CreateCollectionResult,
     DeleteResult,
     DuplicateMemeInCollectionError,
     DuplicateTextError,
@@ -85,8 +89,12 @@ _T = TypeVar("_T")
 
 __all__ = [
     "AddResult",
+    "CollectionAlreadyExistsError",
+    "CollectionCreateError",
+    "CollectionPathConflictError",
     "CollectionSelectionExpiredError",
     "CompressionError",
+    "CreateCollectionResult",
     "DeleteResult",
     "DuplicateMemeInCollectionError",
     "DuplicateTextError",
@@ -126,11 +134,10 @@ class IndexManager:
         _deleted_dir: 已删除图目录。
         _ocr_provider / _embedding_provider / _optimizer: providers。
         _keyword_searcher: 关键词搜索器，由 IndexManager 持锁后调用。
-        _ai_matcher: AI 匹配器，由 IndexManager 持锁后调用。
         _rwlock: 读写锁，写者优先。
         _refresh_active: 是否有 refresh 正在执行写锁内的同步。
         _shutting_down: 是否正在关闭。
-        _write_drained: 写队列排空 Event（初始已 set；refresh 等待它之后获取写锁）。
+        _write_drained: 无排队且无执行中写请求时 set；refresh 等待后获取写锁。
 
     Class Attributes:
         SUPPORTED_EXTENSIONS: 支持的图片扩展名集合。
@@ -152,7 +159,6 @@ class IndexManager:
         embedding_provider: EmbeddingProvider | None = None,
         optimizer: ImageOptimizer | None = None,
         keyword_searcher: KeywordSearcher | None = None,
-        ai_matcher: AIMatcher | None = None,
         random_searcher: RandomSearcher | None = None,
         semantic_searcher: SemanticSearcher | None = None,
         combined_searcher: CombinedSearcher | None = None,
@@ -171,7 +177,6 @@ class IndexManager:
             embedding_provider: Embedding 服务提供者。
             optimizer: 图片压缩器。
             keyword_searcher: 关键词搜索器，由 IndexManager 持锁后调用。
-            ai_matcher: AI 匹配器，由 IndexManager 持锁后调用。
             random_searcher: 随机搜索器，由 IndexManager 持锁后调用。
             semantic_searcher: 语义搜索器，由 IndexManager 持锁后调用。
             combined_searcher: 组合搜索器，由 IndexManager 持锁后调用。
@@ -196,7 +201,6 @@ class IndexManager:
         self._embedding_provider = embedding_provider
         self._optimizer = optimizer
         self._keyword_searcher = keyword_searcher
-        self._ai_matcher = ai_matcher
         self._random_searcher = random_searcher
         self._semantic_searcher = semantic_searcher
         self._combined_searcher = combined_searcher
@@ -440,51 +444,6 @@ class IndexManager:
         async with self._rwlock.read(timeout=self.read_timeout):
             return self._search_combined_locked(keyword, speakers, tags, collection_id)
 
-    async def _ai_match_locked(
-        self,
-        description: str,
-        query_vector: list[float],
-        collection_id: int | None,
-    ) -> AIMatchResult | None:
-        """在已持有读锁时执行 AI 候选匹配。
-
-        Args:
-            description: 用户自然语言描述。
-            query_vector: 用户描述的 embedding 向量。
-            collection_id: 只在该合集内匹配；None 表示全库。
-
-        Returns:
-            匹配结果；空库或无可行候选时返回 None。
-        """
-        assert self._ai_matcher is not None
-        return await self._ai_matcher.match_with_vector(
-            description, query_vector, collection_id=collection_id
-        )
-
-    async def ai_match(
-        self, description: str, *, collection_id: int | None = None
-    ) -> AIMatchResult | None:
-        """AI 描述匹配。
-
-        Args:
-            description: 用户自然语言描述。
-            collection_id: 只在该合集内匹配；None 表示全库。
-
-        Returns:
-            匹配结果；空库或无可行候选时返回 None。
-
-        Raises:
-            asyncio.TimeoutError: 等待读锁超时。
-            RuntimeError: AIMatcher 未注入。
-        """
-        if self._ai_matcher is None:
-            raise RuntimeError("AIMatcher 未注入")
-        if self._embedding_provider is None:
-            raise RuntimeError("EmbeddingProvider 未注入")
-        query_vector = await self._embedding_provider.embed(description)
-        async with self._rwlock.read(timeout=self.read_timeout):
-            return await self._ai_match_locked(description, query_vector, collection_id)
-
     async def search_for_scope(
         self, scope: "ChatScope", keyword: str
     ) -> list[SearchResult]:
@@ -625,34 +584,40 @@ class IndexManager:
                 keyword, speakers, tags, selection.search_filter
             )
 
-    async def ai_match_for_scope(
-        self, scope: "ChatScope", description: str
-    ) -> AIMatchResult | None:
-        """锁外生成向量，并在同一读锁内读取聊天合集和执行 AI 匹配。
+    async def create_collection(self, raw_name: str) -> CreateCollectionResult:
+        """创建或登记空合集目录。
 
         Args:
-            scope: 聊天作用域，用于读取当前合集选择。
-            description: 用户自然语言描述。
+            raw_name: 用户输入的合集名称。
 
         Returns:
-            当前合集范围内的匹配结果；空库或无可行候选时返回 None。
+            已持久化的合集创建结果。
 
         Raises:
-            asyncio.TimeoutError: 等待读锁超时。
-            RuntimeError: AIMatcher 或 EmbeddingProvider 未注入。
+            InvalidCollectionNameError: 合集名称非法。
+            CollectionAlreadyExistsError: 名称已被登记。
+            CollectionPathConflictError: 同名路径不是安全普通目录。
+            CollectionCreateError: SQLite 失败后目录补偿失败。
+            RefreshInProgressError: 索引刷新正在执行。
+            IndexAddCancelledError: Bot 正在关闭或写入 worker 被取消。
         """
-        if self._ai_matcher is None:
-            raise RuntimeError("AIMatcher 未注入")
-        if self._embedding_provider is None:
-            raise RuntimeError("EmbeddingProvider 未注入")
-        query_vector = await self._embedding_provider.embed(description)
-        async with self._rwlock.read(timeout=self.read_timeout):
-            selection = await asyncio.to_thread(
-                self._collection_manager.get_selected, scope
+        if self._shutting_down:
+            raise IndexAddCancelledError("Bot 正在关闭")
+        if self._refresh_active:
+            raise RefreshInProgressError("索引正在刷新，请稍后再试")
+
+        collection_name = validate_collection_name(raw_name)
+        self._ensure_write_worker()
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[CreateCollectionResult] = loop.create_future()
+        self._enqueue_write_request(
+            _WriteRequest(
+                op=WriteOp.CREATE_COLLECTION,
+                future=future,  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+                collection_name=collection_name,
             )
-            return await self._ai_match_locked(
-                description, query_vector, selection.search_filter
-            )
+        )
+        return await future
 
     async def add(
         self,
@@ -709,7 +674,7 @@ class IndexManager:
             self._ensure_write_worker()
             loop = asyncio.get_running_loop()
             future = loop.create_future()
-            await self._write_queue.put(
+            self._enqueue_write_request(
                 _WriteRequest(
                     op=WriteOp.ADD,
                     future=future,
@@ -800,7 +765,7 @@ class IndexManager:
             embedding=tuple(new_embedding),
             old_text=old_text,
         )
-        await self._write_queue.put(req)
+        self._enqueue_write_request(req)
         result = await future
         logger.info("文字编辑完成: entry_ids=%s", entry_id)
         return result
@@ -864,7 +829,7 @@ class IndexManager:
             entry_id=entry_id,
             speaker=speaker,
         )
-        await self._write_queue.put(req)
+        self._enqueue_write_request(req)
         result = await future
         logger.info("发言人设置完成: entry_ids=%s", entry_id)
         return result
@@ -911,7 +876,7 @@ class IndexManager:
             entry_id=entry_id,
             tags=tuple(tags),
         )
-        await self._write_queue.put(req)
+        self._enqueue_write_request(req)
         result = await future
         logger.info("标签添加完成: entry_ids=%s", entry_id)
         return result
@@ -951,7 +916,7 @@ class IndexManager:
             future=future,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             entry_ids=tuple(entry_ids),
         )
-        await self._write_queue.put(req)
+        self._enqueue_write_request(req)
         result = await future
         logger.info("图片删除完成: %s", entry_ids)
         return result
@@ -1119,7 +1084,7 @@ class IndexManager:
         loop = asyncio.get_running_loop()
         future: asyncio.Future[MoveResult] = loop.create_future()
         transaction_started = asyncio.Event()
-        await self._write_queue.put(
+        self._enqueue_write_request(
             _WriteRequest(
                 op=WriteOp.MOVE,
                 future=future,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
@@ -1367,9 +1332,7 @@ class IndexManager:
         self._refresh_active = True
         self._refresh_task = asyncio.current_task()
         try:
-            if not self._write_queue.empty():
-                self._write_drained.clear()
-                await self._write_drained.wait()
+            await self._write_drained.wait()
 
             async with self._rwlock.write():
                 result = await self._run_sync_internal()
@@ -1387,104 +1350,253 @@ class IndexManager:
             if self._refresh_task is asyncio.current_task():
                 self._refresh_task = None
 
+    def _enqueue_write_request(self, req: _WriteRequest) -> None:
+        """标记写入未排空并以 FIFO 顺序加入无界队列。
+
+        Args:
+            req: 待处理的写入请求。
+        """
+        self._write_drained.clear()
+        self._write_queue.put_nowait(req)
+
     def _ensure_write_worker(self) -> None:
         """确保 Write Worker task 已启动（延迟启动）。"""
         if self._write_worker_task is None or self._write_worker_task.done():
             self._write_worker_task = asyncio.create_task(self._write_worker_loop())
 
     async def _write_worker_loop(self) -> None:
-        """串行处理所有写入任务（写锁保护）。"""
-        while True:
-            try:
+        """串行处理 ADD、编辑、删除、移动与创建合集任务（写锁保护）。"""
+        try:
+            while True:
                 req = await self._write_queue.get()
-            except asyncio.CancelledError:
-                # 取消所有 pending future
-                while not self._write_queue.empty():
-                    try:
-                        pending = self._write_queue.get_nowait()
-                        if not pending.future.done():
-                            pending.future.set_exception(
-                                IndexAddCancelledError("写入工作线程已停止")
-                            )
-                    except asyncio.QueueEmpty:
-                        break
-                raise
 
-            if req.future.done():
-                # 已被取消/放弃的请求，跳过不写，避免孤儿写入
-                if self._write_queue.empty():
-                    self._write_drained.set()
-                continue
+                if req.future.done():
+                    # 已被取消/放弃的请求，跳过不写，避免孤儿写入
+                    if self._write_queue.empty():
+                        self._write_drained.set()
+                    continue
 
-            try:
-                async with self._rwlock.write():
-                    try:
-                        if req.op is WriteOp.ADD:
-                            if req.embedding is None:
-                                raise ValueError("req 中的 embedding 为 None")
-                            if req.expected_selection is not None:
-                                if req.scope is None:
-                                    raise ValueError("ADD 请求缺少 scope")
-                                self._validate_collection_selection_locked(
-                                    req.scope,
-                                    req.expected_selection,
+                try:
+                    async with self._rwlock.write():
+                        try:
+                            if req.op is WriteOp.ADD:
+                                if req.embedding is None:
+                                    raise ValueError("req 中的 embedding 为 None")
+                                if req.expected_selection is not None:
+                                    if req.scope is None:
+                                        raise ValueError("ADD 请求缺少 scope")
+                                    self._validate_collection_selection_locked(
+                                        req.scope,
+                                        req.expected_selection,
+                                    )
+                                result = await self._write_entry(
+                                    req.filename,
+                                    req.text,
+                                    req.embedding,
+                                    req.speaker,
+                                    req.tags,
+                                    collection_id=req.collection_id,
                                 )
-                            result = await self._write_entry(
-                                req.filename,
-                                req.text,
-                                req.embedding,
-                                req.speaker,
-                                req.tags,
-                                collection_id=req.collection_id,
-                            )
-                        elif req.op is WriteOp.EDIT_TEXT:
-                            result = await self._execute_edit_text(req)
-                        elif req.op is WriteOp.SET_SPEAKER:
-                            result = await self._execute_set_speaker(req)
-                        elif req.op is WriteOp.ADD_TAG:
-                            result = await self._execute_add_tags(req)
-                        elif req.op is WriteOp.DELETE:
-                            result = await self._execute_delete(req)
-                        elif req.op is WriteOp.MOVE:
-                            if req.future.done():
-                                continue
-                            if req.transaction_started is None:
-                                raise ValueError("MOVE 请求缺少 transaction_started")
-                            req.transaction_started.set()
-                            move_task = asyncio.create_task(self._execute_move(req))
-                            (
-                                result,
-                                move_error,
-                                cancelled,
-                            ) = await self._wait_task_through_cancellation(move_task)
-                            if move_error is not None:
-                                raise move_error
-                            if cancelled:
-                                raise asyncio.CancelledError
-                            assert result is not None
-                        else:
-                            raise ValueError(f"未知写入操作: {req.op}")
+                            elif req.op is WriteOp.EDIT_TEXT:
+                                result = await self._execute_edit_text(req)
+                            elif req.op is WriteOp.SET_SPEAKER:
+                                result = await self._execute_set_speaker(req)
+                            elif req.op is WriteOp.ADD_TAG:
+                                result = await self._execute_add_tags(req)
+                            elif req.op is WriteOp.DELETE:
+                                result = await self._execute_delete(req)
+                            elif req.op is WriteOp.MOVE:
+                                if req.future.done():
+                                    continue
+                                if req.transaction_started is None:
+                                    raise ValueError(
+                                        "MOVE 请求缺少 transaction_started"
+                                    )
+                                req.transaction_started.set()
+                                move_task = asyncio.create_task(
+                                    self._execute_move(req)
+                                )
+                                (
+                                    result,
+                                    move_error,
+                                    cancelled,
+                                ) = await self._wait_task_through_cancellation(
+                                    move_task
+                                )
+                                if move_error is not None:
+                                    raise move_error
+                                if cancelled:
+                                    raise asyncio.CancelledError
+                                assert result is not None
+                            elif req.op is WriteOp.CREATE_COLLECTION:
+                                if req.future.done():
+                                    continue
+                                result = self._execute_create_collection(
+                                    req.collection_name
+                                )
+                            else:
+                                raise ValueError(f"未知写入操作: {req.op}")
 
-                        if not req.future.done():
-                            req.future.set_result(result)
-                    except asyncio.CancelledError:
-                        if not req.future.done():
-                            req.future.set_exception(
-                                IndexAddCancelledError("写入工作线程被取消")
-                            )
-                        raise
-                    except Exception as exc:
-                        if not req.future.done():
-                            req.future.set_exception(exc)
-                    finally:
-                        if self._write_queue.empty():
-                            self._write_drained.set()
-            except asyncio.CancelledError:
-                if not req.future.done():
-                    req.future.set_exception(
-                        IndexAddCancelledError("写入工作线程被取消")
+                            if not req.future.done():
+                                req.future.set_result(result)
+                        except asyncio.CancelledError:
+                            if not req.future.done():
+                                req.future.set_exception(
+                                    IndexAddCancelledError("写入工作线程被取消")
+                                )
+                            raise
+                        except Exception as exc:
+                            if not req.future.done():
+                                req.future.set_exception(exc)
+                        finally:
+                            if self._write_queue.empty():
+                                self._write_drained.set()
+                except asyncio.CancelledError:
+                    if not req.future.done():
+                        req.future.set_exception(
+                            IndexAddCancelledError("写入工作线程被取消")
+                        )
+                    raise
+        finally:
+            while True:
+                try:
+                    pending = self._write_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                if not pending.future.done():
+                    pending.future.set_exception(
+                        IndexAddCancelledError("写入工作线程已停止")
                     )
-                raise
+            self._write_drained.set()
+
+    @staticmethod
+    def _get_collection_directory_identity(target: Path) -> tuple[int, int]:
+        """读取非符号链接普通目录的文件系统身份。
+
+        Args:
+            target: 待检查的合集目录路径。
+
+        Returns:
+            目录的设备号与 inode。
+
+        Raises:
+            CollectionPathConflictError: 路径不存在或不是非符号链接普通目录。
+        """
+        try:
+            target_stat = os.lstat(target)
+        except OSError as exc:
+            raise CollectionPathConflictError(target.name) from exc
+        if not stat.S_ISDIR(target_stat.st_mode):
+            raise CollectionPathConflictError(target.name)
+        return target_stat.st_dev, target_stat.st_ino
+
+    def _execute_create_collection(
+        self, raw_name: str
+    ) -> CreateCollectionResult:
+        """在写锁内创建目录并登记合集。
+
+        Args:
+            raw_name: 已解析的合集名称；仍会重新执行领域校验。
+
+        Returns:
+            已持久化的合集创建结果。
+
+        Raises:
+            CollectionAlreadyExistsError: 名称已被登记。
+            CollectionPathConflictError: 同名路径不是安全普通目录。
+            CollectionCreateError: 目录身份变化或 SQLite 失败后无法安全回滚。
+        """
+        name = validate_collection_name(raw_name)
+        existing = self._metadata_store.get_collection_by_name(name)
+        if existing is not None:
+            raise CollectionAlreadyExistsError(existing)
+
+        target = self._memes_dir / name
+        created_directory = False
+        registered_existing_directory = False
+
+        try:
+            target.mkdir()
+            created_directory = True
+        except FileExistsError:
+            registered_existing_directory = True
+        except OSError:
+            logger.exception("创建合集目录失败: name=%r", name)
+            raise
+
+        try:
+            directory_identity = self._get_collection_directory_identity(target)
+        except CollectionPathConflictError as identity_exc:
+            if created_directory:
+                logger.critical(
+                    "本次创建的合集目录身份异常: name=%r",
+                    name,
+                    exc_info=True,
+                )
+                raise CollectionCreateError("创建合集目录身份异常") from identity_exc
+            raise
+
+        try:
+            current_identity = self._get_collection_directory_identity(target)
+        except CollectionPathConflictError as identity_exc:
+            if created_directory:
+                logger.critical(
+                    "SQLite 写入前合集目录身份发生变化: name=%r",
+                    name,
+                    exc_info=True,
+                )
+                raise CollectionCreateError("创建合集目录身份发生变化") from identity_exc
+            raise
+        if current_identity != directory_identity:
+            if created_directory:
+                try:
+                    raise OSError("SQLite 写入前合集目录身份发生变化")
+                except OSError as identity_exc:
+                    logger.critical(
+                        "SQLite 写入前合集目录身份发生变化: name=%r",
+                        name,
+                        exc_info=True,
+                    )
+                    raise CollectionCreateError(
+                        "创建合集目录身份发生变化"
+                    ) from identity_exc
+            raise CollectionPathConflictError(name)
+
+        try:
+            collection = self._metadata_store.create_collection(name)
+        except Exception:
+            if created_directory:
+                try:
+                    try:
+                        cleanup_identity = self._get_collection_directory_identity(
+                            target
+                        )
+                    except CollectionPathConflictError as identity_exc:
+                        raise OSError("目录回滚前合集目录身份发生变化") from identity_exc
+                    if cleanup_identity != directory_identity:
+                        raise OSError("目录回滚前合集目录身份发生变化")
+                    target.rmdir()
+                except OSError as cleanup_exc:
+                    logger.critical(
+                        "创建合集数据库失败且目录回滚失败: name=%r",
+                        name,
+                        exc_info=True,
+                    )
+                    raise CollectionCreateError(
+                        "创建合集失败且目录回滚失败"
+                    ) from cleanup_exc
+            raise
+
+        logger.info(
+            "合集创建完成: id=%d, name=%r, existing_directory=%s",
+            collection.id,
+            collection.name,
+            registered_existing_directory,
+        )
+        return CreateCollectionResult(
+            collection=collection,
+            registered_existing_directory=registered_existing_directory,
+        )
 
     async def _execute_edit_text(self, req: _WriteRequest) -> EditTextResult:
         """写锁内执行 edit_text 写入（先 sqlite 后 chroma，失败回滚）。

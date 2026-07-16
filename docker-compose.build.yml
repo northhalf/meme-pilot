@@ -21,8 +21,11 @@ services:
       - meme-bot-net
 
   bot:
-    image: northhalf/meme-pilot:latest
-    pull_policy: always
+    build:
+      context: .
+      network: host
+      dockerfile: bot/Dockerfile
+    image: meme-pilot:local
     container_name: qq-meme-bot
     restart: always
     depends_on:
