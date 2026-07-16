@@ -57,6 +57,19 @@ services:
       - COMPRESS_CONCURRENCY=${COMPRESS_CONCURRENCY:-5}
       - CONVERT_TO_WEBP=${CONVERT_TO_WEBP:-true}
       - TZ=Asia/Shanghai
+      # 限制 glibc 每 CPU 的 arena 数，抑制多核长进程的 malloc 碎片膨胀
+      - MALLOC_ARENA_MAX=${MALLOC_ARENA_MAX:-2}
+      # Python 对象改走系统 malloc，便于空闲页被 OS 回收
+      - PYTHONMALLOC=${PYTHONMALLOC:-malloc}
+      # 限制 BLAS/numpy/OpenCV 线程
+      - OMP_NUM_THREADS=${OMP_NUM_THREADS:-2}
+      - OPENBLAS_NUM_THREADS=${OPENBLAS_NUM_THREADS:-2}
+      - MKL_NUM_THREADS=${MKL_NUM_THREADS:-2}
+      # 限制 onnxruntime 推理线程（经 RapidOCR EngineConfig 透传 SessionOptions）
+      - ORT_INTRA_OP_NUM_THREADS=${ORT_INTRA_OP_NUM_THREADS:-2}
+      - ORT_INTER_OP_NUM_THREADS=${ORT_INTER_OP_NUM_THREADS:-1}
+    mem_limit: 2g
+    mem_reservation: 512m
     volumes:
       - ./memes:/app/memes
       - ./data:/app/data

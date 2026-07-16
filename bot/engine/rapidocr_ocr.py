@@ -6,6 +6,7 @@
 import asyncio
 import logging
 import os
+from typing import Any
 
 from rapidocr import RapidOCR
 
@@ -44,7 +45,32 @@ class RapidOcrService:
         else:
             c = read_int_env("OCR_CONCURRENCY") or 5
         self._semaphore = asyncio.Semaphore(c)
-        self._engine = RapidOCR(params={"Global.text_score": text_score})
+        self._engine = RapidOCR(params=self._build_engine_params(text_score))
+
+    @staticmethod
+    def _build_engine_params(text_score: float) -> dict[str, Any]:
+        """构造 RapidOCR 引擎参数，含 onnxruntime 线程限制。
+
+        线程数通过 ORT_INTRA_OP_NUM_THREADS / ORT_INTER_OP_NUM_THREADS
+        环境变量覆盖，默认 2 / 1。键名经 RapidOCR 的 EngineConfig.onnxruntime
+        透传至 onnxruntime SessionOptions
+
+        Args:
+            text_score: 文本置信度阈值。
+
+        Returns:
+            RapidOCR params 字典。
+        """
+        params: dict[str, Any] = {"Global.text_score": text_score}
+        intra = read_int_env("ORT_INTRA_OP_NUM_THREADS")
+        if intra is None:
+            intra = 2
+        params["EngineConfig.onnxruntime.intra_op_num_threads"] = intra
+        inter = read_int_env("ORT_INTER_OP_NUM_THREADS")
+        if inter is None:
+            inter = 1
+        params["EngineConfig.onnxruntime.inter_op_num_threads"] = inter
+        return params
 
     @timed(logger, "RapidOCR")
     async def ocr(self, image_path: str) -> str:
