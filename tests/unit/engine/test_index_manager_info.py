@@ -235,7 +235,7 @@ class TestInfo:
 
         assert isinstance(info, IndexInfo)
         assert info.entry_count == 10
-        assert info.speaker_ranking == [("甲", 4), ("乙", 3), ("丙", 2), (None, 1)]
+        assert info.speaker_ranking == (("甲", 4), ("乙", 3), ("丙", 2), (None, 1))
         assert info.status == "空闲"
 
     @pytest.mark.asyncio

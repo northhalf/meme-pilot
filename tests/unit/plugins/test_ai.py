@@ -73,7 +73,7 @@ def _make_index_manager(
                 similarity=0.95,
                 source="rerank",
                 speaker="小明",
-                tags=["吐槽"],
+                tags=("吐槽",),
                 collection_id=1,
                 local_id=3,
                 collection_name="新三国",

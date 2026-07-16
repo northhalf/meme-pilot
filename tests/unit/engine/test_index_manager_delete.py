@@ -226,9 +226,9 @@ class TestDelete:
         result = await index_manager.delete([1])
 
         assert isinstance(result, DeleteResult)
-        assert result.deleted_ids == [1]
-        assert result.not_found_ids == []
-        assert result.failed_ids == []
+        assert result.deleted_ids == (1,)
+        assert result.not_found_ids == ()
+        assert result.failed_ids == ()
         assert not src.exists()
         assert (index_manager._deleted_dir / image_path).exists()
         assert index_manager._metadata_store.get_entry(1) is None
@@ -238,9 +238,9 @@ class TestDelete:
         """entry_id 不存在时返回 not_found_ids。"""
         result = await index_manager.delete([999])
 
-        assert result.deleted_ids == []
-        assert result.not_found_ids == [999]
-        assert result.failed_ids == []
+        assert result.deleted_ids == ()
+        assert result.not_found_ids == (999,)
+        assert result.failed_ids == ()
 
     @pytest.mark.asyncio
     async def test_delete_unique_filename_on_conflict(
@@ -258,9 +258,9 @@ class TestDelete:
 
         result = await index_manager.delete([1])
 
-        assert result.deleted_ids == [1]
-        assert result.not_found_ids == []
-        assert result.failed_ids == []
+        assert result.deleted_ids == (1,)
+        assert result.not_found_ids == ()
+        assert result.failed_ids == ()
         assert not src.exists()
         assert existing.exists()
         assert (index_manager._deleted_dir / "test_1.jpg").exists()
@@ -288,9 +288,9 @@ class TestDelete:
 
         result = await index_manager.delete([1])
 
-        assert result.deleted_ids == []
-        assert result.not_found_ids == []
-        assert result.failed_ids == [(1, "模拟移图失败")]
+        assert result.deleted_ids == ()
+        assert result.not_found_ids == ()
+        assert result.failed_ids == ((1, "模拟移图失败"),)
         # 索引原样保留：文件仍在 memes/，条目仍在 store
         assert src.exists()
         assert index_manager._metadata_store.get_entry(1) is not None

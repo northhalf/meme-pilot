@@ -666,7 +666,7 @@ class MetadataStore:
         image_path: str,
         text: str,
         speaker: str | None = None,
-        tags: list[str] | None = None,
+        tags: Sequence[str] | None = None,
         *,
         collection_id: int = 0,
     ) -> int:
@@ -735,7 +735,7 @@ class MetadataStore:
         image_path: str,
         text: str,
         speaker: str | None = None,
-        tags: list[str] | None = None,
+        tags: Sequence[str] | None = None,
         *,
         collection_id: int = 0,
         local_id: int | None = None,
@@ -822,7 +822,7 @@ class MetadataStore:
         image_path: str | None = _UNSET,  # type: ignore[assignment]  # ty:ignore[invalid-parameter-default]
         text: str | None = _UNSET,  # type: ignore[assignment]  # ty:ignore[invalid-parameter-default]
         speaker: str | None = _UNSET,  # type: ignore[assignment]  # ty:ignore[invalid-parameter-default]
-        tags: list[str] | None = None,
+        tags: Sequence[str] | None = None,
         collection_id: int | None = _UNSET,  # type: ignore[assignment]  # ty:ignore[invalid-parameter-default]
         local_id: int | None = _UNSET,  # type: ignore[assignment]  # ty:ignore[invalid-parameter-default]
     ) -> bool:
@@ -1367,7 +1367,7 @@ class MetadataStore:
         image_path: str,
         text: str,
         speaker: str | None,
-        tags: list[str] | None,
+        tags: Sequence[str] | None,
     ) -> MemeEntry:
         """构造与数据库写入一致的缓存条目。
 
@@ -1421,7 +1421,7 @@ class MetadataStore:
         if self._text_to_id.get(text_key) == entry.id:
             del self._text_to_id[text_key]
 
-    def _write_tags(self, entry_id: int, tags: list[str] | None) -> None:
+    def _write_tags(self, entry_id: int, tags: Sequence[str] | None) -> None:
         """写入 tag 行，调用方已持锁。
 
         Args:

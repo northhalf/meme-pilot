@@ -25,7 +25,7 @@ def _make_search_result(
         text=text,
         similarity=90.0,
         speaker=None,
-        tags=[],
+        tags=(),
     )
 
 

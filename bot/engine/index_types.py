@@ -84,7 +84,7 @@ class WriteOp(Enum):
     MOVE = auto()
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class _WriteRequest:
     """写入任务单元，由 Write Worker 串行处理。
 
@@ -95,9 +95,9 @@ class _WriteRequest:
         filename: ADD 时 memes/ 下文件名。
         text: 写入的 text（ADD=OCR text，EDIT_TEXT=新文本）。
         speaker: SET_SPEAKER 或 ADD 时使用的说话人。
-        tags: ADD / ADD_TAG 时使用的标签列表。
-        entry_ids: DELETE 时为目标 id 列表。
-        embedding: 对应的 embedding 向量。
+        tags: ADD / ADD_TAG 时使用的标签元组（不可变）。
+        entry_ids: DELETE 时为目标 id 元组（不可变）。
+        embedding: 对应的 embedding 向量元组（不可变）。
         old_text: EDIT_TEXT 旧 text（回滚用）。
         collection_id: ADD 时的目标合集编号。
         scope: ADD 时发起命令的 ChatScope，用于写锁内校验选择快照。
@@ -114,9 +114,9 @@ class _WriteRequest:
     filename: str = ""
     text: str = ""
     speaker: str | None = None
-    tags: list[str] | None = None
-    entry_ids: list[int] | None = None
-    embedding: list[float] | None = None
+    tags: tuple[str, ...] | None = None
+    entry_ids: tuple[int, ...] | None = None
+    embedding: tuple[float, ...] | None = None
     old_text: str = ""
     collection_id: int = 0
     scope: "ChatScope | None" = None
@@ -184,7 +184,7 @@ class MoveResult:
     new_image_path: str
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class EditTextResult:
     """edit_text() 的返回结果。
 
@@ -199,7 +199,7 @@ class EditTextResult:
     new_text: str
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class SetSpeakerResult:
     """set_speaker() 的返回结果。
 
@@ -214,37 +214,37 @@ class SetSpeakerResult:
     new_speaker: str | None
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class AddTagResult:
     """add_tags() 的返回结果。
 
     Attributes:
         entry_id: 被修改的条目 id。
-        added_tags: 本次新增的标签列表。
-        all_tags: 修改后的全部标签列表。
+        added_tags: 本次新增的标签元组（不可变）。
+        all_tags: 修改后的全部标签元组（不可变）。
     """
 
     entry_id: int
-    added_tags: list[str]
-    all_tags: list[str]
+    added_tags: tuple[str, ...]
+    all_tags: tuple[str, ...]
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class DeleteResult:
     """delete() 的返回结果。
 
     Attributes:
-        deleted_ids: 成功删除的条目 id 列表。
-        not_found_ids: 不存在的条目 id 列表。
-        failed_ids: 删除失败的 (id, reason) 列表。
+        deleted_ids: 成功删除的条目 id 元组（不可变）。
+        not_found_ids: 不存在的条目 id 元组（不可变）。
+        failed_ids: 删除失败的 (id, reason) 元组（不可变）。
     """
 
-    deleted_ids: list[int]
-    not_found_ids: list[int]
-    failed_ids: list[tuple[int, str]]
+    deleted_ids: tuple[int, ...]
+    not_found_ids: tuple[int, ...]
+    failed_ids: tuple[tuple[int, str], ...]
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class IndexInfo:
     """info() 的返回结果。
 
@@ -252,14 +252,14 @@ class IndexInfo:
         entry_count: 全库索引条目总数。
         current_entry_count: 当前搜索范围内的条目数。
         collection_count: 普通合集数量。
-        speaker_ranking: 当前范围内 speaker 使用频率排行（speaker, count）。
+        speaker_ranking: 当前范围内 speaker 使用频率排行（speaker, count）元组（不可变）。
         status: 索引状态描述。
     """
 
     entry_count: int
     current_entry_count: int
     collection_count: int
-    speaker_ranking: list[tuple[str | None, int]]
+    speaker_ranking: tuple[tuple[str | None, int], ...]
     status: str
 
 
@@ -296,7 +296,7 @@ class FileSystemSnapshot:
     directories_with_images: set[str]
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class SyncResult:
     """sync_with_filesystem() 的返回结果。
 
@@ -308,7 +308,7 @@ class SyncResult:
         collections_added: 新登记的普通合集数量。
         collections_deleted: 因一级目录消失而删除的普通合集数量。
         scopes_reset: 因合集删除而回退到全部合集的聊天窗口数量。
-        failed: 处理失败的文件名列表。
+        failed: 处理失败的文件名元组（不可变）。
     """
 
     added: int = 0
@@ -318,10 +318,10 @@ class SyncResult:
     collections_added: int = 0
     collections_deleted: int = 0
     scopes_reset: int = 0
-    failed: list[str] = field(default_factory=list)
+    failed: tuple[str, ...] = field(default_factory=tuple)
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class AddResult:
     """add() 的返回结果。
 
@@ -335,7 +335,7 @@ class AddResult:
         archived_path: reason="replaced" 时为旧图归档后的完整路径，否则 None。
         moved_to: reason="no_text" 时为移入 meme_no_text/ 的完整路径，否则 None。
         speaker: ADD 时写入的说话人（无文字移图时为 None）。
-        tags: ADD 时写入的标签列表（无文字移图时为空列表）。
+        tags: ADD 时写入的标签元组（不可变，无文字移图时为空元组）。
     """
 
     entry_id: int | None
@@ -347,4 +347,4 @@ class AddResult:
     archived_path: str | None = None
     moved_to: str | None = None
     speaker: str | None = None
-    tags: list[str] = field(default_factory=list)
+    tags: tuple[str, ...] = field(default_factory=tuple)

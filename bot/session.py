@@ -82,7 +82,7 @@ class ChatSession:
     current_task: asyncio.Task | None = None
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class SelectionSession:
     """选择会话，至多一个，是 ChatSession 的子集。
 

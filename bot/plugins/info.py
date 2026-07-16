@@ -6,6 +6,7 @@
 
 import asyncio
 import logging
+from dataclasses import replace
 from pathlib import Path
 
 import humanize
@@ -168,7 +169,7 @@ async def handle_info(
 
             # engine 只感知刷新态；"正在处理命令"属应用层语义，由插件层覆写
             if index_info.status == "空闲" and session_manager.has_active_session():
-                index_info.status = "正在处理命令"
+                index_info = replace(index_info, status="正在处理命令")
 
             # 读取硬件信息
             try:

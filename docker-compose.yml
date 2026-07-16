@@ -69,7 +69,7 @@ services:
       - ORT_INTRA_OP_NUM_THREADS=${ORT_INTRA_OP_NUM_THREADS:-2}
       - ORT_INTER_OP_NUM_THREADS=${ORT_INTER_OP_NUM_THREADS:-1}
     mem_limit: 2g
-    mem_reservation: 512m
+    mem_reservation: 1g
     volumes:
       - ./memes:/app/memes
       - ./data:/app/data

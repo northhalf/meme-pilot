@@ -32,7 +32,7 @@ def _make_search_result(
         text=text,
         similarity=similarity,
         speaker=speaker,
-        tags=tags or [],
+        tags=tuple(tags) if tags else (),
         collection_id=collection_id,
         local_id=entry_id if local_id is None else local_id,
         collection_name=collection_name,

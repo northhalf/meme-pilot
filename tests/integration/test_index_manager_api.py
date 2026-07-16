@@ -118,7 +118,7 @@ async def test_sync_single_image(
 
     assert result.added == 1
     assert result.deleted == 0
-    assert result.failed == []
+    assert result.failed == ()
     assert manager.entry_count == 1
 
     # 验证索引内容
@@ -165,7 +165,7 @@ async def test_sync_multiple_images(
         print(f"  [{eid}] {entry.image_path}: {entry.text[:40]}...")
 
     assert result.added == 2
-    assert result.failed == []
+    assert result.failed == ()
     assert manager.entry_count == 2
 
 

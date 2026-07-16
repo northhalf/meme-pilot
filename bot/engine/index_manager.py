@@ -9,6 +9,7 @@ import asyncio
 import logging
 import os
 import shutil
+from collections.abc import Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, AsyncIterator, TypeVar
@@ -657,7 +658,7 @@ class IndexManager:
         self,
         relative_path: str,
         speaker: str | None = None,
-        tags: list[str] | None = None,
+        tags: Sequence[str] | None = None,
         *,
         collection_id: int = 0,
         scope: "ChatScope | None" = None,
@@ -668,7 +669,7 @@ class IndexManager:
         Args:
             relative_path: 图片相对 memes/ 的 POSIX 路径。
             speaker: 可选说话人。
-            tags: 可选标签列表。
+            tags: 可选标签序列（list 或 tuple 均可）。
             collection_id: 目标合集编号，默认 0（全局）。
             scope: 发起添加的聊天作用域；与 expected_selection 同时传入。
             expected_selection: handle 阶段捕获的完整合集选择快照。
@@ -715,8 +716,8 @@ class IndexManager:
                     filename=final_filename,
                     text=text,
                     speaker=speaker,
-                    tags=tags,
-                    embedding=embedding,
+                    tags=tuple(tags) if tags is not None else None,
+                    embedding=tuple(embedding),
                     collection_id=collection_id,
                     scope=scope,
                     expected_selection=expected_selection,
@@ -796,7 +797,7 @@ class IndexManager:
             future=future,
             entry_id=entry_id,
             text=new_text,
-            embedding=new_embedding,
+            embedding=tuple(new_embedding),
             old_text=old_text,
         )
         await self._write_queue.put(req)
@@ -868,14 +869,14 @@ class IndexManager:
         logger.info("发言人设置完成: entry_ids=%s", entry_id)
         return result
 
-    async def add_tags(self, entry_id: int, tags: list[str]) -> AddTagResult:
+    async def add_tags(self, entry_id: int, tags: Sequence[str]) -> AddTagResult:
         """为指定条目追加标签。
 
         流程：校验 → put WriteRequest → await future。
 
         Args:
             entry_id: 要修改的索引 id。
-            tags: 要追加的标签列表。
+            tags: 要追加的标签序列（list 或 tuple 均可）。
 
         Returns:
             AddTagResult 描述添加结果。
@@ -908,7 +909,7 @@ class IndexManager:
             op=WriteOp.ADD_TAG,
             future=future,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             entry_id=entry_id,
-            tags=list(tags),
+            tags=tuple(tags),
         )
         await self._write_queue.put(req)
         result = await future
@@ -948,7 +949,7 @@ class IndexManager:
         req = _WriteRequest(
             op=WriteOp.DELETE,
             future=future,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            entry_ids=list(entry_ids),
+            entry_ids=tuple(entry_ids),
         )
         await self._write_queue.put(req)
         result = await future
@@ -1193,7 +1194,7 @@ class IndexManager:
             entry_count=entry_count,
             current_entry_count=len(entries),
             collection_count=collection_count,
-            speaker_ranking=speaker_ranking,
+            speaker_ranking=tuple(speaker_ranking),
             status=status,
         )
 
@@ -1607,8 +1608,8 @@ class IndexManager:
         if not added_tags:
             return AddTagResult(
                 entry_id=req.entry_id,
-                added_tags=[],
-                all_tags=list(current_tags),
+                added_tags=(),
+                all_tags=tuple(current_tags),
             )
 
         success = await asyncio.to_thread(
@@ -1621,8 +1622,8 @@ class IndexManager:
 
         return AddTagResult(
             entry_id=req.entry_id,
-            added_tags=added_tags,
-            all_tags=merged_tags,
+            added_tags=tuple(added_tags),
+            all_tags=tuple(merged_tags),
         )
 
     async def _execute_delete(self, req: _WriteRequest) -> DeleteResult:
@@ -1674,9 +1675,9 @@ class IndexManager:
                 failed_ids.append((entry_id, str(exc)))
 
         return DeleteResult(
-            deleted_ids=deleted_ids,
-            not_found_ids=not_found_ids,
-            failed_ids=failed_ids,
+            deleted_ids=tuple(deleted_ids),
+            not_found_ids=tuple(not_found_ids),
+            failed_ids=tuple(failed_ids),
         )
 
     def _resolve_move_target_name(self, target_collection_id: int) -> str:
@@ -2064,7 +2065,7 @@ class IndexManager:
             collections_added=collections_added,
             collections_deleted=collections_deleted,
             scopes_reset=scopes_reset,
-            failed=failed,
+            failed=tuple(failed),
         )
 
     @timed(logger, "索引刷新-阶段0")
@@ -2396,9 +2397,9 @@ class IndexManager:
         self,
         filename: str,
         text: str,
-        embedding: list[float],
+        embedding: Sequence[float],
         speaker: str | None = None,
-        tags: list[str] | None = None,
+        tags: Sequence[str] | None = None,
         *,
         collection_id: int = 0,
     ) -> AddResult:
@@ -2409,9 +2410,9 @@ class IndexManager:
         Args:
             filename: memes/ 下的文件名。
             text: OCR 去除所有空白后的文本（空串表示无文字）。
-            embedding: 与 text 对应的 embedding 向量。
+            embedding: 与 text 对应的 embedding 向量（list 或 tuple 均可）。
             speaker: 可选说话人。
-            tags: 可选标签列表。
+            tags: 可选标签序列（list 或 tuple 均可）。
             collection_id: 目标合集编号，默认 0（全局）。
 
         Returns:
@@ -2438,7 +2439,7 @@ class IndexManager:
                 reason="no_text",
                 moved_to=moved_to,
                 speaker=None,
-                tags=[],
+                tags=(),
             )
 
         # 2. 去重命中已有条目 → update image_path + upsert，删旧图
@@ -2533,7 +2534,7 @@ class IndexManager:
                 replaced_image_path=old_image_path,
                 archived_path=archived_path,
                 speaker=persisted_entry.speaker,
-                tags=list(persisted_entry.tags),
+                tags=tuple(persisted_entry.tags),
             )
 
         # 3. 正常新增：先 sqlite 后 chroma；upsert 失败回滚 sqlite + 删图
@@ -2564,7 +2565,7 @@ class IndexManager:
             public_id=persisted_entry.public_id,
             collection_name=persisted_entry.collection_name,
             speaker=persisted_entry.speaker,
-            tags=list(persisted_entry.tags),
+            tags=tuple(persisted_entry.tags),
         )
 
     # ------------------------------------------------------------------

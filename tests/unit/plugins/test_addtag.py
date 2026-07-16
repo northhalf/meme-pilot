@@ -329,8 +329,8 @@ class TestGotConfirm:
             im.add_tags = AsyncMock(
                 return_value=AddTagResult(
                     entry_id=3,
-                    added_tags=["新增1", "新增2"],
-                    all_tags=["已有", "新增1", "新增2"],
+                    added_tags=("新增1", "新增2"),
+                    all_tags=("已有", "新增1", "新增2"),
                 )
             )
             im.add_user_timeout = 60
@@ -368,8 +368,8 @@ class TestGotConfirm:
             im.add_tags = AsyncMock(
                 return_value=AddTagResult(
                     entry_id=3,
-                    added_tags=["新增"],
-                    all_tags=["新增"],
+                    added_tags=("新增",),
+                    all_tags=("新增",),
                 )
             )
             im.add_user_timeout = 60
@@ -526,7 +526,7 @@ class TestPublicIdAddtag:
             im = MagicMock()
             im.add_tags = AsyncMock(
                 return_value=AddTagResult(
-                    entry_id=42, added_tags=["吐槽"], all_tags=["吐槽"]
+                    entry_id=42, added_tags=("吐槽",), all_tags=("吐槽",)
                 )
             )
             im.add_user_timeout = 60

@@ -284,7 +284,7 @@ class TestHandleRefreshResult:
         from bot.engine.index_manager import SyncResult
 
         matcher = _make_matcher()
-        result = SyncResult(added=1, failed=["bad.jpg", "corrupt.png"])
+        result = SyncResult(added=1, failed=("bad.jpg", "corrupt.png"))
         im = _make_index_manager(entry_count=3, sync_result=result)
         mock_get_im.return_value = im
 
@@ -308,7 +308,7 @@ class TestHandleRefreshResult:
 
         matcher = _make_matcher()
         failed = [f"f{i}.jpg" for i in range(15)]
-        result = SyncResult(added=0, failed=failed)
+        result = SyncResult(added=0, failed=tuple(failed))
         im = _make_index_manager(entry_count=5, sync_result=result)
         mock_get_im.return_value = im
 

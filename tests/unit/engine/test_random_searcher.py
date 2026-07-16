@@ -102,7 +102,7 @@ class TestSearchResultCarriesMetadata:
         results = searcher.search_random(None, limit=10)
         assert len(results) == 1
         assert results[0].speaker == "小明"
-        assert results[0].tags == ["吐槽"]
+        assert results[0].tags == ("吐槽",)
 
     def test_collection_identity_preserved(self) -> None:
         entries = {

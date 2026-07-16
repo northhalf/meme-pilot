@@ -91,7 +91,7 @@ class CollectionSummary:
     selected: bool
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class SearchResult:
     """单条关键词搜索结果。
 
@@ -101,7 +101,7 @@ class SearchResult:
         text: OCR 文本（无空格）。
         similarity: 相似度分数，0-100。
         speaker: 说话人，可能为 None。
-        tags: 标记词列表。
+        tags: 标记词元组（不可变）。
         collection_id: 所属合集编号，0 表示全局根目录。
         local_id: 合集内正整数编号。
         collection_name: 所属合集名称。
@@ -112,7 +112,7 @@ class SearchResult:
     text: str
     similarity: float
     speaker: str | None = None
-    tags: list[str] = field(default_factory=list)
+    tags: tuple[str, ...] = field(default_factory=tuple)
     collection_id: int = 0
     local_id: int = 1
     collection_name: str = GLOBAL_COLLECTION_NAME
@@ -143,7 +143,7 @@ class SearchResult:
             text=entry.text,
             similarity=similarity,
             speaker=entry.speaker,
-            tags=list(entry.tags),
+            tags=tuple(entry.tags),
             collection_id=entry.collection_id,
             local_id=entry.local_id,
             collection_name=entry.collection_name,

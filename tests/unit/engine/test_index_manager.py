@@ -368,7 +368,7 @@ class FakeVectorStore:
         return [
             VectorRecord(
                 entry_id=entry_id,
-                embedding=list(self._vecs[entry_id]),
+                embedding=tuple(self._vecs[entry_id]),
                 metadata={"collection_id": self._collection_ids[entry_id]},
             )
             for entry_id in entry_ids
@@ -485,9 +485,9 @@ def collection_manager(index_manager: IndexManager):
 
 class TestDataclasses:
     def test_sync_result(self) -> None:
-        r = SyncResult(added=3, deleted=1, failed=["bad.jpg"])
+        r = SyncResult(added=3, deleted=1, failed=("bad.jpg",))
         assert r.added == 3 and r.deleted == 1 and r.deduped == 0
-        assert r.no_text_moved == 0 and r.failed == ["bad.jpg"]
+        assert r.no_text_moved == 0 and r.failed == ("bad.jpg",)
 
     def test_add_result_added(self) -> None:
         r = AddResult(entry_id=1, reason="added", text="猫")
@@ -814,7 +814,7 @@ class TestAdd:
         )
 
         assert result.speaker == "小明"
-        assert result.tags == sorted({"乙", "甲"})
+        assert result.tags == tuple(sorted({"乙", "甲"}))
 
     @pytest.mark.asyncio
     async def test_add_duplicate_replaces_speaker_and_tags(
@@ -2146,7 +2146,7 @@ class TestRefresh:
 
         result = await index_manager.refresh()
 
-        assert result.failed == ["新三国/failed.webp"]
+        assert result.failed == ("新三国/failed.webp",)
         assert failed_id not in vector_store._vecs
         assert vector_store._collection_ids == {existing_id: 0}
 
@@ -2167,7 +2167,7 @@ class TestRefresh:
 
         result = await index_manager.refresh()
 
-        assert result.failed == ["failed.webp"]
+        assert result.failed == ("failed.webp",)
         assert vector_store.has(first_id)
         assert not vector_store.has(failed_id)
         assert vector_store.has(existing_id)
@@ -2343,7 +2343,7 @@ class TestRefresh:
         restored = metadata_store.get_entry(failed_id)
         assert result.added == 1
         assert result.deleted == 1
-        assert result.failed == ["新三国/failed.webp"]
+        assert result.failed == ("新三国/failed.webp",)
         assert restored is not None
         assert restored.id == failed_id
         assert restored.image_path == "新三国/failed.webp"
@@ -2387,7 +2387,7 @@ class TestRefresh:
 
         assert result.deleted == 1
         assert result.collections_deleted == 1
-        assert result.failed == []
+        assert result.failed == ()
         assert metadata_store.get_entry(entry_id) is None
         assert not vector_store.has(entry_id)
         assert metadata_store.get_collection(collection.id) is None
@@ -2815,7 +2815,7 @@ class TestCollectionSearch:
         assert info.entry_count == 2
         assert info.current_entry_count == 1
         assert info.collection_count == 2
-        assert info.speaker_ranking == [("曹操", 1)]
+        assert info.speaker_ranking == (("曹操", 1),)
 
     @pytest.mark.asyncio
     async def test_random_search_filters_by_collection(
@@ -3159,7 +3159,7 @@ async def test_write_worker_skips_cancelled_future(
         future=cancelled_future,  # type: ignore[arg-type, ty:invalid-argument-type]
         filename="skip.jpg",
         text="t",
-        embedding=[1.0],
+        embedding=(1.0,),
     )
 
     # 正常 future，应被 worker 处理
@@ -3169,7 +3169,7 @@ async def test_write_worker_skips_cancelled_future(
         future=normal_future,  # type: ignore[arg-type, ty:invalid-argument-type]
         filename="normal.jpg",
         text="hello",
-        embedding=[1.0],
+        embedding=(1.0,),
     )
 
     # spy _write_entry：记录调用，返回 dummy AddResult
@@ -3601,7 +3601,7 @@ class TestSyncConvertsToWebp:
         result = await im.refresh()
 
         assert result.added == 2
-        assert result.failed == []
+        assert result.failed == ()
 
     @pytest.mark.asyncio
     async def test_sync_keeps_same_stem_optimization_parallel_across_parents(

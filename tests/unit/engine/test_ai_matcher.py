@@ -331,7 +331,7 @@ async def test_candidate_carries_speaker_and_tags() -> None:
     result = await matcher.match_with_vector("选第一张", _make_query_vector())
     assert result is not None
     assert result.speaker == "小明"
-    assert result.tags == ["搞笑"]
+    assert result.tags == ("搞笑",)
 
 
 @pytest.mark.asyncio

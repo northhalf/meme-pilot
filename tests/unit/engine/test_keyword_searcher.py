@@ -67,7 +67,7 @@ def test_search_result_carries_speaker_and_tags() -> None:
     results = searcher.search("加班")
     assert len(results) == 1
     assert results[0].speaker == "小明"
-    assert results[0].tags == ["吐槽", "加班"]
+    assert results[0].tags == ("吐槽", "加班")
 
 
 def test_search_result_keeps_collection_identity() -> None:

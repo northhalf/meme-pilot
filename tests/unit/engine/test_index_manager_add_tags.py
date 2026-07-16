@@ -239,5 +239,5 @@ class TestAddTags:
         result = await index_manager.add_tags(1, ["乙", "甲"])
 
         assert result.entry_id == 1
-        assert result.added_tags == []
+        assert result.added_tags == ()
         assert set(result.all_tags) == {"甲", "乙"}

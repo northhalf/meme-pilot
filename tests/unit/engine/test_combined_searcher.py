@@ -171,7 +171,7 @@ class TestNoKeywordBranch:
         results = combined.search(None, ["小明"], [])
         r1 = next(r for r in results if r.entry_id == 1)
         assert r1.speaker == "小明"
-        assert r1.tags == ["吐槽", "加班"]
+        assert r1.tags == ("吐槽", "加班")
 
 
 class TestEmptyEntries:

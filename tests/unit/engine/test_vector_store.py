@@ -684,7 +684,6 @@ class TestSnapshotAndRestore:
         await store.upsert(1, [1.0, 0.0], collection_id=1)
 
         first = await store.snapshot_records([1])
-        first[0].embedding[0] = 0.0
         first[0].metadata["collection_id"] = 99
         second = await store.snapshot_records([1])
 
@@ -723,12 +722,11 @@ class TestSnapshotAndRestore:
         self, store: VectorStore
     ) -> None:
         """恢复后修改输入 record 不得改变已存数据。"""
-        embedding = [1.0, 0.0]
+        embedding = (1.0, 0.0)
         metadata: VectorMetadata = {"collection_id": 3}
         record = VectorRecord(1, embedding, metadata)
 
         await store.restore_records([record])
-        embedding[0] = 0.0
         metadata["collection_id"] = 9
 
         restored = await store.snapshot_records([1])
@@ -746,12 +744,12 @@ class TestSnapshotAndRestore:
     @pytest.mark.parametrize(
         "records",
         [
-            [VectorRecord(0, [1.0], {})],
-            [VectorRecord(1, [], {})],
-            [VectorRecord(1, [cast(float, True)], {})],
-            [VectorRecord(1, [float("nan")], {})],
-            [VectorRecord(1, [1.0], {"invalid": cast(Any, None)})],
-            [VectorRecord(1, [1.0], {}), VectorRecord(1, [2.0], {})],
+            [VectorRecord(0, (1.0,), {})],
+            [VectorRecord(1, (), {})],
+            [VectorRecord(1, (cast(float, True),), {})],
+            [VectorRecord(1, (float("nan"),), {})],
+            [VectorRecord(1, (1.0,), {"invalid": cast(Any, None)})],
+            [VectorRecord(1, (1.0,), {}), VectorRecord(1, (2.0,), {})],
         ],
     )
     async def test_restore_validates_all_records_before_deleting(

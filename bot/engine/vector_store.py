@@ -15,7 +15,7 @@ import asyncio
 import logging
 import math
 import threading
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from numbers import Real
 from typing import Any, overload
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 VectorMetadata = dict[str, str | int | float | bool]
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class VectorHit:
     """单条向量召回结果。
 
@@ -48,12 +48,12 @@ class VectorRecord:
 
     Attributes:
         entry_id: 索引 id。
-        embedding: 独立复制的向量值列表。
+        embedding: 独立复制的向量值元组（不可变）。
         metadata: 独立复制的完整 metadata。
     """
 
     entry_id: int
-    embedding: list[float]
+    embedding: tuple[float, ...]
     metadata: VectorMetadata
 
 
@@ -167,10 +167,10 @@ def _copy_input_embedding(embedding: object) -> list[float]:
         由有限浮点数组成的独立列表。
 
     Raises:
-        ValueError: 向量不是非空列表，或包含 bool、非数值或非有限值。
+        ValueError: 向量不是非空 list/tuple，或包含 bool、非数值或非有限值。
     """
-    if not isinstance(embedding, list) or not embedding:
-        raise ValueError("embedding 必须是非空列表")
+    if not isinstance(embedding, (list, tuple)) or not embedding:
+        raise ValueError("embedding 必须是非空 list 或 tuple")
     copied: list[float] = []
     for value in embedding:
         if isinstance(value, bool) or not isinstance(value, Real):
@@ -184,6 +184,9 @@ def _copy_input_embedding(embedding: object) -> list[float]:
 
 def _copy_chroma_embedding(embedding: object) -> list[float]:
     """严格复制 Chroma 返回的 embedding。
+
+    Chroma 返回 ndarray，本函数逐元素转为 Python float 并校验合法性，
+    供 VectorStore 快照写入 VectorRecord 前剥离 numpy 标量与异常值。
 
     Args:
         embedding: Chroma 返回的单条向量。
@@ -239,7 +242,7 @@ def _prepare_restore_records(records: list[VectorRecord]) -> list[VectorRecord]:
         prepared.append(
             VectorRecord(
                 entry_id=record.entry_id,
-                embedding=_copy_input_embedding(record.embedding),
+                embedding=tuple(_copy_input_embedding(record.embedding)),
                 metadata=_copy_metadata(record.metadata),
             )
         )
@@ -397,7 +400,7 @@ class VectorStore:
     async def upsert(
         self,
         entry_id: int,
-        embedding: list[float],
+        embedding: Sequence[float],
         *,
         collection_id: int = 0,
     ) -> None:
@@ -405,7 +408,7 @@ class VectorStore:
 
         Args:
             entry_id: 索引 id。
-            embedding: 与 entry_id 对应的向量。
+            embedding: 与 entry_id 对应的向量（list 或 tuple 均可）。
             collection_id: 合集编号，必须是大于等于 0 的真正整数。
 
         Raises:
@@ -511,7 +514,7 @@ class VectorStore:
 
     async def query(
         self,
-        query_embedding: list[float],
+        query_embedding: Sequence[float],
         n_results: int | None = 10,
         *,
         collection_id: int | None = None,
@@ -519,7 +522,7 @@ class VectorStore:
         """召回 Top-N，可按合集 metadata 过滤。
 
         Args:
-            query_embedding: 查询向量。
+            query_embedding: 查询向量（list 或 tuple 均可）。
             n_results: 召回条数上限，默认 10；None 表示全库召回。
             collection_id: None 表示不传 where、查询全部合集；非负整数
                 表示只查询该合集，其中 0 表示根目录合集。
@@ -544,7 +547,9 @@ class VectorStore:
         logger.debug("向量查询返回 %d 个候选", len(result))
         return result
 
-    def _rebuild_all_sync(self, items: list[tuple[int, list[float], int]]) -> None:
+    def _rebuild_all_sync(
+        self, items: list[tuple[int, list[float], int]]
+    ) -> None:
         """同步全量重建，并写入每条记录的合集 metadata。
 
         Args:
@@ -851,7 +856,7 @@ class VectorStore:
                     raise RuntimeError(f"Chroma 返回了重复 id={entry_id}")
                 records_by_id[entry_id] = VectorRecord(
                     entry_id=entry_id,
-                    embedding=_copy_chroma_embedding(embedding),
+                    embedding=tuple(_copy_chroma_embedding(embedding)),
                     metadata=_copy_stored_metadata(metadata),
                 )
         missing_ids = [

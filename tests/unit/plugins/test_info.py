@@ -131,7 +131,7 @@ class TestHandleInfoOverall:
                 entry_count=100,
                 current_entry_count=30,
                 collection_count=3,
-                speaker_ranking=[("曹操", 10)],
+                speaker_ranking=(("曹操", 10),),
                 status="空闲",
             )
         )
@@ -195,7 +195,7 @@ class TestHandleInfoOverall:
                 entry_count=10,
                 current_entry_count=10,
                 collection_count=0,
-                speaker_ranking=[("小明", 5)],
+                speaker_ranking=(("小明", 5),),
                 status="空闲",
             )
         )
@@ -238,7 +238,7 @@ class TestHandleInfoOverall:
                 entry_count=1,
                 current_entry_count=1,
                 collection_count=0,
-                speaker_ranking=[],
+                speaker_ranking=(),
                 status="空闲",
             )
         )
@@ -494,7 +494,7 @@ class TestHandleInfoGroupChat:
                 entry_count=128,
                 current_entry_count=128,
                 collection_count=0,
-                speaker_ranking=[("小明", 45), (None, 38), ("老板", 21)],
+                speaker_ranking=(("小明", 45), (None, 38), ("老板", 21)),
                 status="空闲",
             )
         )
@@ -547,7 +547,7 @@ class TestHandleInfoGroupChat:
                 entry_count=5,
                 current_entry_count=5,
                 collection_count=0,
-                speaker_ranking=[],
+                speaker_ranking=(),
                 status="空闲",
             )
         )
@@ -634,7 +634,7 @@ class TestHandleInfoStatusOverride:
                 entry_count=0,
                 current_entry_count=0,
                 collection_count=0,
-                speaker_ranking=[],
+                speaker_ranking=(),
                 status="空闲",
             )
         )
@@ -695,7 +695,7 @@ class TestHandleInfoStatusOverride:
                 entry_count=0,
                 current_entry_count=0,
                 collection_count=0,
-                speaker_ranking=[],
+                speaker_ranking=(),
                 status="空闲",
             )
         )

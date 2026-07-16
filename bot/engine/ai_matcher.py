@@ -32,7 +32,7 @@ class AIMatchCandidate:
         text: OCR 文本。
         similarity: 余弦相似度。
         speaker: 说话人，可能为 None。
-        tags: 标记词列表。
+        tags: 标记词元组（不可变）。
         collection_id: 所属合集编号，0 表示全局根目录。
         local_id: 合集内正整数编号。
         collection_name: 所属合集名称。
@@ -44,7 +44,7 @@ class AIMatchCandidate:
     text: str
     similarity: float
     speaker: str | None = None
-    tags: list[str] = field(default_factory=list)
+    tags: tuple[str, ...] = field(default_factory=tuple)
     collection_id: int = 0
     local_id: int = 1
     collection_name: str = GLOBAL_COLLECTION_NAME
@@ -70,7 +70,7 @@ class AIMatchResult:
         similarity: embedding 余弦相似度。
         source: 结果来源，取值为 "embedding" 或 "rerank"。
         speaker: 说话人，可能为 None。
-        tags: 标记词列表。
+        tags: 标记词元组（不可变）。
         collection_id: 所属合集编号，0 表示全局根目录。
         local_id: 合集内正整数编号。
         collection_name: 所属合集名称。
@@ -82,7 +82,7 @@ class AIMatchResult:
     similarity: float
     source: str
     speaker: str | None = None
-    tags: list[str] = field(default_factory=list)
+    tags: tuple[str, ...] = field(default_factory=tuple)
     collection_id: int = 0
     local_id: int = 1
     collection_name: str = GLOBAL_COLLECTION_NAME
@@ -242,7 +242,7 @@ class AIMatcher:
                     text=entry.text,
                     similarity=hit.similarity,
                     speaker=entry.speaker,
-                    tags=list(entry.tags),
+                    tags=tuple(entry.tags),
                     collection_id=entry.collection_id,
                     local_id=entry.local_id,
                     collection_name=entry.collection_name,

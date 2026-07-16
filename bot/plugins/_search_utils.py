@@ -8,6 +8,7 @@
 import asyncio
 import logging
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
@@ -74,7 +75,7 @@ def format_metadata_line(
     public_id: MemePublicId,
     collection_name: str,
     speaker: str | None,
-    tags: list[str],
+    tags: Sequence[str],
 ) -> str:
     """格式化表情包的公开元数据行。
 
@@ -82,7 +83,7 @@ def format_metadata_line(
         public_id: 用户可见的复合 ID。
         collection_name: 条目实际所属合集名称；根目录条目为“全局”。
         speaker: 说话人，可能为 None。
-        tags: 标记词列表。
+        tags: 标记词序列（list 或 tuple 均可）。
 
     Returns:
         公开 ID、合集、说话人和标签组成的元数据行。
