@@ -27,7 +27,7 @@ from bot.config import MEMES_DIR
 from bot.engine.index_manager import CollectionSelectionExpiredError
 from bot.engine.types import CollectionSelection
 from bot.log_context import generate_request_id, set_request_id
-from bot.plugins._help_text import HELP_TEXT
+from bot.plugins._help_text import help_text_for
 from bot.plugins._search_utils import (
     dispatch_search_results,
     format_metadata_line,
@@ -152,7 +152,9 @@ async def got_rand_selection(
             try:
                 # /help 和 /cancel 旁路拦截
                 text = event.get_plaintext().strip()
-                if await got_intercept_bypass(event, matcher, text, HELP_TEXT):
+                if await got_intercept_bypass(
+                    event, matcher, text, help_text_for(event.message_type)
+                ):
                     return
 
                 # 检查选择会话是否仍有效

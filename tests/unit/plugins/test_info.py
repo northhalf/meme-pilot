@@ -213,7 +213,7 @@ class TestHandleInfoOverall:
         matcher.finish.assert_awaited_once()
         reply = matcher.finish.call_args[0][0]
         text = extract_message_text(reply)
-        assert "进程内存：123 MiB" in text
+        assert "进程内存：123.00 MiB" in text
         _assert_no_reply(reply)
 
     @pytest.mark.asyncio
@@ -381,8 +381,9 @@ class TestHandleInfoDetail:
             reply = matcher.finish.call_args[0][0]
             text = extract_message_text(reply)
             assert "大小：文件不存在" in text
-            assert "说话人：无" in text
-            assert "标签：无" in text
+            # speaker 与 tags 同时为空时省略「说话人」「标签」两行
+            assert "说话人：" not in text
+            assert "标签：" not in text
             _assert_no_reply(reply)
 
     @pytest.mark.asyncio

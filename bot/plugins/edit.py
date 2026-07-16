@@ -1,7 +1,7 @@
 """/edittext 命令插件 — 修改指定表情包的 OCR 文本。
 
 授权用户私聊中发送 /edittext <公开ID> <新文本>，
-Bot 发送确认消息，用户回复「确认」或「yes」后执行修改。
+Bot 发送确认消息，用户回复「确认」、「yes」或「y」后执行修改。
 """
 
 import asyncio
@@ -122,7 +122,7 @@ async def handle_edit(
                 matcher,
                 f"当前 OCR 文本：{entry.text}\n"
                 f"修改后文本：{new_text}\n"
-                "回复「确认」或「yes」确认修改，回复其他内容取消",
+                "回复「确认」、「yes」或「y」确认修改，回复其他内容取消",
             )
 
             # 存入 state

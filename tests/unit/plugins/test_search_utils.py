@@ -218,7 +218,7 @@ class TestPresentCandidates:
         )
 
         sent_text = extract_message_text(cmd.send.call_args[0][0])
-        assert "1. 甲 -- 0.1, 全局, 无, 82%" in sent_text
+        assert "1. 甲 -- 0.1, 全局, 82%" in sent_text
 
     @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.session_manager.create_selection")
@@ -814,9 +814,10 @@ class TestFormatMetadataLine:
         """根目录条目应展示归属名称“全局”，而非搜索范围“全部合集”。"""
         from bot.plugins._search_utils import format_metadata_line
 
+        # speaker 与 tags 同时为空时省略「无」占位，仅展示公开 ID 与合集
         assert (
             format_metadata_line(MemePublicId(0, 42), "全局", None, [])
-            == "0.42, 全局, 无"
+            == "0.42, 全局"
         )
 
 

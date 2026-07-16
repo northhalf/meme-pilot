@@ -129,7 +129,7 @@ async def handle_move(
                 f"（{preview.target_collection_id}）\n"
                 f"当前编号：{preview.old_public_id}\n"
                 f"预计新编号：{preview.expected_public_id}\n\n"
-                "回复“确认”、yes 或 y 执行",
+                "回复「确认」、「yes」或「y」确认移动，回复其他内容取消",
             )
             selection_id = str(uuid.uuid4())
             task = asyncio.create_task(

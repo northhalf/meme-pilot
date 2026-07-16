@@ -25,7 +25,7 @@ from bot import reply as reply_utils
 from bot.app_state import get_index_manager
 from bot.config import MEMES_DIR
 from bot.engine.types import MemePublicId, SearchResult
-from bot.plugins._help_text import HELP_TEXT
+from bot.plugins._help_text import help_text_for
 from bot.session import ChatScope, session_manager, timeout_session
 
 logger = logging.getLogger(__name__)
@@ -88,7 +88,11 @@ def format_metadata_line(
     Returns:
         公开 ID、合集、说话人和标签组成的元数据行。
     """
-    parts = [str(public_id), collection_name, speaker if speaker else "无", *tags]
+    # speaker 与 tags 同时为空时不追加“无”占位，仅展示 ID 与合集
+    if speaker or tags:
+        parts = [str(public_id), collection_name, speaker if speaker else "无", *tags]
+    else:
+        parts = [str(public_id), collection_name]
     return ", ".join(parts)
 
 
@@ -417,7 +421,9 @@ async def handle_got_selection(
         try:
             # /help 和 /cancel 旁路拦截
             text = event.get_plaintext().strip()
-            if await got_intercept_bypass(event, matcher, text, HELP_TEXT):
+            if await got_intercept_bypass(
+                event, matcher, text, help_text_for(event.message_type)
+            ):
                 return
 
             # 检查选择会话是否仍有效

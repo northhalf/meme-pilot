@@ -1,7 +1,7 @@
 """/del 命令插件 — 按公开 ID 删除一个或多个表情包。
 
 授权用户私聊中发送 /del <公开ID>...，
-Bot 发送摘要确认消息，用户回复「确认」或「yes」后执行删除。
+Bot 发送摘要确认消息，用户回复「确认」、「yes」或「y」后执行删除。
 """
 
 import asyncio
@@ -138,7 +138,7 @@ async def handle_delete(
                 await reply_utils.finish(event, matcher, "未找到任何表情包")
                 return
 
-            lines = ["确认删除以下表情包？回复「确认」执行删除，回复其他内容取消。"]
+            lines = ["确认删除以下表情包？回复「确认」、「yes」或「y」执行删除，回复其他内容取消。"]
             for entry in entries:
                 lines.append(f"{entry.public_id}, {_truncate_text(entry.text)}")
             if not_found_public_ids:

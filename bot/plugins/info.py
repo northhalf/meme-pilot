@@ -65,18 +65,20 @@ def _build_detail_message(entry: MemeEntry) -> Message | str:
         logger.warning("获取文件大小失败: %s", image_path, exc_info=True)
         size_text = "获取失败"
 
-    speaker_text = entry.speaker if entry.speaker else "无"
-    tags_text = ", ".join(entry.tags) if entry.tags else "无"
-
-    text = (
-        f"ID：{entry.public_id}\n"
-        f"合集：{entry.collection_name}\n"
-        f"文本：{entry.text}\n"
-        f"文件名：{entry.image_path}\n"
-        f"大小：{size_text}\n"
-        f"说话人：{speaker_text}\n"
-        f"标签：{tags_text}"
-    )
+    text_lines = [
+        f"ID：{entry.public_id}",
+        f"合集：{entry.collection_name}",
+        f"文本：{entry.text}",
+        f"文件名：{entry.image_path}",
+        f"大小：{size_text}",
+    ]
+    # speaker 与 tags 同时为空时不展示这两个字段，避免孤立的“无”占位
+    if entry.speaker or entry.tags:
+        speaker_text = entry.speaker if entry.speaker else "无"
+        tags_text = ", ".join(entry.tags) if entry.tags else "无"
+        text_lines.append(f"说话人：{speaker_text}")
+        text_lines.append(f"标签：{tags_text}")
+    text = "\n".join(text_lines)
 
     if file_exists:
         return Message(
@@ -175,8 +177,8 @@ async def handle_info(
             try:
                 mem = psutil.virtual_memory()
                 mem_text = (
-                    f"{humanize.naturalsize(mem.used, binary=True, format='%.0f')} / "
-                    f"{humanize.naturalsize(mem.total, binary=True, format='%.0f')} ({mem.percent}%)"
+                    f"{humanize.naturalsize(mem.used, binary=True, format='%.2f')} / "
+                    f"{humanize.naturalsize(mem.total, binary=True, format='%.2f')} ({mem.percent:.2f}%)"
                 )
             except Exception:
                 logger.warning("获取内存信息失败", exc_info=True)
@@ -184,7 +186,7 @@ async def handle_info(
 
             try:
                 cpu_percent = await asyncio.to_thread(psutil.cpu_percent, interval=0.1)
-                cpu_text = f"{cpu_percent}%"
+                cpu_text = f"{cpu_percent:.2f}%"
             except Exception:
                 logger.warning("获取 CPU 信息失败", exc_info=True)
                 cpu_text = "获取失败"
@@ -205,7 +207,7 @@ async def handle_info(
             )
             try:
                 process_mem_text = humanize.naturalsize(
-                    psutil.Process().memory_info().rss, binary=True, format="%.0f"
+                    psutil.Process().memory_info().rss, binary=True, format="%.2f"
                 )
             except Exception:
                 logger.warning("获取进程内存失败", exc_info=True)

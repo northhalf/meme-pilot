@@ -22,7 +22,7 @@ from nonebot.rule import to_me
 from bot import reply as reply_utils
 from bot.auth import is_authorized, log_unauthorized
 from bot.log_context import generate_request_id, set_request_id
-from bot.plugins._help_text import HELP_TEXT
+from bot.plugins._help_text import help_text_for
 from bot.plugins._search_utils import (
     NEXT_PAGE_TRIGGER,
     PresentOptions,
@@ -70,7 +70,7 @@ async def handle_plain_text(bot: Bot, event: MessageEvent, matcher: Matcher) -> 
             if text.startswith("/"):
                 logger.debug("普通文本命中帮助旁路")
                 logger.info("用户 %s 发送未知命令: %r", user_id, text)
-                await reply_utils.finish(event, matcher, f"未知命令\n\n{HELP_TEXT}")
+                await reply_utils.finish(event, matcher, f"未知命令\n\n{help_text_for(event.message_type)}")
                 return
 
             # 普通文本按关键词兜底搜索

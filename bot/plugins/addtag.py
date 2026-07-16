@@ -2,7 +2,7 @@
 
 授权用户私聊中发送 /addtag <公开ID> <tag> [<tag>...]，
 Bot 发送确认消息（包含 OCR 文本、当前标签和新增标签），
-用户回复「确认」或「yes」后执行追加。
+用户回复「确认」、「yes」或「y」后执行追加。
 """
 
 import asyncio
@@ -128,7 +128,7 @@ async def handle_addtag(
                 f"当前 OCR 文本：{entry.text}\n"
                 f"当前标签：{current_tags_text}\n"
                 f"新增标签：{new_tags_text}\n"
-                "回复「确认」或「yes」确认添加，回复其他内容取消",
+                "回复「确认」、「yes」或「y」确认添加，回复其他内容取消",
             )
 
             # 存入 state

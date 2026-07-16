@@ -13,7 +13,7 @@ from nonebot.rule import to_me
 from bot import reply as reply_utils
 from bot.auth import is_authorized, log_unauthorized
 from bot.log_context import generate_request_id, set_request_id
-from bot.plugins._help_text import HELP_TEXT
+from bot.plugins._help_text import help_text_for
 
 logger = logging.getLogger(__name__)
 
@@ -40,4 +40,4 @@ async def handle_help(bot: Bot, event: MessageEvent, matcher: Matcher) -> None:
             log_unauthorized(user_id, "help")
             return
 
-        await reply_utils.finish(event, matcher, HELP_TEXT)
+        await reply_utils.finish(event, matcher, help_text_for(event.message_type))

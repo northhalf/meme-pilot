@@ -1,7 +1,7 @@
 """/setspeaker 命令插件 — 设置或清空表情包的说话人（speaker）字段。
 
 授权用户私聊中发送 /setspeaker <公开ID> [说话人]，
-Bot 发送图片和确认消息，用户回复「确认」或「yes」后执行修改。
+Bot 发送图片和确认消息，用户回复「确认」、「yes」或「y」后执行修改。
 无 [说话人] 参数时清空 speaker。
 """
 
@@ -131,7 +131,7 @@ async def handle_setspeaker(
                 matcher,
                 f"当前说话人：{old_speaker_text}\n"
                 f"新说话人：{new_speaker_text}\n"
-                "回复「确认」或「yes」确认修改，回复其他内容取消",
+                "回复「确认」、「yes」或「y」确认修改，回复其他内容取消",
             )
 
             # 存入 state
