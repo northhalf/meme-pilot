@@ -86,6 +86,8 @@ class TestHandleHelp:
             "/edittext <id> <新文本> (/e)：修改指定表情包的 OCR 文本",
             "/setspeaker <id> [说话人] (/sp)：设置或清空表情包的说话人",
             "/collection create <名称>：创建表情包合集",
+            "/collection delete <编号|名称>：删除空合集",
+            "/collection rename <旧编号|名称> <新名称>：重命名合集",
             "/switch [合集编号|名称]：查看或切换表情包合集",
             "/move <id> <目标合集编号|名称> (/mv)：移动表情包（需确认）",
             "/refresh (/r)：扫描 memes/ 并增量更新索引",
@@ -125,3 +127,24 @@ class TestHandleHelp:
         text = extract_message_text(reply)
         assert "/help" in text
         assert "/collection create" not in text
+
+
+def test_private_help_contains_collection_subcommands() -> None:
+    """私聊帮助文本应包含 create/delete/rename 三个 collection 子命令行。"""
+    from bot.plugins._help_text import help_text_for
+
+    text = help_text_for("private")
+    assert "/collection create <名称>：创建表情包合集" in text
+    assert "/collection delete <编号|名称>：删除空合集" in text
+    assert "/collection rename <旧编号|名称> <新名称>：重命名合集" in text
+
+
+def test_group_help_excludes_collection_delete_rename() -> None:
+    """群聊帮助不应展示任何 /collection 子命令（组 A 仅私聊）。"""
+    from bot.plugins._help_text import help_text_for
+
+    text = help_text_for("group")
+    assert "/collection create" not in text
+    assert "/collection delete" not in text
+    assert "/collection rename" not in text
+    assert "/collection" not in text

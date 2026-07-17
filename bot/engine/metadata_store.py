@@ -660,6 +660,79 @@ class MetadataStore:
                     self._selected_collections[key] = 0
             return reset_count
 
+    def rename_collection(self, collection_id: int, new_name: str) -> MemeCollection:
+        """重命名普通合集，并同步更新该合集所有条目的 image_path 首段。
+
+        在单个 SQLite 事务内修改 ``meme_collection.name`` 与该合集每条
+        ``meme.image_path`` 的首段（目录名）；提交成功后再更新内存缓存。
+        任何异常回滚事务且缓存不动。
+
+        Args:
+            collection_id: 要重命名的普通合集编号；必须为正整数。
+            new_name: 已通过领域校验的新合集名称。
+
+        Returns:
+            重命名后的合集快照（新名、同编号）。
+
+        Raises:
+            ValueError: 编号非正整数或合集不存在。
+            sqlite3.IntegrityError: 新名称已被其他合集使用（DB UNIQUE 兜底）。
+        """
+        with self._lock:
+            conn = self._require_conn()
+            if collection_id <= 0:
+                raise ValueError("collection_id 必须为正整数")
+            collection = self._id_to_collections.get(collection_id)
+            if collection is None:
+                raise ValueError(f"collection_id={collection_id} 不存在")
+            old_name = collection.name
+            if new_name == old_name:
+                return collection
+
+            # 收集需要改 image_path 首段的条目（按 entry_id 升序，稳定）
+            entry_ids = sorted(
+                self._entries_by_collection.get(collection_id, {}).values()
+            )
+            updates: list[tuple[int, str]] = []
+            for eid in entry_ids:
+                entry = self._entries[eid]
+                head, sep, rest = entry.image_path.partition("/")
+                if not sep:
+                    # 普通合集条目 image_path 必以 <合集名>/ 开头；兜底跳过
+                    continue
+                updates.append((eid, f"{new_name}/{rest}"))
+
+            try:
+                cursor = conn.execute(
+                    "UPDATE meme_collection SET name = ? WHERE id = ?",
+                    (new_name, collection_id),
+                )
+                if cursor.rowcount != 1:
+                    raise sqlite3.DatabaseError("重命名合集必须影响 1 行")
+                for eid, new_path in updates:
+                    conn.execute(
+                        "UPDATE meme SET image_path = ? WHERE id = ?",
+                        (new_path, eid),
+                    )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
+            # 提交成功后更新缓存：先合集名，再重建 frozen 条目
+            renamed = MemeCollection(collection_id, new_name)
+            self._id_to_collections[collection_id] = renamed
+            self._collection_name_to_id.pop(old_name, None)
+            self._collection_name_to_id[new_name] = collection_id
+            for eid, new_path in updates:
+                old_entry = self._entries[eid]
+                self._entries[eid] = replace(
+                    old_entry,
+                    image_path=new_path,
+                    collection_name=new_name,
+                )
+            return renamed
+
     @timed(logger, "MetadataStore 添加")
     def add(
         self,

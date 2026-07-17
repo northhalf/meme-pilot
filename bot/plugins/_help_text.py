@@ -16,6 +16,8 @@ HELP_TEXT = """\
 /edittext <id> <新文本> (/e)：修改指定表情包的 OCR 文本
 /setspeaker <id> [说话人] (/sp)：设置或清空表情包的说话人
 /collection create <名称>：创建表情包合集
+/collection delete <编号|名称>：删除空合集
+/collection rename <旧编号|名称> <新名称>：重命名合集
 /switch [合集编号|名称]：查看或切换表情包合集
 /move <id> <目标合集编号|名称> (/mv)：移动表情包（需确认）
 /refresh (/r)：扫描 memes/ 并增量更新索引

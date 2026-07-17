@@ -13,7 +13,7 @@
 
 </div>
 
-`/query`、`/rand`、`/sim`、`/help`、`/info`、`/switch` 和普通文本支持群聊 @bot 使用；`/collection create`、`/add`、`/addtag`、`/del`、`/refresh`、`/edittext`、`/setspeaker`、`/mv` 仅限私聊。`/cancel` 私聊和群聊均可使用。
+`/query`、`/rand`、`/sim`、`/help`、`/info`、`/switch` 和普通文本支持群聊 @bot 使用；`/collection create`、`/collection delete`、`/collection rename`、`/add`、`/addtag`、`/del`、`/refresh`、`/edittext`、`/setspeaker`、`/mv` 仅限私聊。`/cancel` 私聊和群聊均可使用。
 
 隐私说明：表情包图片始终本地存储；OCR 文本会按 `OCR_PROVIDER` 配置发送给对应服务（默认 `rapidocr` 使用本地 ONNX 模型，无需联网；`paddle` 使用百度 PaddleOCR 云 API；`deepseek` 使用任意 OpenAI 兼容视觉 OCR 服务）；Embedding 调用由 `EMBEDDING_PROVIDER` 指定的服务（默认 `openai`，即 OpenAI 兼容 API）。
 
@@ -34,6 +34,8 @@ Bot: 当前可用命令：
      /edittext <公开ID> <新文本> (/e)：修改指定表情包的 OCR 文本
      /setspeaker <公开ID> [说话人] (/sp)：设置或清空表情包的说话人
      /collection create <名称>：创建表情包合集
+     /collection delete <编号|名称>：删除空合集
+     /collection rename <旧编号|名称> <新名称>：重命名合集
      /switch [合集编号|名称]：查看或切换表情包合集
      /mv <公开ID> <目标合集编号|名称>：移动表情包（需确认）
      /refresh (/r)：扫描 memes/ 并增量更新索引
@@ -97,6 +99,31 @@ Bot: 合集创建完成 ✅
 `/collection create <名称>` 仅限私聊，校验通过后直接创建，不需要确认；创建成功后不会自动切换当前合集。
 
 名称允许中文，但不能为空、不能包含内部空白或路径分隔符，不能以 `.` 开头，也不能使用“全局”“全部合集”等保留名称。如果同名普通目录已经存在，命令只登记该目录；目录中的图片需执行 `/refresh` 后建立索引。同名路径是文件或符号链接时拒绝创建。
+
+### 🗑️ 删除合集 `/collection delete`
+
+```text
+授权用户: /collection delete 3
+Bot: 合集已删除 ✅
+     编号：3
+     名称：新三国
+     已把 2 个聊天窗口的合集选择回退到全部合集
+```
+
+`/collection delete <编号|名称>` 仅限私聊，校验通过后直接执行，不需要确认。只允许删除空合集；非空合集拒绝并回复“合集不为空，请先 /move 或 /del 清空后再删除”。删除时先 `rmdir` 空目录、后删 `meme_collection` 记录，并把引用该合集的所有 `ChatScope` 选择回退到全部合集（`0`）；`collection_id` 编号不回收。目标合集不存在时回复“未找到表情包合集：{目标}\n发送 /switch 查看可用合集”。
+
+### ✏️ 重命名合集 `/collection rename`
+
+```text
+授权用户: /collection rename 新三国 旧三国
+Bot: 合集已重命名 ✅
+     编号：3
+     旧名称：新三国
+     新名称：旧三国
+     更新条目：12
+```
+
+`/collection rename <旧编号|名称> <新名称>` 仅限私聊，校验通过后直接执行，不需要确认。新名称走与 `create` 相同的名称校验且必须未登记；重命名时先在 SQLite 单事务内改 `meme_collection.name` 与该合集所有 `meme.image_path` 首段，再 `Path.rename` 重命名 `memes/` 目录；`collection_id` 不变，chroma 与 `ChatScope` 不受影响。目录 `rename` 失败时补偿回滚 SQLite 与缓存；旧合集不存在回复“未找到表情包合集：{目标}\n发送 /switch 查看可用合集”，新名称已登记回复“合集名称已存在：{name}（{id}）”。
 
 ### ➕ 聊天添加 `/add`
 ```
@@ -193,10 +220,10 @@ Bot: 索引更新完成 ✅
 
 `/refresh` 扫描时同样会对新增图片做去重与无文字排除：OCR 文本去重键命中已有条目或其他新图的新增图片会被移动到 `memes_replaced/` 目录归档（保留已有或文件名靠前者），无文字图片移至 `meme_no_text/`；完成回复包含新增、删除、去重、无文字移走、失败五项数量。
 
-`/help`、`/query`、`/rand`、`/sim`、`/collection create`、`/add`、`/addtag`、`/del`、`/edittext`、`/setspeaker`、`/refresh`、`/info`、`/cancel`、`/switch`、`/mv` 使用同一组授权用户白名单。非授权用户的私聊和群聊消息都会被静默忽略。
+`/help`、`/query`、`/rand`、`/sim`、`/collection create`、`/collection delete`、`/collection rename`、`/add`、`/addtag`、`/del`、`/edittext`、`/setspeaker`、`/refresh`、`/info`、`/cancel`、`/switch`、`/mv` 使用同一组授权用户白名单。非授权用户的私聊和群聊消息都会被静默忽略。
 
 ### 群聊支持
-`/query`、`/rand`、`/sim`、`/help`、`/info`、`/switch` 和普通文本支持在群聊中 @bot 触发。`/collection create`、`/add`、`/addtag`、`/del`、`/refresh`、`/edittext`、`/setspeaker`、`/mv` 在群聊中 @bot 调用时会回复"此命令仅限私聊使用"。`/cancel` 私聊和群聊均可使用。
+`/query`、`/rand`、`/sim`、`/help`、`/info`、`/switch` 和普通文本支持在群聊中 @bot 触发。`/collection create`、`/collection delete`、`/collection rename`、`/add`、`/addtag`、`/del`、`/refresh`、`/edittext`、`/setspeaker`、`/mv` 在群聊中 @bot 调用时会回复"此命令仅限私聊使用"。`/cancel` 私聊和群聊均可使用。
 
 ## 🚀 快速开始
 
@@ -406,7 +433,7 @@ push 或 PR 到 `main` 时，CI 会先跑单元测试，通过后并行执行集
 │  Docker 容器 │                   │  ├ /query 组合检索  │
 │              │                   │  ├ /rand  随机选择  │
 │              │                   │  ├ /sim   语义选择  │
-└──────────────┘                   │  ├ /collection 创建  │
+└──────────────┘                   │  ├ /collection 管理  │
                                    │  ├ /add   聊天添加   │
                                    │  ├ /addtag 添加标签  │
                                    │  ├ /del   删除表情   │
@@ -521,7 +548,7 @@ meme-pilot/
     │   ├── query.py        # /query 命令
     │   ├── rand.py         # /rand 命令
     │   ├── sim.py          # /sim 命令
-    │   ├── collection.py   # /collection create 命令
+    │   ├── collection.py   # /collection create/delete/rename 命令
     │   ├── add.py          # /add 命令
     │   ├── addtag.py       # /addtag 命令
     │   ├── delete.py       # /del 命令

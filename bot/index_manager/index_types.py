@@ -78,6 +78,27 @@ class CollectionCreateError(RuntimeError):
     """创建合集失败且可能需要人工检查文件系统。"""
 
 
+class CollectionNotEmptyError(RuntimeError):
+    """待删除合集仍含表情包，不能删除。"""
+
+
+class CollectionDeleteError(RuntimeError):
+    """删除合集失败且可能需要人工检查文件系统。"""
+
+
+class CollectionRenameTargetExistsError(RuntimeError):
+    """重命名目标名称已被其他合集使用。"""
+
+    def __init__(self, collection: MemeCollection) -> None:
+        """初始化重命名目标重名错误。
+
+        Args:
+            collection: 已占用目标名称的合集快照。
+        """
+        self.collection = collection
+        super().__init__(f"合集名称已存在: {collection.id}:{collection.name}")
+
+
 @dataclass(frozen=True, slots=True)
 class CreateCollectionResult:
     """创建合集后的持久状态快照。
@@ -89,6 +110,36 @@ class CreateCollectionResult:
 
     collection: MemeCollection
     registered_existing_directory: bool
+
+
+@dataclass(frozen=True, slots=True)
+class DeleteCollectionResult:
+    """删除合集后的持久状态快照。
+
+    Attributes:
+        collection: 已删除的合集快照（用于回复编号与名称）。
+        reset_scope_count: 回退到全部合集的 ChatScope 行数。
+    """
+
+    collection: MemeCollection
+    reset_scope_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class RenameCollectionResult:
+    """重命名合集后的持久状态快照。
+
+    Attributes:
+        collection: 重命名后的合集快照（新名、同编号）。
+        old_name: 重命名前的名称。
+        new_name: 重命名后的名称。
+        entry_count: 受 image_path 首段变更影响的条目数。
+    """
+
+    collection: MemeCollection
+    old_name: str
+    new_name: str
+    entry_count: int
 
 
 class IndexAddCancelledError(RuntimeError):
@@ -126,6 +177,8 @@ class WriteOp(Enum):
     DELETE = auto()
     MOVE = auto()
     CREATE_COLLECTION = auto()
+    DELETE_COLLECTION = auto()
+    RENAME_COLLECTION = auto()
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,7 +187,7 @@ class _WriteRequest:
 
     Attributes:
         op: 操作类型（ADD / EDIT_TEXT / SET_SPEAKER / ADD_TAG / DELETE / MOVE /
-            CREATE_COLLECTION）。
+            CREATE_COLLECTION / DELETE_COLLECTION / RENAME_COLLECTION）。
         future: 用于返回结果的 asyncio.Future。
         entry_id: EDIT_TEXT / SET_SPEAKER / ADD_TAG 时为目标 id；ADD 时为 0（store 自动分配）。
         filename: ADD 时 memes/ 下文件名。
@@ -144,8 +197,10 @@ class _WriteRequest:
         entry_ids: DELETE 时为目标 id 元组（不可变）。
         embedding: 对应的 embedding 向量元组（不可变）。
         old_text: EDIT_TEXT 旧 text（回滚用）。
-        collection_id: ADD 时的目标合集编号。
+        collection_id: ADD 时的目标合集编号；DELETE_COLLECTION 时的目标合集编号；
+            RENAME_COLLECTION 时为源合集编号。
         collection_name: CREATE_COLLECTION 时已完成领域校验的合集名称。
+        new_collection_name: RENAME_COLLECTION 时已通过领域校验的新合集名称。
         scope: ADD 时发起命令的 ChatScope，用于写锁内校验选择快照。
         expected_selection: ADD 时捕获的完整合集选择快照。
         target_collection_id: MOVE 时的目标合集编号。
@@ -155,7 +210,7 @@ class _WriteRequest:
     """
 
     op: WriteOp
-    future: "asyncio.Future[AddResult | EditTextResult | SetSpeakerResult | AddTagResult | DeleteResult | MoveResult | CreateCollectionResult]"
+    future: "asyncio.Future[AddResult | EditTextResult | SetSpeakerResult | AddTagResult | DeleteResult | MoveResult | CreateCollectionResult | DeleteCollectionResult | RenameCollectionResult]"
     entry_id: int = 0
     filename: str = ""
     text: str = ""
@@ -166,6 +221,7 @@ class _WriteRequest:
     old_text: str = ""
     collection_id: int = 0
     collection_name: str = ""
+    new_collection_name: str = ""
     scope: "ChatScope | None" = None
     expected_selection: CollectionSelection | None = None
     target_collection_id: int = 0

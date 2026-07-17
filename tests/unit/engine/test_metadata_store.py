@@ -2198,3 +2198,71 @@ class TestReadPathHitsCache:
         store.add("a.jpg", "甲")
         store.add("b.jpg", "乙")
         assert store.entry_count() == len(store._entries) == 2
+
+
+class TestRenameCollection:
+    def test_rename_collection_updates_name_image_path_and_cache(
+        self, store: MetadataStore
+    ) -> None:
+        """rename_collection 同步更新合集名、该合集条目 image_path 首段与全部缓存。"""
+        collection = store.create_collection("新三国")
+        cid = collection.id
+        entry_id = store.add("新三国/截图/a.webp", "加班", collection_id=cid)
+        other_id = store.create_collection("甄嬛传")
+        store.add("甄嬛传/b.webp", "别的", collection_id=other_id.id)
+
+        renamed = store.rename_collection(cid, "旧三国")
+
+        assert renamed == MemeCollection(cid, "旧三国")
+        # meme_collection 行
+        assert store.get_collection(cid) == MemeCollection(cid, "旧三国")
+        assert store.get_collection_by_name("新三国") is None
+        assert store.get_collection_by_name("旧三国") is not None
+        # 条目 image_path 首段替换，id 与 local_id 不变
+        entry = store.get_entry(entry_id)
+        assert entry is not None
+        assert entry.image_path == "旧三国/截图/a.webp"
+        assert entry.collection_name == "旧三国"
+        assert entry.collection_id == cid
+        # 其他合集条目不受影响
+        other = store.get_entry_by_public_id(MemePublicId(other_id.id, 1))
+        assert other is not None
+        assert other.image_path == "甄嬛传/b.webp"
+        assert other.collection_name == "甄嬛传"
+        # public_id 仍可解析到同一条目
+        assert store.get_entry_by_public_id(MemePublicId(cid, 1)) is not None
+
+    def test_rename_collection_rejects_duplicate_name(
+        self, store: MetadataStore
+    ) -> None:
+        """重命名为已登记名称时回滚，DB 与缓存不变。"""
+        first = store.create_collection("一")
+        second = store.create_collection("二")
+        store.add("二/a.webp", "文字", collection_id=second.id)
+
+        with pytest.raises(sqlite3.IntegrityError):
+            store.rename_collection(second.id, "一")
+
+        # 缓存与 DB 均未变
+        assert store.get_collection(second.id) == MemeCollection(second.id, "二")
+        assert store.get_collection_by_name("一") == MemeCollection(first.id, "一")
+        entry = store.get_entry_by_public_id(MemePublicId(second.id, 1))
+        assert entry is not None
+        assert entry.image_path == "二/a.webp"
+        assert entry.collection_name == "二"
+
+    def test_rename_collection_rejects_unknown_id(self, store: MetadataStore) -> None:
+        """不存在的合集编号抛 ValueError。"""
+        with pytest.raises(ValueError):
+            store.rename_collection(999, "新名")
+
+    def test_rename_collection_rejects_zero_id(self, store: MetadataStore) -> None:
+        """编号 0（全局）抛 ValueError。"""
+        with pytest.raises(ValueError):
+            store.rename_collection(0, "新名")
+
+    def test_rename_collection_same_name_is_noop(self, store: MetadataStore) -> None:
+        """新名等于旧名时直接返回，不触发任何 SQL 写入。"""
+        collection = store.create_collection("同名")
+        result = store.rename_collection(collection.id, "同名")
+        assert result == collection

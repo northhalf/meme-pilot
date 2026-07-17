@@ -45,6 +45,7 @@ from .index_types import (
     CollectionSelectionExpiredError,
     CompressionError,
     CreateCollectionResult,
+    DeleteCollectionResult,
     DeleteResult,
     DuplicateMemeInCollectionError,
     DuplicateTextError,
@@ -61,6 +62,7 @@ from .index_types import (
     MoveSourceSnapshot,
     OcrError,
     RefreshInProgressError,
+    RenameCollectionResult,
     SetSpeakerResult,
     SyncResult,
     WriteOp,
@@ -736,6 +738,89 @@ class IndexManager:
             op=WriteOp.CREATE_COLLECTION,
             future=future,  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
             collection_name=collection_name,
+        )
+        return await self._coordinator.submit(req)
+
+    async def delete_collection(self, raw: str) -> DeleteCollectionResult:
+        """删除空合集：rmdir 空目录 + 删 DB 记录 + 回退引用它的 ChatScope。
+
+        Args:
+            raw: 目标合集编号或精确名称（编号优先、名称兜底）。
+
+        Returns:
+            删除结果，含回退到全部合集的 ChatScope 行数。
+
+        Raises:
+            InvalidCollectionNameError: 不会触发（delete 不创建新名称）。
+            CollectionNotFoundError: 目标合集不存在。
+            CollectionNotEmptyError: 合集仍含表情包。
+            CollectionPathConflictError: 同名路径不是普通目录。
+            CollectionDeleteError: rmdir 或删 DB 失败且补偿失败。
+            RefreshInProgressError: 索引刷新正在执行。
+            IndexAddCancelledError: Bot 正在关闭或写入 worker 被取消。
+        """
+        if self._shutting_down:
+            raise IndexAddCancelledError("Bot 正在关闭")
+        if self._refresh_active:
+            raise RefreshInProgressError("索引正在刷新，请稍后再试")
+
+        # CollectionNotFoundError 由 self._collection_manager.resolve_collection
+        # 在编号与名称均未命中时直接抛出，门面无需显式 raise。
+        collection = await asyncio.to_thread(
+            self._collection_manager.resolve_collection, raw
+        )
+        self._ensure_write_worker()
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[DeleteCollectionResult] = loop.create_future()
+        req = _WriteRequest(
+            op=WriteOp.DELETE_COLLECTION,
+            future=future,  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+            collection_id=collection.id,
+        )
+        return await self._coordinator.submit(req)
+
+    async def rename_collection(
+        self, raw: str, new_name: str
+    ) -> RenameCollectionResult:
+        """重命名合集：改 DB name + 重命名目录 + 更新该合集 image_path 首段。
+
+        collection_id 不变，chroma 与 ChatScope 不受影响。
+
+        Args:
+            raw: 源合集编号或精确名称（编号优先、名称兜底）。
+            new_name: 新合集名称（走 validate_collection_name 校验，不能与已登记名重复）。
+
+        Returns:
+            重命名结果，含旧名、新名与受影响条目数。
+
+        Raises:
+            InvalidCollectionNameError: 新名称非法。
+            CollectionNotFoundError: 源合集不存在。
+            CollectionRenameTargetExistsError: 目标名称已登记。
+            CollectionPathConflictError: 源/目标路径不是普通目录或目标已存在。
+            CollectionCreateError: 目录 rename 失败且补偿失败。
+            RefreshInProgressError: 索引刷新正在执行。
+            IndexAddCancelledError: Bot 正在关闭或写入 worker 被取消。
+        """
+        if self._shutting_down:
+            raise IndexAddCancelledError("Bot 正在关闭")
+        if self._refresh_active:
+            raise RefreshInProgressError("索引正在刷新，请稍后再试")
+
+        # CollectionNotFoundError 由 self._collection_manager.resolve_collection
+        # 在编号与名称均未命中时直接抛出，门面无需显式 raise。
+        validated_new_name = validate_collection_name(new_name)
+        collection = await asyncio.to_thread(
+            self._collection_manager.resolve_collection, raw
+        )
+        self._ensure_write_worker()
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[RenameCollectionResult] = loop.create_future()
+        req = _WriteRequest(
+            op=WriteOp.RENAME_COLLECTION,
+            future=future,  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+            collection_id=collection.id,
+            new_collection_name=validated_new_name,
         )
         return await self._coordinator.submit(req)
 

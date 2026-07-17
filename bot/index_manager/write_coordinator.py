@@ -2,9 +2,9 @@
 
 从 IndexManager 抽离，收口全部写入编排逻辑。持有写入队列与 worker task，按
 _write_dispatch 字典派发串行处理 ADD / EDIT_TEXT / SET_SPEAKER / ADD_TAG / DELETE /
-MOVE / CREATE_COLLECTION 七类写入请求，move 支持补偿式事务与调用者取消后可靠等待
-事务完成。门面 IndexManager 持有本类实例并经薄委托/property 转发保留测试
-monkeypatch 接缝。
+MOVE / CREATE_COLLECTION / DELETE_COLLECTION / RENAME_COLLECTION 九类写入请求，move
+支持补偿式事务与调用者取消后可靠等待事务完成。门面 IndexManager 持有本类实例并经
+薄委托/property 转发保留测试 monkeypatch 接缝。
 """
 
 import asyncio
@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from bot.engine.collection_manager import CollectionNotFoundError, validate_collection_name
 from bot.engine.metadata_store import MemeEntry, MetadataStore
-from bot.engine.types import GLOBAL_COLLECTION_NAME, CollectionSelection
+from bot.engine.types import GLOBAL_COLLECTION_NAME, CollectionSelection, MemeCollection
 from bot.engine.utils import (
     SecureMoveError,
     SecureMoveResult,
@@ -34,8 +34,12 @@ from .index_types import (
     AddTagResult,
     CollectionAlreadyExistsError,
     CollectionCreateError,
+    CollectionDeleteError,
+    CollectionNotEmptyError,
     CollectionPathConflictError,
+    CollectionRenameTargetExistsError,
     CreateCollectionResult,
+    DeleteCollectionResult,
     DeleteResult,
     DuplicateMemeInCollectionError,
     DuplicateTextError,
@@ -45,6 +49,7 @@ from .index_types import (
     MemeMoveError,
     MemeMoveSourceExpiredError,
     MoveResult,
+    RenameCollectionResult,
     SetSpeakerResult,
     WriteOp,
     _WriteRequest,
@@ -59,7 +64,7 @@ logger = logging.getLogger(__name__)
 
 
 class _WriteCoordinator:
-    """写入编排：worker 循环 + queue + WriteOp 字典派发 + 七个 _execute_* + move 补偿。
+    """写入编排：worker 循环 + queue + WriteOp 字典派发 + 九个 _execute_* + move 补偿。
 
     Args:
         metadata_store: 元数据存储。
@@ -120,7 +125,7 @@ class _WriteCoordinator:
         self._write_queue: asyncio.Queue[_WriteRequest] = asyncio.Queue()
         self._write_worker_task: asyncio.Task | None = None
         # WriteOp -> 写锁内执行器映射（worker 循环按 op 派发，替代 if/elif 链）。
-        # MOVE / CREATE_COLLECTION 经 guarded 包装：取得写锁后重检 future 取消。
+        # MOVE / CREATE_COLLECTION / DELETE_COLLECTION 经 guarded 包装：取得写锁后重检 future 取消。
         self._write_dispatch: dict[
             WriteOp, Callable[[_WriteRequest], Awaitable[Any]]
         ] = {
@@ -131,6 +136,8 @@ class _WriteCoordinator:
             WriteOp.DELETE: self._execute_delete,
             WriteOp.MOVE: self._execute_move_guarded,
             WriteOp.CREATE_COLLECTION: self._execute_create_collection_guarded,
+            WriteOp.DELETE_COLLECTION: self._execute_delete_collection_guarded,
+            WriteOp.RENAME_COLLECTION: self._execute_rename_collection_guarded,
         }
 
     # ------------------------------------------------------------------
@@ -228,7 +235,7 @@ class _WriteCoordinator:
     # ------------------------------------------------------------------
 
     async def _write_worker_loop(self) -> None:
-        """串行处理 ADD、编辑、删除、移动与创建合集任务（写锁保护）。"""
+        """串行处理 ADD、编辑、删除、移动、创建与删除合集任务（写锁保护）。"""
         try:
             while True:
                 req = await self._write_queue.get()
@@ -472,6 +479,233 @@ class _WriteCoordinator:
         if req.future.done():
             return None
         return self._execute_create_collection(req.collection_name)
+
+    async def _execute_delete_collection_guarded(
+        self, req: _WriteRequest
+    ) -> DeleteCollectionResult | None:
+        """写锁内执行 DELETE_COLLECTION：取得写锁后重检取消再删除合集。
+
+        Args:
+            req: 写入任务单元（collection_id 已解析）。
+
+        Returns:
+            删除结果；等待写锁期间请求已被取消时返回 None（外层不 set_result）。
+        """
+        if req.future.done():
+            return None
+        return await self._execute_delete_collection(req)
+
+    async def _execute_delete_collection(
+        self, req: _WriteRequest
+    ) -> DeleteCollectionResult:
+        """写锁内删除空合集：先 rmdir 空目录、后删 DB（rmdir 失败 DB 未动）。
+
+        Args:
+            req: 写入任务单元，含目标合集编号。
+
+        Returns:
+            删除结果，含回退到全部合集的 ChatScope 行数。
+
+        Raises:
+            CollectionNotFoundError: 合集不存在。
+            CollectionNotEmptyError: 合集仍含表情包。
+            CollectionPathConflictError: 同名路径不是普通目录。
+            CollectionDeleteError: rmdir 失败或删 DB 失败且补偿失败。
+        """
+        collection = await asyncio.to_thread(
+            self._metadata_store.get_collection, req.collection_id
+        )
+        if collection is None:
+            raise CollectionNotFoundError(str(req.collection_id))
+
+        if (
+            await asyncio.to_thread(
+                self._metadata_store.collection_entry_count, req.collection_id
+            )
+            > 0
+        ):
+            raise CollectionNotEmptyError(
+                f"合集 {req.collection_id} 仍含表情包，不能删除"
+            )
+
+        target = self._memes_dir / collection.name
+        # 目录身份校验：非普通目录（文件/符号链接/不存在）拒绝
+        await asyncio.to_thread(self._get_collection_directory_identity, target)
+        # 写锁内二次复核目录为空，防 DB 判空与 rmdir 之间并发写入
+        try:
+            with os.scandir(target) as entries:
+                if any(True for _ in entries):
+                    raise CollectionDeleteError(
+                        f"合集目录非空，无法删除: {collection.name}"
+                    )
+        except OSError as exc:
+            raise CollectionDeleteError(
+                f"检查合集目录失败: {collection.name}"
+            ) from exc
+
+        try:
+            target.rmdir()
+        except OSError as exc:
+            raise CollectionDeleteError(
+                f"删除合集目录失败: {collection.name}"
+            ) from exc
+
+        try:
+            reset_count = await asyncio.to_thread(
+                self._metadata_store.delete_collection_and_reset_scopes,
+                req.collection_id,
+            )
+        except Exception as exc:
+            # 目录已删、DB 删除失败：补偿恢复空目录
+            try:
+                target.mkdir()
+            except OSError as restore_exc:
+                logger.critical(
+                    "删除合集 DB 失败且目录恢复失败: id=%d, name=%r, error=%s",
+                    req.collection_id,
+                    collection.name,
+                    restore_exc,
+                    exc_info=True,
+                )
+            else:
+                logger.critical(
+                    "删除合集 DB 失败，已恢复空目录: id=%d, name=%r, error=%s",
+                    req.collection_id,
+                    collection.name,
+                    exc,
+                    exc_info=True,
+                )
+            raise CollectionDeleteError(
+                f"删除合集 DB 失败: {collection.name}"
+            ) from exc
+
+        logger.info(
+            "合集删除完成: id=%d, name=%r, reset_scopes=%d",
+            req.collection_id,
+            collection.name,
+            reset_count,
+        )
+        return DeleteCollectionResult(
+            collection=collection,
+            reset_scope_count=reset_count,
+        )
+
+    # ------------------------------------------------------------------
+    # rename_collection 执行器
+    # ------------------------------------------------------------------
+
+    async def _execute_rename_collection_guarded(
+        self, req: _WriteRequest
+    ) -> RenameCollectionResult | None:
+        """写锁内执行 RENAME_COLLECTION：取得写锁后重检取消再重命名。
+
+        Args:
+            req: 写入任务单元（collection_id 与 new_collection_name 已解析）。
+
+        Returns:
+            重命名结果；等待写锁期间请求已被取消时返回 None（外层不 set_result）。
+        """
+        if req.future.done():
+            return None
+        return await self._execute_rename_collection(req)
+
+    async def _execute_rename_collection(
+        self, req: _WriteRequest
+    ) -> RenameCollectionResult:
+        """写锁内重命名合集：先改 SQLite（name+image_path），后重命名目录。
+
+        目录 rename 失败时调 ``rename_collection(cid, old_name)`` 回滚 SQLite
+        与缓存；补偿失败记 critical 日志，抛 CollectionCreateError。
+
+        Args:
+            req: 写入任务单元，含源合集编号与已校验的新名称。
+
+        Returns:
+            重命名结果，含受 image_path 首段变更影响的条目数。
+
+        Raises:
+            CollectionNotFoundError: 源合集不存在。
+            CollectionRenameTargetExistsError: 目标名称已登记。
+            CollectionPathConflictError: 源/目标路径不是普通目录或目标已存在。
+            CollectionCreateError: 目录 rename 失败且补偿失败。
+        """
+        collection = await asyncio.to_thread(
+            self._metadata_store.get_collection, req.collection_id
+        )
+        if collection is None:
+            raise CollectionNotFoundError(str(req.collection_id))
+        old_name = collection.name
+        new_name = req.new_collection_name
+
+        existing = await asyncio.to_thread(
+            self._metadata_store.get_collection_by_name, new_name
+        )
+        if existing is not None:
+            raise CollectionRenameTargetExistsError(existing)
+
+        old_dir = self._memes_dir / old_name
+        await asyncio.to_thread(self._get_collection_directory_identity, old_dir)
+        new_dir = self._memes_dir / new_name
+        if new_dir.exists():
+            raise CollectionPathConflictError(new_name)
+
+        entry_count = await asyncio.to_thread(
+            self._metadata_store.collection_entry_count, req.collection_id
+        )
+
+        await asyncio.to_thread(
+            self._metadata_store.rename_collection,
+            req.collection_id,
+            new_name,
+        )
+
+        try:
+            old_dir.rename(new_dir)
+        except OSError as exc:
+            # SQLite 已改、目录未动：回滚 SQLite 与缓存到旧名
+            try:
+                await asyncio.to_thread(
+                    self._metadata_store.rename_collection,
+                    req.collection_id,
+                    old_name,
+                )
+            except Exception as rollback_exc:
+                logger.critical(
+                    "重命名目录失败且回滚 SQLite 失败: id=%d, old=%r, new=%r, error=%s",
+                    req.collection_id,
+                    old_name,
+                    new_name,
+                    rollback_exc,
+                    exc_info=True,
+                )
+                raise CollectionCreateError(
+                    "重命名合集失败且回滚失败"
+                ) from rollback_exc
+            logger.critical(
+                "重命名目录失败，已回滚 SQLite: id=%d, old=%r, new=%r, error=%s",
+                req.collection_id,
+                old_name,
+                new_name,
+                exc,
+                exc_info=True,
+            )
+            raise CollectionCreateError(
+                "重命名合集目录失败"
+            ) from exc
+
+        logger.info(
+            "合集重命名完成: id=%d, old=%r, new=%r, entries=%d",
+            req.collection_id,
+            old_name,
+            new_name,
+            entry_count,
+        )
+        return RenameCollectionResult(
+            collection=MemeCollection(req.collection_id, new_name),
+            old_name=old_name,
+            new_name=new_name,
+            entry_count=entry_count,
+        )
 
     # ------------------------------------------------------------------
     # edit_text / set_speaker / add_tags 执行器
