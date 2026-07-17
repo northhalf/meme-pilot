@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from bot.index_manager import RefreshInProgressError
+from bot.index_manager import IndexCorruptedError, RefreshInProgressError
 from tests.conftest import _assert_has_reply, _assert_no_reply, extract_message_text
 
 # ---------------------------------------------------------------------------
@@ -207,6 +207,28 @@ class TestHandleRefreshSync:
         call_args = matcher.finish.call_args[0][0]
         text = extract_message_text(call_args)
         assert "失败" in text
+        _assert_no_reply(call_args)
+
+    @pytest.mark.asyncio
+    @patch.object(refresh, "is_authorized", return_value=True)
+    @patch.object(refresh, "get_index_manager")
+    async def test_corrupted_replies_repair_hint(
+        self, mock_get_im: MagicMock, mock_auth: MagicMock
+    ) -> None:
+        """索引数据库损坏时应回复修复提示而非通用错误。"""
+        matcher = _make_matcher()
+        im = _make_index_manager(
+            refresh_side_effect=IndexCorruptedError("索引数据库损坏")
+        )
+        mock_get_im.return_value = im
+
+        await handle_refresh(_make_bot(), _make_event("12345"), matcher)
+
+        matcher.finish.assert_awaited_once()
+        call_args = matcher.finish.call_args[0][0]
+        text = extract_message_text(call_args)
+        assert "损坏" in text
+        assert "data/index.db" in text
         _assert_no_reply(call_args)
 
 

@@ -33,7 +33,7 @@ class SyncEngine:
         memes_dir: 表情包图片目录。
         image_pipeline: 图片管道（phase2 处理新图、phase0 读 embedding provider）。
         process_image_pipeline: 图片管道回调（保留门面 monkeypatch 接缝）。
-        move_to_replaced: 去重归档回调（指向门面 coordinator._move_to_replaced）。
+        move_to_replaced: 去重归档回调（指向 coordinator.move_to_replaced）。
     """
 
     def __init__(
@@ -66,8 +66,8 @@ class SyncEngine:
 
     @property
     def _embedding_provider(self) -> EmbeddingProvider | None:
-        """转发至 ImagePipeline._embedding_provider（保留测试 rebind 接缝）。"""
-        return self._image_pipeline._embedding_provider
+        """转发至 ImagePipeline.embedding_provider（保留测试 rebind 接缝）。"""
+        return self._image_pipeline.embedding_provider
 
     @timed(logger, "索引刷新-阶段0")
     async def _sync_phase0_consistency(self, failed: list[str]) -> None:

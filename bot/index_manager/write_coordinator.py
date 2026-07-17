@@ -1,9 +1,10 @@
-"""_WriteCoordinator - 写入编排：worker 循环 + queue + 七个 _execute_* + move 补偿。
+"""_WriteCoordinator - 写入编排：worker 循环 + queue + WriteOp 字典派发 + move 补偿。
 
-从 IndexManager 抽离，收口全部写入编排逻辑。持有写入队列与 worker task，串行处理
-ADD / EDIT_TEXT / SET_SPEAKER / ADD_TAG / DELETE / MOVE / CREATE_COLLECTION 七类
-写入请求，move 支持补偿式事务与调用者取消后可靠等待事务完成。门面 IndexManager
-持有本类实例并经薄委托/property 转发保留测试 monkeypatch 接缝。
+从 IndexManager 抽离，收口全部写入编排逻辑。持有写入队列与 worker task，按
+_write_dispatch 字典派发串行处理 ADD / EDIT_TEXT / SET_SPEAKER / ADD_TAG / DELETE /
+MOVE / CREATE_COLLECTION 七类写入请求，move 支持补偿式事务与调用者取消后可靠等待
+事务完成。门面 IndexManager 持有本类实例并经薄委托/property 转发保留测试
+monkeypatch 接缝。
 """
 
 import asyncio
@@ -13,7 +14,7 @@ import shutil
 import stat
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from bot.engine.collection_manager import CollectionNotFoundError, validate_collection_name
 from bot.engine.metadata_store import MemeEntry, MetadataStore
@@ -27,7 +28,7 @@ from bot.engine.utils import (
 )
 from bot.engine.vector_store import VectorRecord, VectorStore
 
-from .image_pipeline import ImagePipeline
+from .image_pipeline import wait_task_through_cancellation
 from .index_types import (
     AddResult,
     AddTagResult,
@@ -58,7 +59,7 @@ logger = logging.getLogger(__name__)
 
 
 class _WriteCoordinator:
-    """写入编排：worker 循环 + queue + 七个 _execute_* + move 补偿。
+    """写入编排：worker 循环 + queue + WriteOp 字典派发 + 七个 _execute_* + move 补偿。
 
     Args:
         metadata_store: 元数据存储。
@@ -69,8 +70,6 @@ class _WriteCoordinator:
         replaced_dir: 被替换旧图归档目录。
         rwlock: 读写锁（注入，写锁在 worker 内获取）。
         write_drained: 无排队且无执行中写请求时 set 的 Event（注入，操作权在此）。
-        image_pipeline: 图片管道协作者（worker loop MOVE 分支用其
-            wait_task_through_cancellation 可靠等待事务 task）。
         write_entry: ADD 分支调用的单条写入回调（门面 lambda 包装
             ``self._write_entry``，保留测试对门面 ``_write_entry`` 的 monkeypatch
             接缝）。
@@ -87,7 +86,6 @@ class _WriteCoordinator:
         replaced_dir: Path,
         rwlock: IndexRwLock,
         write_drained: asyncio.Event,
-        image_pipeline: ImagePipeline,
         write_entry: Callable[..., Awaitable[AddResult]],
         validate_collection_selection_locked: Callable[
             ["ChatScope", "CollectionSelection"], None
@@ -104,7 +102,6 @@ class _WriteCoordinator:
             replaced_dir: 被替换旧图归档目录路径。
             rwlock: 读写锁实例。
             write_drained: 写入排空 Event（已 set 的初始状态由调用方保证）。
-            image_pipeline: 图片管道协作者实例。
             write_entry: ADD 分支单条写入回调。
             validate_collection_selection_locked: ADD 写锁内合集选择校验回调。
         """
@@ -116,17 +113,39 @@ class _WriteCoordinator:
         self._replaced_dir = replaced_dir
         self._rwlock = rwlock
         self._write_drained = write_drained
-        self._image_pipeline = image_pipeline
         self._write_entry = write_entry
         self._validate_collection_selection_locked = (
             validate_collection_selection_locked
         )
         self._write_queue: asyncio.Queue[_WriteRequest] = asyncio.Queue()
         self._write_worker_task: asyncio.Task | None = None
+        # WriteOp -> 写锁内执行器映射（worker 循环按 op 派发，替代 if/elif 链）。
+        # MOVE / CREATE_COLLECTION 经 guarded 包装：取得写锁后重检 future 取消。
+        self._write_dispatch: dict[
+            WriteOp, Callable[[_WriteRequest], Awaitable[Any]]
+        ] = {
+            WriteOp.ADD: self._execute_add,
+            WriteOp.EDIT_TEXT: self._execute_edit_text,
+            WriteOp.SET_SPEAKER: self._execute_set_speaker,
+            WriteOp.ADD_TAG: self._execute_add_tags,
+            WriteOp.DELETE: self._execute_delete,
+            WriteOp.MOVE: self._execute_move_guarded,
+            WriteOp.CREATE_COLLECTION: self._execute_create_collection_guarded,
+        }
 
     # ------------------------------------------------------------------
     # 公开入口
     # ------------------------------------------------------------------
+
+    @property
+    def write_queue(self) -> asyncio.Queue[_WriteRequest]:
+        """写入队列（无 setter；门面 property 转发保留测试 put/read 接缝）。"""
+        return self._write_queue
+
+    @property
+    def write_drained(self) -> asyncio.Event:
+        """写入排空 Event（无 setter；门面 property 转发保留测试 clear/is_set 接缝）。"""
+        return self._write_drained
 
     async def submit(self, req: _WriteRequest) -> Any:
         """提交写入请求并等待执行完成。
@@ -143,10 +162,57 @@ class _WriteCoordinator:
         self._enqueue_write_request(req)
         return await req.future
 
+    async def submit_move(self, req: _WriteRequest) -> MoveResult:
+        """提交 MOVE 请求并等待补偿式事务完成。
+
+        不能用普通 ``submit``：调用者取消等待时，事务未开始则取消 future 让 worker
+        跳过；已开始则事务仍在 Write Worker 中完成或补偿，随后再向调用者传播取消，
+        避免留下半移动状态。
+
+        Args:
+            req: 已构造好的 MOVE 写入请求（含 transaction_started Event）。
+
+        Returns:
+            从持久 SQLite 条目构造的实际移动结果。
+
+        Raises:
+            asyncio.CancelledError: 调用者被取消（事务可靠收尾后传播）。
+        """
+        future = cast("asyncio.Future[MoveResult]", req.future)
+        self._enqueue_write_request(req)
+        try:
+            return await asyncio.shield(future)
+        except asyncio.CancelledError:
+            assert req.transaction_started is not None
+            if not req.transaction_started.is_set():
+                future.cancel()
+                raise
+            waiter = asyncio.create_task(self._await_move_future(future))
+            _, error, _ = await wait_task_through_cancellation(waiter)
+            if error is not None and not isinstance(error, asyncio.CancelledError):
+                logger.error(
+                    "MOVE 调用者取消后事务执行失败: entry_id=%s, error=%s",
+                    req.entry_id,
+                    error,
+                )
+            raise
+
     def ensure_worker(self) -> None:
         """确保 Write Worker task 已启动（延迟启动）。"""
         if self._write_worker_task is None or self._write_worker_task.done():
             self._write_worker_task = asyncio.create_task(self._write_worker_loop())
+
+    def cancel_worker(self) -> asyncio.Task | None:
+        """取消 Write Worker 并返回其 task，供调用方与其他 task 一并等待结束。
+
+        Returns:
+            已取消的 worker task；未启动或已结束时返回 None。
+        """
+        task = self._write_worker_task
+        if task is None or task.done():
+            return None
+        task.cancel()
+        return task
 
     def _enqueue_write_request(self, req: _WriteRequest) -> None:
         """标记写入未排空并以 FIFO 顺序加入无界队列。
@@ -176,64 +242,10 @@ class _WriteCoordinator:
                 try:
                     async with self._rwlock.write():
                         try:
-                            if req.op is WriteOp.ADD:
-                                if req.embedding is None:
-                                    raise ValueError("req 中的 embedding 为 None")
-                                if req.expected_selection is not None:
-                                    if req.scope is None:
-                                        raise ValueError("ADD 请求缺少 scope")
-                                    self._validate_collection_selection_locked(
-                                        req.scope,
-                                        req.expected_selection,
-                                    )
-                                result = await self._write_entry(
-                                    req.filename,
-                                    req.text,
-                                    req.embedding,
-                                    req.speaker,
-                                    req.tags,
-                                    collection_id=req.collection_id,
-                                )
-                            elif req.op is WriteOp.EDIT_TEXT:
-                                result = await self._execute_edit_text(req)
-                            elif req.op is WriteOp.SET_SPEAKER:
-                                result = await self._execute_set_speaker(req)
-                            elif req.op is WriteOp.ADD_TAG:
-                                result = await self._execute_add_tags(req)
-                            elif req.op is WriteOp.DELETE:
-                                result = await self._execute_delete(req)
-                            elif req.op is WriteOp.MOVE:
-                                if req.future.done():
-                                    continue
-                                if req.transaction_started is None:
-                                    raise ValueError(
-                                        "MOVE 请求缺少 transaction_started"
-                                    )
-                                req.transaction_started.set()
-                                move_task = asyncio.create_task(
-                                    self._execute_move(req)
-                                )
-                                (
-                                    result,
-                                    move_error,
-                                    cancelled,
-                                ) = await self._image_pipeline.wait_task_through_cancellation(
-                                    move_task
-                                )
-                                if move_error is not None:
-                                    raise move_error
-                                if cancelled:
-                                    raise asyncio.CancelledError
-                                assert result is not None
-                            elif req.op is WriteOp.CREATE_COLLECTION:
-                                if req.future.done():
-                                    continue
-                                result = self._execute_create_collection(
-                                    req.collection_name
-                                )
-                            else:
+                            handler = self._write_dispatch.get(req.op)
+                            if handler is None:
                                 raise ValueError(f"未知写入操作: {req.op}")
-
+                            result = await handler(req)
                             if not req.future.done():
                                 req.future.set_result(result)
                         except asyncio.CancelledError:
@@ -277,6 +289,41 @@ class _WriteCoordinator:
             移动成功结果。
         """
         return await asyncio.shield(future)
+
+    # ------------------------------------------------------------------
+    # add 执行器
+    # ------------------------------------------------------------------
+
+    async def _execute_add(self, req: _WriteRequest) -> AddResult:
+        """写锁内执行 ADD 写入：校验 embedding 与合集选择快照后写单条。
+
+        Args:
+            req: 写入任务单元（embedding 必非 None）。
+
+        Returns:
+            单条写入结果。
+
+        Raises:
+            ValueError: embedding 为 None，或 expected_selection 存在但缺少 scope。
+            CollectionSelectionExpiredError: 合集选择快照已失效。
+        """
+        if req.embedding is None:
+            raise ValueError("req 中的 embedding 为 None")
+        if req.expected_selection is not None:
+            if req.scope is None:
+                raise ValueError("ADD 请求缺少 scope")
+            self._validate_collection_selection_locked(
+                req.scope,
+                req.expected_selection,
+            )
+        return await self._write_entry(
+            req.filename,
+            req.text,
+            req.embedding,
+            req.speaker,
+            req.tags,
+            collection_id=req.collection_id,
+        )
 
     # ------------------------------------------------------------------
     # create_collection 执行器
@@ -410,6 +457,21 @@ class _WriteCoordinator:
             collection=collection,
             registered_existing_directory=registered_existing_directory,
         )
+
+    async def _execute_create_collection_guarded(
+        self, req: _WriteRequest
+    ) -> CreateCollectionResult | None:
+        """写锁内执行 CREATE_COLLECTION：取得写锁后重检取消再创建合集。
+
+        Args:
+            req: 写入任务单元（collection_name 已完成领域校验）。
+
+        Returns:
+            合集创建结果；等待写锁期间请求已被取消时返回 None（外层不 set_result）。
+        """
+        if req.future.done():
+            return None
+        return self._execute_create_collection(req.collection_name)
 
     # ------------------------------------------------------------------
     # edit_text / set_speaker / add_tags 执行器
@@ -617,7 +679,40 @@ class _WriteCoordinator:
     # move 执行器与补偿
     # ------------------------------------------------------------------
 
-    def _resolve_move_target_name(self, target_collection_id: int) -> str:
+    async def _execute_move_guarded(self, req: _WriteRequest) -> MoveResult | None:
+        """写锁内执行 MOVE：取消重检 + transaction_started 置位 + 可靠等待事务。
+
+        取得写锁后重检 future：调用者已取消且事务未开始则跳过（返回 None，外层不
+        set_result）。事务开始后调用者取消不再中断 worker，由
+        ``wait_task_through_cancellation`` 等待事务完成或补偿后再传播取消。
+
+        Args:
+            req: 写入任务单元（transaction_started 必非 None）。
+
+        Returns:
+            移动结果；等待写锁期间请求已被取消时返回 None。
+
+        Raises:
+            ValueError: 缺少 transaction_started。
+            asyncio.CancelledError: worker 被取消（事务已可靠收尾）。
+        """
+        if req.future.done():
+            return None
+        if req.transaction_started is None:
+            raise ValueError("MOVE 请求缺少 transaction_started")
+        req.transaction_started.set()
+        move_task = asyncio.create_task(self._execute_move(req))
+        result, move_error, cancelled = await wait_task_through_cancellation(
+            move_task
+        )
+        if move_error is not None:
+            raise move_error
+        if cancelled:
+            raise asyncio.CancelledError
+        assert result is not None
+        return result
+
+    def resolve_move_target_name(self, target_collection_id: int) -> str:
         """重新校验移动目标合集并返回安全目录名。
 
         Args:
@@ -735,7 +830,7 @@ class _WriteCoordinator:
         ):
             raise MemeMoveSourceExpiredError("源表情包文件身份已变化")
         target_name = await asyncio.to_thread(
-            self._resolve_move_target_name,
+            self.resolve_move_target_name,
             req.target_collection_id,
         )
         if (
@@ -922,7 +1017,7 @@ class _WriteCoordinator:
         if not source_path.is_file() or source_path.is_symlink():
             raise OSError("源文件恢复后不是普通文件")
 
-    def _move_to_replaced(self, filename: str) -> str:
+    def move_to_replaced(self, filename: str) -> str:
         """将被替换的文件移动到 memes_replaced/ 目录。
 
         Args:

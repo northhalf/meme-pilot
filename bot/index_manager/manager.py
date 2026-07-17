@@ -7,17 +7,35 @@
 
 import asyncio
 import logging
+import sqlite3
 from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from bot.config import read_add_command_timeout, read_read_lock_timeout
-from bot.log_context import timed
-from bot.session import ChatScope
-
 from bot.engine.collection_manager import validate_collection_name
 from bot.engine.combined_searcher import CombinedSearcher
 from bot.engine.image_optimizer import ImageOptimizer
+from bot.engine.keyword_searcher import KeywordSearcher
+from bot.engine.metadata_store import MemeEntry, MetadataStore
+from bot.engine.protocols import EmbeddingProvider, OcrProvider
+from bot.engine.random_searcher import RandomSearcher
+from bot.engine.semantic_searcher import SemanticSearcher
+from bot.engine.types import (
+    CollectionSelection,
+    MemePublicId,
+    SearchResult,
+)
+from bot.engine.utils import (
+    SecureMoveError,
+    get_regular_file_identity,
+    vector_norm,
+)
+from bot.engine.vector_store import VectorStore
+from bot.log_context import timed
+from bot.session import ChatScope
+
+from .image_pipeline import ImagePipeline
 from .index_types import (
     AddResult,
     AddTagResult,
@@ -49,24 +67,7 @@ from .index_types import (
     _OptimizerLockEntry,
     _WriteRequest,
 )
-from .image_pipeline import ImagePipeline
 from .rwlock import IndexRwLock
-from bot.engine.keyword_searcher import KeywordSearcher
-from bot.engine.metadata_store import MemeEntry, MetadataStore
-from bot.engine.protocols import EmbeddingProvider, OcrProvider
-from bot.engine.random_searcher import RandomSearcher
-from bot.engine.semantic_searcher import SemanticSearcher
-from bot.engine.types import (
-    CollectionSelection,
-    MemePublicId,
-    SearchResult,
-)
-from bot.engine.utils import (
-    SecureMoveError,
-    get_regular_file_identity,
-    vector_norm,
-)
-from bot.engine.vector_store import VectorStore
 
 if TYPE_CHECKING:
     from bot.engine.collection_manager import (
@@ -76,6 +77,10 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
+
+_CORRUPTED_DB_MESSAGE = (
+    "索引数据库损坏或非 sqlite 格式，请修复 data/index.db 后重启 Bot"
+)
 
 __all__ = [
     "AddResult",
@@ -219,12 +224,13 @@ class IndexManager:
             vector_store=self._vector_store,
             memes_dir=self._memes_dir,
             move_to_no_text=lambda f: self._image_pipeline.move_to_no_text(f),
-            move_to_replaced=lambda f: self._coordinator._move_to_replaced(f),
+            move_to_replaced=lambda f: self._coordinator.move_to_replaced(f),
         )
 
-        # _WriteCoordinator 收口全部写入编排：worker 循环 + queue + 七个 _execute_*
-        # + move 补偿。write_entry 回调用 lambda 包装门面 self._write_entry，
-        # 保留测试对 index_manager._write_entry 的 monkeypatch 接缝（调用时属性查找）。
+        # _WriteCoordinator 收口全部写入编排：worker 循环 + queue + WriteOp 字典派发
+        # + 七个 _execute_* + move 补偿。write_entry 回调用 lambda 包装门面
+        # self._write_entry，保留测试对 index_manager._write_entry 的 monkeypatch
+        # 接缝（调用时属性查找）。
         from .write_coordinator import _WriteCoordinator
 
         write_drained = asyncio.Event()
@@ -238,7 +244,6 @@ class IndexManager:
             replaced_dir=self._replaced_dir,
             rwlock=self._rwlock,
             write_drained=write_drained,
-            image_pipeline=self._image_pipeline,
             write_entry=lambda *a, **kw: self._write_entry(*a, **kw),
             validate_collection_selection_locked=self._validate_collection_selection_locked,
         )
@@ -247,7 +252,7 @@ class IndexManager:
         # 合集 -> 新增）。_refresh_active / _refresh_task 真实状态归 SyncEngine，
         # 门面经 forwarding property 透传。process_image_pipeline / move_to_replaced
         # 以 lambda 包装门面方法，保留测试对 index_manager._process_image_pipeline
-        # 与 index_manager._coordinator._move_to_replaced 的 monkeypatch 接缝。
+        # 与 index_manager._coordinator.move_to_replaced 的 monkeypatch 接缝。
         from .sync_engine import SyncEngine
 
         self._sync_engine = SyncEngine(
@@ -256,7 +261,7 @@ class IndexManager:
             memes_dir=self._memes_dir,
             image_pipeline=self._image_pipeline,
             process_image_pipeline=lambda f: self._process_image_pipeline(f),
-            move_to_replaced=lambda f: self._coordinator._move_to_replaced(f),
+            move_to_replaced=lambda f: self._coordinator.move_to_replaced(f),
         )
 
     # ------------------------------------------------------------------
@@ -265,50 +270,50 @@ class IndexManager:
 
     @property
     def _optimizer(self) -> ImageOptimizer | None:
-        """转发至 ImagePipeline._optimizer（保留测试 rebind 接缝）。"""
-        return self._image_pipeline._optimizer
+        """转发至 ImagePipeline.optimizer（保留测试 rebind 接缝）。"""
+        return self._image_pipeline.optimizer
 
     @_optimizer.setter
     def _optimizer(self, value: ImageOptimizer | None) -> None:
-        self._image_pipeline._optimizer = value
+        self._image_pipeline.optimizer = value
 
     @property
     def _ocr_provider(self) -> OcrProvider | None:
-        """转发至 ImagePipeline._ocr_provider（保留测试 rebind 接缝）。"""
-        return self._image_pipeline._ocr_provider
+        """转发至 ImagePipeline.ocr_provider（保留测试 rebind 接缝）。"""
+        return self._image_pipeline.ocr_provider
 
     @_ocr_provider.setter
     def _ocr_provider(self, value: OcrProvider | None) -> None:
-        self._image_pipeline._ocr_provider = value
+        self._image_pipeline.ocr_provider = value
 
     @property
     def _embedding_provider(self) -> EmbeddingProvider | None:
-        """转发至 ImagePipeline._embedding_provider（保留测试 rebind 接缝）。"""
-        return self._image_pipeline._embedding_provider
+        """转发至 ImagePipeline.embedding_provider（保留测试 rebind 接缝）。"""
+        return self._image_pipeline.embedding_provider
 
     @_embedding_provider.setter
     def _embedding_provider(self, value: EmbeddingProvider | None) -> None:
-        self._image_pipeline._embedding_provider = value
+        self._image_pipeline.embedding_provider = value
 
     @property
     def _optimizer_target_locks(self) -> dict[tuple[str, str], _OptimizerLockEntry]:
-        """转发至 ImagePipeline._optimizer_target_locks（测试只读断言清空）。"""
-        return self._image_pipeline._optimizer_target_locks
+        """转发至 ImagePipeline.optimizer_target_locks（测试只读断言清空）。"""
+        return self._image_pipeline.optimizer_target_locks
 
     @property
     def _optimizer_registry_guard(self) -> asyncio.Lock:
-        """转发至 ImagePipeline._optimizer_registry_guard（测试 acquire/release 制造取消窗口）。"""
-        return self._image_pipeline._optimizer_registry_guard
+        """转发至 ImagePipeline.optimizer_registry_guard（测试 acquire/release 制造取消窗口）。"""
+        return self._image_pipeline.optimizer_registry_guard
 
     @property
     def _write_queue(self) -> "asyncio.Queue[_WriteRequest]":
-        """转发至 _WriteCoordinator._write_queue（测试 put/read 经 property 操作 coordinator 队列）。"""
-        return self._coordinator._write_queue
+        """转发至 _WriteCoordinator.write_queue（测试 put/read 经 property 操作 coordinator 队列）。"""
+        return self._coordinator.write_queue
 
     @property
     def _write_drained(self) -> asyncio.Event:
-        """转发至 _WriteCoordinator._write_drained（测试 clear/is_set 经 property 操作同一 Event）。"""
-        return self._coordinator._write_drained
+        """转发至 _WriteCoordinator.write_drained（测试 clear/is_set 经 property 操作同一 Event）。"""
+        return self._coordinator.write_drained
 
     @property
     def _refresh_active(self) -> bool:
@@ -336,14 +341,28 @@ class IndexManager:
         """委托两个 Store.load()，并记录当前条目数。
 
         启动时必须调用此方法后再使用其他查询或写入方法。
+
+        Raises:
+            IndexCorruptedError: data/index.db 损坏或非 sqlite 格式（拒绝启动）。
         """
         logger.info("开始加载索引...")
         await asyncio.gather(
-            asyncio.to_thread(self._metadata_store.load),
+            asyncio.to_thread(self._load_metadata_store),
             asyncio.to_thread(self._vector_store.load),
         )
         logger.info("索引加载完成")
         logger.info("IndexManager 加载完成: %d 条记录", self.entry_count)
+
+    def _load_metadata_store(self) -> None:
+        """加载元数据存储，把 sqlite 损坏/格式错误归并为 IndexCorruptedError。
+
+        Raises:
+            IndexCorruptedError: data/index.db 损坏或非 sqlite 格式，要求先修复数据库。
+        """
+        try:
+            self._metadata_store.load()
+        except sqlite3.DatabaseError as exc:
+            raise IndexCorruptedError(_CORRUPTED_DB_MESSAGE) from exc
 
     @property
     def entry_count(self) -> int:
@@ -1039,7 +1058,7 @@ class IndexManager:
             ValueError: 表情包已属于目标合集。
             MemeMoveSourceExpiredError: 采集源快照时发现源文件已变化。
         """
-        target_name = self._coordinator._resolve_move_target_name(target_collection_id)
+        target_name = self._coordinator.resolve_move_target_name(target_collection_id)
         if entry.collection_id == target_collection_id:
             raise ValueError("表情包已属于目标合集")
         local_id = self._metadata_store.find_next_local_id(target_collection_id)
@@ -1190,24 +1209,7 @@ class IndexManager:
             expected_target_name=expected_target_name,
             transaction_started=transaction_started,
         )
-        self._coordinator._enqueue_write_request(req)
-        try:
-            return await asyncio.shield(future)
-        except asyncio.CancelledError:
-            if not transaction_started.is_set():
-                future.cancel()
-                raise
-            waiter = asyncio.create_task(self._coordinator._await_move_future(future))
-            _, error, _ = await self._image_pipeline.wait_task_through_cancellation(
-                waiter
-            )
-            if error is not None and not isinstance(error, asyncio.CancelledError):
-                logger.error(
-                    "MOVE 调用者取消后事务执行失败: entry_id=%s, error=%s",
-                    entry_id,
-                    error,
-                )
-            raise
+        return await self._coordinator.submit_move(req)
 
     async def info(self, collection_id: int | None = None) -> IndexInfo:
         """返回当前索引内部统计信息（不含硬件）。
@@ -1421,7 +1423,10 @@ class IndexManager:
             await self._write_drained.wait()
 
             async with self._rwlock.write():
-                result = await self._run_sync_internal()
+                try:
+                    result = await self._run_sync_internal()
+                except sqlite3.DatabaseError as exc:
+                    raise IndexCorruptedError(_CORRUPTED_DB_MESSAGE) from exc
                 logger.info(
                     "索引刷新完成: 新增=%d, 删除=%d, 去重=%d, 无文字移走=%d, 失败=%d",
                     result.added,
@@ -1452,9 +1457,8 @@ class IndexManager:
 
         tasks_to_wait: list[asyncio.Task] = []
 
-        worker_task = self._coordinator._write_worker_task
-        if worker_task is not None and not worker_task.done():
-            worker_task.cancel()
+        worker_task = self._coordinator.cancel_worker()
+        if worker_task is not None:
             tasks_to_wait.append(worker_task)
 
         if self._refresh_task is not None and not self._refresh_task.done():
@@ -1492,15 +1496,18 @@ class IndexManager:
         deleted_count = await self._sync_engine._sync_phase1_delete(
             set(snapshot.files), failed
         )
-        collections_deleted, scopes_reset = (
-            await self._sync_engine._sync_collections_delete(snapshot.directories)
-        )
+        (
+            collections_deleted,
+            scopes_reset,
+        ) = await self._sync_engine._sync_collections_delete(snapshot.directories)
         collections_added = await self._sync_engine._sync_collections_add(
             snapshot.directories_with_images
         )
-        added_count, deduped_count, no_text_count = (
-            await self._sync_engine._sync_phase2_add(snapshot.files, failed)
-        )
+        (
+            added_count,
+            deduped_count,
+            no_text_count,
+        ) = await self._sync_engine._sync_phase2_add(snapshot.files, failed)
 
         return SyncResult(
             added=added_count,
@@ -1567,7 +1574,7 @@ class IndexManager:
         return await self._image_pipeline.process(filename)
 
     def _move_to_no_text(self, filename: str) -> str:
-        """薄委托至 ImagePipeline.move_to_no_text（与 _move_to_replaced 一致保留 rebind）。
+        """薄委托至 ImagePipeline.move_to_no_text（与 coordinator.move_to_replaced 一致保留 rebind）。
 
         实际移图逻辑由 ``self._image_pipeline.move_to_no_text`` 承载；EntryWriter 的
         ``move_to_no_text`` 回调经 ``lambda f: self._image_pipeline.move_to_no_text(f)``

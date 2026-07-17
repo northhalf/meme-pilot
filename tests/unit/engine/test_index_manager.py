@@ -5,6 +5,7 @@
 """
 
 import asyncio
+import sqlite3
 import threading
 from pathlib import Path
 
@@ -542,6 +543,19 @@ class TestLoadAndCount:
         asyncio.run(m.load())
         assert m.entry_count == 0
 
+    def test_load_wraps_sqlite_database_error(self, tmp_path: Path) -> None:
+        """sqlite 损坏时 load() 归并 DatabaseError 为 IndexCorruptedError（PRD 971 拒绝启动）。"""
+        db_path = tmp_path / "data" / "index.db"
+        db_path.parent.mkdir()
+        db_path.write_bytes(b"definitely not a sqlite file" * 100)
+        m = IndexManager(
+            metadata_store=MetadataStore(str(db_path)),
+            vector_store=cast(VectorStore, FakeVectorStore()),
+            memes_dir=str(tmp_path / "memes"),
+        )
+        with pytest.raises(IndexCorruptedError):
+            asyncio.run(m.load())
+
     def test_entry_count_reflects_store(self, index_manager: IndexManager) -> None:
         index_manager._metadata_store.add("a.jpg", "甲")  # type: ignore[attr-defined]
         assert index_manager.entry_count == 1
@@ -633,6 +647,21 @@ async def test_refresh_rejects_new_add(index_manager: IndexManager) -> None:
         await refresh_task
     except asyncio.CancelledError:
         pass
+
+
+@pytest.mark.asyncio
+async def test_refresh_wraps_sqlite_database_error(
+    index_manager: IndexManager,
+) -> None:
+    """refresh() 把同步期间的 sqlite3.DatabaseError 归并为 IndexCorruptedError（PRD 971 拒绝刷新）。"""
+
+    async def corrupt_sync() -> SyncResult:
+        raise sqlite3.DatabaseError("file is not a database")
+
+    index_manager._run_sync_internal = corrupt_sync  # ty: ignore[invalid-assignment]
+
+    with pytest.raises(IndexCorruptedError):
+        await index_manager.refresh()
 
 
 @pytest.mark.asyncio
@@ -866,9 +895,9 @@ class TestAdd:
         assert r1.archived_path == str(replaced_dir / "old.jpg")
 
         # 第二次替换：再次把同名 old.jpg 移入 memes_replaced/
-        # 通过手动调用 _move_to_replaced 模拟同名冲突
+        # 通过手动调用 move_to_replaced 模拟同名冲突
         (Path(index_manager._memes_dir) / "old.jpg").write_bytes(b"3")
-        archived = await asyncio.to_thread(index_manager._coordinator._move_to_replaced, "old.jpg")
+        archived = await asyncio.to_thread(index_manager._coordinator.move_to_replaced, "old.jpg")
         assert archived == str(replaced_dir / "old_1.jpg")
         assert (replaced_dir / "old_1.jpg").exists()
 
@@ -939,7 +968,7 @@ class TestAdd:
         def fail_archive(filename: str) -> str:
             raise OSError("archive failed")
 
-        index_manager._coordinator._move_to_replaced = fail_archive  # ty: ignore[invalid-assignment]
+        index_manager._coordinator.move_to_replaced = fail_archive  # ty: ignore[invalid-assignment]
 
         with pytest.raises(OSError, match="archive failed"):
             await index_manager.add("new.jpg")

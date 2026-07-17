@@ -16,7 +16,7 @@ from nonebot.rule import to_me
 from bot import reply as reply_utils
 from bot.app_state import get_index_manager
 from bot.auth import is_authorized, log_unauthorized
-from bot.index_manager import RefreshInProgressError
+from bot.index_manager import IndexCorruptedError, RefreshInProgressError
 from bot.log_context import generate_request_id, set_request_id
 from bot.session import ChatScope, session_manager
 
@@ -92,6 +92,15 @@ async def handle_refresh(bot: Bot, event: MessageEvent, matcher: Matcher) -> Non
                 session_manager.deactivate_chat(scope)
                 await reply_utils.finish(
                     event, matcher, "已有刷新任务在进行中，请稍后再试"
+                )
+                return
+            except IndexCorruptedError:
+                logger.exception("索引数据库损坏，已拒绝刷新")
+                session_manager.deactivate_chat(scope)
+                await reply_utils.finish(
+                    event,
+                    matcher,
+                    "索引数据库损坏，请修复 data/index.db 后重启 Bot",
                 )
                 return
             except Exception:

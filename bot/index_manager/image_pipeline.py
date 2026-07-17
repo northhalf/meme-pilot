@@ -3,7 +3,8 @@
 从 IndexManager 抽离，自包含持有 optimizer/ocr/embedding providers 与目标锁注册表，
 负责同父目录、同 stem 图片的优化互斥、外部取消的可靠传播与管线输出清理。
 门面 IndexManager 持有本类实例并薄委托 _process_image_pipeline/_move_to_no_text 等方法，
-provider 与锁表属性经 property 转发以保留测试 monkeypatch rebind 能力。
+provider 与锁表经公开 property 访问（门面 property 转发保留测试 monkeypatch rebind）。
+模块级 wait_task_through_cancellation 是通用取消辅助，供本类与 _WriteCoordinator 共用。
 """
 
 import asyncio
@@ -22,6 +23,43 @@ from .index_types import EmbeddingError, OcrError, _OptimizerLockEntry
 logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
+
+
+async def wait_task_through_cancellation(
+    task: asyncio.Task[_T],
+) -> tuple[_T | None, BaseException | None, bool]:
+    """忽略调用者重复取消并等待独立 task 真正结束。
+
+    每次收到外部取消后调用 ``uncancel()`` 清除本次注入，使下一轮 shield
+    能阻塞等待而非忙循环。独立 task 的结果或异常始终被读取；调用者是否
+    曾被取消通过返回值交由上层在清理完成后显式传播。
+
+    Args:
+        task: 从开始即独立运行且不得被外部取消传播的 task。
+
+    Returns:
+        task 结果、task 异常与等待期间是否收到过外部取消。
+    """
+    cancelled = False
+    current_task = asyncio.current_task()
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            external_cancel = (
+                current_task is not None and current_task.cancelling() > 0
+            )
+            if external_cancel:
+                cancelled = True
+                current_task.uncancel()
+            if task.done():
+                break
+        except BaseException:
+            break
+    try:
+        return task.result(), None, cancelled
+    except BaseException as exc:
+        return None, exc, cancelled
 
 
 class ImagePipeline:
@@ -63,6 +101,47 @@ class ImagePipeline:
         self._no_text_dir = no_text_dir
         self._optimizer_target_locks: dict[tuple[str, str], _OptimizerLockEntry] = {}
         self._optimizer_registry_guard = asyncio.Lock()
+
+    # ------------------------------------------------------------------
+    # 公开 provider / 锁表访问（门面转发与 SyncEngine 经此读写，不再直访私有字段）
+    # ------------------------------------------------------------------
+
+    @property
+    def optimizer(self) -> ImageOptimizer | None:
+        """图片压缩器（门面 ``_optimizer`` property 转发至此，保留测试 rebind）。"""
+        return self._optimizer
+
+    @optimizer.setter
+    def optimizer(self, value: ImageOptimizer | None) -> None:
+        self._optimizer = value
+
+    @property
+    def ocr_provider(self) -> OcrProvider | None:
+        """OCR 服务提供者（门面 ``_ocr_provider`` property 转发至此，保留测试 rebind）。"""
+        return self._ocr_provider
+
+    @ocr_provider.setter
+    def ocr_provider(self, value: OcrProvider | None) -> None:
+        self._ocr_provider = value
+
+    @property
+    def embedding_provider(self) -> EmbeddingProvider | None:
+        """Embedding 服务提供者（门面与 SyncEngine 转发读取，保留测试 rebind）。"""
+        return self._embedding_provider
+
+    @embedding_provider.setter
+    def embedding_provider(self, value: EmbeddingProvider | None) -> None:
+        self._embedding_provider = value
+
+    @property
+    def optimizer_target_locks(self) -> dict[tuple[str, str], _OptimizerLockEntry]:
+        """optimizer 目标锁注册表（只读，测试断言清空）。"""
+        return self._optimizer_target_locks
+
+    @property
+    def optimizer_registry_guard(self) -> asyncio.Lock:
+        """锁注册表守卫（测试 acquire/release 制造取消窗口）。"""
+        return self._optimizer_registry_guard
 
     @staticmethod
     def has_supported_ext(name: str) -> bool:
@@ -107,50 +186,13 @@ class ImagePipeline:
             release_task = asyncio.create_task(
                 self.release_optimizer_lock_entry(key, entry)
             )
-            _, release_error, cancelled = await self.wait_task_through_cancellation(
+            _, release_error, cancelled = await wait_task_through_cancellation(
                 release_task
             )
             if release_error is not None:
                 raise release_error
             if cancelled:
                 raise asyncio.CancelledError
-
-    @staticmethod
-    async def wait_task_through_cancellation(
-        task: asyncio.Task[_T],
-    ) -> tuple[_T | None, BaseException | None, bool]:
-        """忽略调用者重复取消并等待独立 task 真正结束。
-
-        每次收到外部取消后调用 ``uncancel()`` 清除本次注入，使下一轮 shield
-        能阻塞等待而非忙循环。独立 task 的结果或异常始终被读取；调用者是否
-        曾被取消通过返回值交由上层在清理完成后显式传播。
-
-        Args:
-            task: 从开始即独立运行且不得被外部取消传播的 task。
-
-        Returns:
-            task 结果、task 异常与等待期间是否收到过外部取消。
-        """
-        cancelled = False
-        current_task = asyncio.current_task()
-        while not task.done():
-            try:
-                await asyncio.shield(task)
-            except asyncio.CancelledError:
-                external_cancel = (
-                    current_task is not None and current_task.cancelling() > 0
-                )
-                if external_cancel:
-                    cancelled = True
-                    current_task.uncancel()
-                if task.done():
-                    break
-            except BaseException:
-                break
-        try:
-            return task.result(), None, cancelled
-        except BaseException as exc:
-            return None, exc, cancelled
 
     async def release_optimizer_lock_entry(
         self,
@@ -197,7 +239,7 @@ class ImagePipeline:
                     result,
                     optimize_error,
                     cancelled,
-                ) = await self.wait_task_through_cancellation(optimize_task)
+                ) = await wait_task_through_cancellation(optimize_task)
                 if optimize_error is not None:
                     if cancelled:
                         logger.error(
