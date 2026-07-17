@@ -13,10 +13,6 @@
 
 </div>
 
-`/query`、`/rand`、`/sim`、`/help`、`/info`、`/switch` 和普通文本支持群聊 @bot 使用；`/collection create`、`/collection delete`、`/collection rename`、`/add`、`/addtag`、`/del`、`/refresh`、`/edittext`、`/setspeaker`、`/mv` 仅限私聊。`/cancel` 私聊和群聊均可使用。
-
-隐私说明：表情包图片始终本地存储；OCR 文本会按 `OCR_PROVIDER` 配置发送给对应服务（默认 `rapidocr` 使用本地 ONNX 模型，无需联网；`paddle` 使用百度 PaddleOCR 云 API；`deepseek` 使用任意 OpenAI 兼容视觉 OCR 服务）；Embedding 调用由 `EMBEDDING_PROVIDER` 指定的服务（默认 `openai`，即 OpenAI 兼容 API）。
-
 ## ✨ 功能
 
 ### 🧭 帮助 `/help`
@@ -45,187 +41,13 @@ Bot: 当前可用命令：
 
 授权用户可以直接发送 `/query <关键词>` 等命令搜索表情包，或在群聊中 @bot + 命令触发。授权用户发送普通文本时（私聊或群聊 @bot），Bot 默认按关键词搜索执行兜底搜索。发送未知斜杠命令时，Bot 会提示"未知命令"并附帮助摘要。
 
-### 🧩 组合检索 `/query`
-```
-你: /query 加班 @小明 #吐槽
-Bot: 找到多个匹配的表情包，请选择：
-    1. 加班到凌晨三点的我 -- 1.3, 新三国, 小明, 吐槽, 加班, 100%
-    回复编号即可 (1-1)
-    回复 n 看下一页
-你: 1
-Bot: (发送对应表情包)
-Bot: 1.3, 新三国, 小明, 吐槽, 加班
-
-你: /query @小明            # 仅按 speaker
-你: /query #吐槽 #深夜       # 多 tag AND
-你: /query @小明 @小红       # 多 speaker OR
-```
-
-### 🎲 随机选择 `/rand`
-
-```
-你: /rand 加班
-Bot: 找到多个匹配的表情包，请选择：
-    1. 加班到凌晨三点的我 -- 1.3, 新三国, 小明
-    ...
-    10. 周日晚上的加班通知 -- 0.5, 全局, 无
-    回复编号即可 (1-10)
-    回复 0 换一批
-```
-
-### 🔗 语义选择 `/sim`
-
-```
-你: /sim 一张表达心累的加班表情包
-Bot: 找到多个匹配的表情包，请选择：
-    1. 加班到凌晨三点的我 -- 1.3, 新三国, 小明, 吐槽, 加班, 82%
-    2. 心累的打工人 -- 0.5, 全局, 无, 76%
-    回复编号即可 (1-2)
-    回复 n 看下一页
-你: 1
-Bot: (发送对应表情包)
-Bot: 1.3, 新三国, 小明, 吐槽, 加班
-```
-
-### 📁 创建合集 `/collection create`
-
-```text
-授权用户: /collection create 新三国
-Bot: 合集创建完成 ✅
-     编号：3
-     名称：新三国
-```
-
-`/collection create <名称>` 仅限私聊，校验通过后直接创建，不需要确认；创建成功后不会自动切换当前合集。
-
-名称允许中文，但不能为空、不能包含内部空白或路径分隔符，不能以 `.` 开头，也不能使用“全局”“全部合集”等保留名称。如果同名普通目录已经存在，命令只登记该目录；目录中的图片需执行 `/refresh` 后建立索引。同名路径是文件或符号链接时拒绝创建。
-
-### 🗑️ 删除合集 `/collection delete`
-
-```text
-授权用户: /collection delete 3
-Bot: 合集已删除 ✅
-     编号：3
-     名称：新三国
-     已把 2 个聊天窗口的合集选择回退到全部合集
-```
-
-`/collection delete <编号|名称>` 仅限私聊，校验通过后直接执行，不需要确认。只允许删除空合集；非空合集拒绝并回复“合集不为空，请先 /move 或 /del 清空后再删除”。删除时先 `rmdir` 空目录、后删 `meme_collection` 记录，并把引用该合集的所有 `ChatScope` 选择回退到全部合集（`0`）；`collection_id` 编号不回收。目标合集不存在时回复“未找到表情包合集：{目标}\n发送 /switch 查看可用合集”。
-
-### ✏️ 重命名合集 `/collection rename`
-
-```text
-授权用户: /collection rename 新三国 旧三国
-Bot: 合集已重命名 ✅
-     编号：3
-     旧名称：新三国
-     新名称：旧三国
-     更新条目：12
-```
-
-`/collection rename <旧编号|名称> <新名称>` 仅限私聊，校验通过后直接执行，不需要确认。新名称走与 `create` 相同的名称校验且必须未登记；重命名时先在 SQLite 单事务内改 `meme_collection.name` 与该合集所有 `meme.image_path` 首段，再 `Path.rename` 重命名 `memes/` 目录；`collection_id` 不变，chroma 与 `ChatScope` 不受影响。目录 `rename` 失败时补偿回滚 SQLite 与缓存；旧合集不存在回复“未找到表情包合集：{目标}\n发送 /switch 查看可用合集”，新名称已登记回复“合集名称已存在：{name}（{id}）”。
-
-### ➕ 聊天添加 `/add`
-```
-授权用户: /add 小明 吐槽 加班
-Bot: 请发送图片，60 秒内有效
-授权用户: (发送一张图片)
-Bot: 新增表情包✅，id：1.3，合集：新三国，识别到的文字为：
-「加班心累时的表情包」
-Bot: 1.3, 新三国, 小明, 吐槽, 加班
-```
-
-OCR 识别到的文字会展示给用户，超 50 字时自动截断并标注总长度。
-
-`/add` 后的参数按空白切分，第一个词作为 `speaker`（说话人），剩余词作为 `tags`（标记词）；不填参数时 `speaker` 为空，`tags` 为空列表。文件名始终由 Bot 按 `meme_<YYYYMMDDHHMMSS>_<hash8>` 规则自动生成，不再使用用户输入作为文件名基名。
-
-新增图片会按 `CONVERT_TO_WEBP` 开关执行图片压缩/转换：开关开启（默认）时转为有损 WebP（q85），转换失败降级保留原格式；开关关闭时对 `.jpg/.jpeg/.png/.webp/.gif` 执行同格式压缩，`.bmp` 跳过。不支持的扩展名不会作为表情包处理。
-
-`/add` 在写入索引前会做两项检查：若新图 OCR 文本去除所有空白后与已有表情包完全相同，则用新图替换旧图（旧图移动到 `memes/` 同级的 `memes_replaced/` 目录归档、复用旧索引 ID）；若 OCR 结果去除所有空白后为空（无文字图片），则将该图移动到 `memes/` 同级的 `meme_no_text/` 目录，不进入索引并提示「未识别到文字」。
-
-### 🏷️ 标签添加 `/addtag`
-
-授权用户在私聊中发送 `/addtag <公开ID> <tag> [<tag>...]`，Bot 发送确认消息（包含当前 OCR 文本、当前标签和新增标签），用户回复「确认」或「yes」后执行追加。
-
-```
-授权用户: /addtag 1.3 心累 深夜
-Bot: 当前 OCR 文本：加班心累时的表情包
-     当前标签：吐槽, 加班
-     新增标签：心累, 深夜
-     回复「确认」或「yes」确认添加，回复其他内容取消
-授权用户: 确认
-Bot: 标签已添加 ✅
-     本次新增：心累, 深夜
-     全部标签：吐槽, 加班, 心累, 深夜
-```
-
-### 🗑️ 删除表情包 `/del`
-
-授权用户在私聊中发送 `/del <公开ID>...`，Bot 发送待删除表情包的 OCR 文本摘要，用户回复「确认」或「yes」后执行删除。删除的图片会移动到 `memes_deleted/` 目录备份，可手动恢复。
-
-```
-授权用户: /del 1.3 0.5
-Bot: 确认删除以下表情包？回复「确认」执行删除，回复其他内容取消。
-     1.3, 老板又说加班...
-     0.5, 加班心累时的表情包
-授权用户: 确认
-Bot: 已删除表情包 ✅
-     成功：1.3、0.5
-```
-
-### ℹ️ 状态信息 `/info`
-
-授权用户在私聊或群聊 @bot 中发送 `/info`，Bot 返回索引统计、当前合集范围、当前状态、本机内存/CPU 占用以及当前 Bot 进程 RSS；发送 `/info <公开ID>` 时返回指定表情包的详情（公开 ID、合集、OCR 文本、文件名、大小、说话人、标签），ID 不存在时回退为总体信息。
-
-```
-授权用户: /info
-Bot: 表情包总数：128
-     当前合集：新三国（30 张）
-     普通合集数：4
-     当前合集说话人排行（前 10）：
-       1. 小明 45
-       2. 无 32
-       3. 小红 28
-     当前机器人状态：空闲
-     内存占用：512 MiB / 2048 MiB (25%)
-     进程内存：123 MiB
-     CPU占用：12%
-
-授权用户: /info 1.3
-Bot: id：1.3
-     合集：新三国
-     文本：加班心累
-     文件名：新三国/截图/meme_20260101120000_a1b2c3d4.webp
-     大小：123.45 KiB
-     说话人：小明
-     标签：吐槽, 加班
-```
-
-### ✏️ OCR 文本编辑 `/edittext`
-
-授权用户在私聊中发送 `/edittext <公开ID> <新文本>`，Bot 发送确认消息，
-用户回复「确认」后执行修改。修改会同步更新文本索引和向量库。
-
-### 🎤 说话人设置 `/setspeaker`
-
-授权用户在私聊中发送 `/setspeaker <公开ID> [说话人]`，Bot 发送图片和确认消息，
-用户回复「确认」或「yes」后执行修改。`[说话人]` 缺省时清空 sqlite 元数据中的说话人字段。
-
-### 🔄 增量更新 `/refresh`
-```
-授权用户: /refresh
-Bot: 正在扫描新图片并更新索引... 🔄
-Bot: 索引更新完成 ✅
-```
-
-`/refresh` 扫描时同样会对新增图片做去重与无文字排除：OCR 文本去重键命中已有条目或其他新图的新增图片会被移动到 `memes_replaced/` 目录归档（保留已有或文件名靠前者），无文字图片移至 `meme_no_text/`；完成回复包含新增、删除、去重、无文字移走、失败五项数量。
-
-`/help`、`/query`、`/rand`、`/sim`、`/collection create`、`/collection delete`、`/collection rename`、`/add`、`/addtag`、`/del`、`/edittext`、`/setspeaker`、`/refresh`、`/info`、`/cancel`、`/switch`、`/mv` 使用同一组授权用户白名单。非授权用户的私聊和群聊消息都会被静默忽略。
 
 ### 群聊支持
 `/query`、`/rand`、`/sim`、`/help`、`/info`、`/switch` 和普通文本支持在群聊中 @bot 触发。`/collection create`、`/collection delete`、`/collection rename`、`/add`、`/addtag`、`/del`、`/refresh`、`/edittext`、`/setspeaker`、`/mv` 在群聊中 @bot 调用时会回复"此命令仅限私聊使用"。`/cancel` 私聊和群聊均可使用。
 
-## 🚀 快速开始
+## 🚀 部署与使用
+
+支持两种部署方式：使用部署脚本拉取运行时文件后以预构建镜像启动（推荐，无需克隆源码），或克隆仓库本地构建镜像。两种方式都需先配置 `.env`（见 [环境变量配置](#环境变量配置)）并把表情包放入 `memes/`（见 [放入表情包](#放入表情包)）。
 
 ### 前置条件
 
@@ -236,90 +58,81 @@ Bot: 索引更新完成 ✅
   - `OCR_PROVIDER=paddle`：百度 PaddleOCR 云 API Access Token（[点此获取](https://aistudio.baidu.com/paddleocr)）
   - `OCR_PROVIDER=deepseek`：OpenAI 兼容视觉 OCR 服务的 API Key（如 SiliconFlow）
 
-### 部署步骤
+### 部署方式
+
+<details>
+<summary><strong>方式一：部署脚本 + Docker Compose（预构建镜像，推荐）</strong></summary>
+
+通过部署脚本从 GitHub 拉取运行时文件（`napcat/`、`docker-compose.yml`、`.env`），再以预构建镜像 `northhalf/meme-pilot:latest` 启动，无需克隆源码。脚本幂等，已存在的文件会跳过（`.env` 永不覆盖），可安全重复执行。
+
+**Linux / macOS / WSL（一键命令）**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/northhalf/meme-pilot/main/deploy/deploy.sh | bash
+```
+
+也可先下载再执行，以便指定目标目录或仓库引用：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/northhalf/meme-pilot/main/deploy/deploy.sh -o deploy.sh
+chmod +x deploy.sh
+./deploy.sh [目标目录]            # 默认当前目录
+REPO_REF=v1.0.0 ./deploy.sh      # 指定仓库引用，默认 main
+```
+
+**Windows PowerShell（需管理员）**
+
+从网络下载的脚本会被 Windows 标记，需先放行执行策略再解除锁定，然后在目标目录中执行：
+
+```powershell
+# 以管理员身份打开 PowerShell，在目标目录中执行：
+Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+Invoke-WebRequest -Uri https://raw.githubusercontent.com/northhalf/meme-pilot/main/deploy/deploy.ps1 -OutFile deploy.ps1
+Unblock-File .\deploy.ps1
+.\deploy.ps1 [-TargetDir <目录>]    # 默认当前目录；$env:REPO_REF="v1.0.0" 可指定引用
+```
+
+**完成拉取后**
+
+1. 编辑 `.env`，填入 `QQ_ACCOUNT`、`AUTHORIZED_USER_IDS` 与所选 provider 凭证（详见 [环境变量配置](#环境变量配置)）。
+2. 把表情包放入 `memes/`（详见 [放入表情包](#放入表情包)）。
+3. 启动并查看日志：
+
+```bash
+docker compose up -d
+docker compose logs -f bot
+```
+
+默认 Compose 使用 `northhalf/meme-pilot:latest`，并通过 `pull_policy: always` 在每次启动时检查并拉取最新发布镜像。
+
+</details>
+
+<details>
+<summary><strong>方式二：克隆仓库 + 本地构建镜像</strong></summary>
+
+不使用预构建镜像时，克隆仓库并用 `docker-compose.build.yml` 本地构建 `meme-pilot:local` 镜像。
 
 ```bash
 # 1. 克隆项目
-git clone <your-repo-url> meme-pilot
+git clone https://github.com/northhalf/meme-pilot.git meme-pilot
 cd meme-pilot
 
 # 2. 配置环境变量
 cp .env.example .env
-# 编辑 .env：
-#   QQ_ACCOUNT=机器人登录的QQ号
-#   AUTHORIZED_USER_IDS=允许使用机器人的QQ号，多个用英文逗号分隔
-#
-#   # Embedding：默认使用 OpenAI 兼容 API
-#   OPENAI_EMBEDDING_API_KEY=sk-你的EmbeddingKey  # Compose 要求非空；google 模式可填 unused-for-google
-#   # OPENAI_EMBEDDING_BASE_URL=https://open.bigmodel.cn/api/paas/v4  # 可选，OpenAI 兼容 Embedding 地址
-#   # OPENAI_EMBEDDING_MODEL=embedding-3  # 可选，OpenAI 兼容 Embedding 模型名
-#   # EMBEDDING_PROVIDER=openai            # 可选，默认 openai；仅当使用 google 时才改为 google
-#   # GOOGLE_API_KEY=你的GoogleKey         # 仅 EMBEDDING_PROVIDER=google 时必填
-#   # GOOGLE_EMBEDDING_MODEL=gemini-embedding-001  # 仅 EMBEDDING_PROVIDER=google 时生效
-#   # GOOGLE_BASE_URL=                     # 仅 EMBEDDING_PROVIDER=google 时可选
-#
-#   # OCR：默认使用本地 RapidOCR，无需 API Key
-#   # OCR_PROVIDER=rapidocr                # 可选，默认 rapidocr
-#   # OCR_TEXT_SCORE=0.9                   # 可选，OCR 文本置信度阈值
-#
-#   # 仅当 OCR_PROVIDER=paddle 时必填：
-#   # PADDLEOCR_ACCESS_TOKEN=你的百度OCRToken
-#
-#   # 仅当 OCR_PROVIDER=deepseek 时必填：
-#   # OPENAI_OCR_API_KEY=sk-你的OpenAI兼容OCRKey
-#   # OPENAI_OCR_BASE_URL=https://api.siliconflow.cn/v1  # 可选
-#   # OPENAI_OCR_MODEL=deepseek-ai/DeepSeek-OCR          # 可选
-#
-#   BOT_PORT=8080  # 可选，Bot 监听端口
-#   NAPCAT_WEBUI_TOKEN=你的密码  # 可选，WebUI 登录密钥
-#   EMBEDDING_CONCURRENCY=5  # 可选，Embedding API 并发上限
-#   OCR_CONCURRENCY=5  # 可选，OCR API 并发上限
-#   COMPRESS_CONCURRENCY=5  # 可选，图片压缩并发上限
-#   CONVERT_TO_WEBP=true  # 可选，图片转 WebP 开关（默认开启）
-#   # 内存治理（默认值已内置，按需覆盖；详见 .env.example）
-#   LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libmimalloc.so.3  # 可选，用 mimalloc 接管 malloc，治容器 RSS 持续上涨
-#   ORT_INTRA_OP_NUM_THREADS=2  # 可选，onnxruntime 推理线程（原默认占满 CPU 核）
-#   ORT_INTER_OP_NUM_THREADS=1  # 可选，onnxruntime inter-op 线程
-#   READ_LOCK_TIMEOUT=00:00:30  # 可选，搜索命令等待读锁的超时
-#   ADD_COMMAND_TIMEOUT=00:01:00  # 可选，/add 从提交到结果返回的超时
-#   SESSION_EXPIRE_TIMEOUT=00:01:00  # 可选，会话超时时间
-#   PADDLEOCR_BASE_URL=https://paddleocr.aistudio-app.com  # 可选，百度 OCR API 地址
+# 编辑 .env：QQ_ACCOUNT、AUTHORIZED_USER_IDS、Embedding/OCR 凭证（详见 环境变量配置）
 
-# 3. 放入表情包
-# 把你的 .jpg/.jpeg/.png/.gif/.webp/.bmp 放到 memes/ 目录。
-# memes/ 支持根目录直接存放（归属“全局”，公开 ID 0.x），
-# 也支持用一级目录作为表情包合集，目录内可继续使用子目录：
-#
-#   memes/
-#   ├── root.webp              # 全局，公开 ID 0.1
-#   ├── 新三国/
-#   │   ├── a.webp             # 新三国，公开 ID 1.1
-#   │   └── 截图/
-#   │       └── b.webp         # 新三国，公开 ID 1.2
-#   └── 甄嬛传/
-#       └── c.webp             # 甄嬛传，公开 ID 2.1
+# 3. 放入表情包（详见 放入表情包）
 
-# 4. 启动
-docker compose up -d
+# 4. 本地构建并启动
+docker compose -f docker-compose.build.yml up -d --build
 
 # 5. 查看日志
 docker compose logs -f bot
-
-# 日志同时写入 log/bot.log（滚动日志，单文件 <= 10MB，最多保留 3 个备份 bot.log.1~3）
-# 文件日志级别为 DEBUG，控制台为 INFO
 ```
 
-默认 `docker-compose.yml` 使用发布镜像 `northhalf/meme-pilot:latest`，并通过 `pull_policy: always` 在每次启动时检查并拉取最新发布镜像。
+**构建代理（可选）**
 
-#### 本地构建
-
-不使用构建代理时，直接使用独立的本地构建文件：
-
-```bash
-docker compose -f docker-compose.build.yml up -d --build
-```
-
-需要构建代理时，按以下单一流程处理覆盖文件：旧版 `docker-compose.override.yml` 存在时先迁移；否则在新文件不存在时从示例创建。无论采用哪种来源，最后都显式组合两个 Compose 文件启动：
+国内网络构建镜像时若需走代理，按以下单一流程处理覆盖文件：旧版 `docker-compose.override.yml` 存在时先迁移；否则在新文件不存在时从示例创建。无论采用哪种来源，最后都显式组合两个 Compose 文件启动：
 
 ```bash
 if [ -f docker-compose.override.yml ]; then
@@ -337,7 +150,72 @@ docker compose \
 
 这样旧文件不会再被默认 `docker compose up -d` 自动加载，本地构建覆盖也不会影响默认镜像部署。
 
-#### 日志格式与追踪
+</details>
+
+> 启动后日志同时写入 `log/bot.log`（滚动日志，单文件 <= 10MB，最多保留 3 个备份 `bot.log.1~3`）；文件日志级别为 DEBUG，控制台为 INFO。完整说明见 [日志格式与追踪](#日志格式与追踪)。
+
+### 环境变量配置
+
+部署完成后编辑 `.env`，必填项与可选项说明如下（完整模板见 `.env.example`）：
+
+```bash
+QQ_ACCOUNT=机器人登录的QQ号
+AUTHORIZED_USER_IDS=允许使用机器人的QQ号，多个用英文逗号分隔
+
+# Embedding：默认使用 OpenAI 兼容 API
+OPENAI_EMBEDDING_API_KEY=sk-你的EmbeddingKey  # Compose 要求非空；google 模式可填 unused-for-google
+# OPENAI_EMBEDDING_BASE_URL=https://open.bigmodel.cn/api/paas/v4  # 可选，OpenAI 兼容 Embedding 地址
+# OPENAI_EMBEDDING_MODEL=embedding-3  # 可选，OpenAI 兼容 Embedding 模型名
+# EMBEDDING_PROVIDER=openai            # 可选，默认 openai；仅当使用 google 时才改为 google
+# GOOGLE_API_KEY=你的GoogleKey         # 仅 EMBEDDING_PROVIDER=google 时必填
+# GOOGLE_EMBEDDING_MODEL=gemini-embedding-001  # 仅 EMBEDDING_PROVIDER=google 时生效
+# GOOGLE_BASE_URL=                     # 仅 EMBEDDING_PROVIDER=google 时可选
+
+# OCR：默认使用本地 RapidOCR，无需 API Key
+# OCR_PROVIDER=rapidocr                # 可选，默认 rapidocr
+# OCR_TEXT_SCORE=0.9                   # 可选，OCR 文本置信度阈值
+
+# 仅当 OCR_PROVIDER=paddle 时必填：
+# PADDLEOCR_ACCESS_TOKEN=你的百度OCRToken
+
+# 仅当 OCR_PROVIDER=deepseek 时必填：
+# OPENAI_OCR_API_KEY=sk-你的OpenAI兼容OCRKey
+# OPENAI_OCR_BASE_URL=https://api.siliconflow.cn/v1  # 可选
+# OPENAI_OCR_MODEL=deepseek-ai/DeepSeek-OCR          # 可选
+
+BOT_PORT=8080  # 可选，Bot 监听端口
+NAPCAT_WEBUI_TOKEN=你的密码  # 可选，WebUI 登录密钥
+EMBEDDING_CONCURRENCY=5  # 可选，Embedding API 并发上限
+OCR_CONCURRENCY=5  # 可选，OCR API 并发上限
+COMPRESS_CONCURRENCY=5  # 可选，图片压缩并发上限
+CONVERT_TO_WEBP=true  # 可选，图片转 WebP 开关（默认开启）
+
+# 内存治理（默认值已内置，按需覆盖；详见 .env.example）
+LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libmimalloc.so.3  # 可选，用 mimalloc 接管 malloc，治容器 RSS 持续上涨
+ORT_INTRA_OP_NUM_THREADS=2  # 可选，onnxruntime 推理线程（原默认占满 CPU 核）
+ORT_INTER_OP_NUM_THREADS=1  # 可选，onnxruntime inter-op 线程
+READ_LOCK_TIMEOUT=00:00:30  # 可选，搜索命令等待读锁的超时
+ADD_COMMAND_TIMEOUT=00:01:00  # 可选，/add 从提交到结果返回的超时
+SESSION_EXPIRE_TIMEOUT=00:01:00  # 可选，会话超时时间
+PADDLEOCR_BASE_URL=https://paddleocr.aistudio-app.com  # 可选，百度 OCR API 地址
+```
+
+### 放入表情包
+
+把你的 `.jpg`/`.jpeg`/`.png`/`.gif`/`.webp`/`.bmp` 放到 `memes/` 目录。`memes/` 支持根目录直接存放（归属“全局”，公开 ID `0.x`），也支持用一级目录作为表情包合集，目录内可继续使用子目录：
+
+```text
+memes/
+├── root.webp              # 全局，公开 ID 0.1
+├── 新三国/
+│   ├── a.webp             # 新三国，公开 ID 1.1
+│   └── 截图/
+│       └── b.webp         # 新三国，公开 ID 1.2
+└── 甄嬛传/
+    └── c.webp             # 甄嬛传，公开 ID 2.1
+```
+
+### 日志格式与追踪
 
 - 所有 `bot.*` 模块的日志统一输出到 `log/bot.log`（DEBUG 及以上）和容器标准输出（INFO 及以上）。
 - 每条用户命令会生成一个 8 位短 `request_id`，以 `[req:xxxxxxx]` 前缀贯穿插件、engine、OCR、Embedding、Store 等全链路日志，方便定位一次请求的完整调用路径。
@@ -348,35 +226,6 @@ docker compose \
   ```
 
 首次启动会自动扫描 `memes/` 目录中的图片，按 `OCR_PROVIDER` 配置（默认 `rapidocr`，本地 ONNX 推理）提取文字并建立索引。索引同步在后台执行，Bot 启动后立即可用；同步期间搜索命令会提示"索引更新较慢，请稍后再试"。
-
-### 旧库迁移（合集功能）
-
-如果你之前使用的是旧版单库（`data/index.db` 没有 `schema_version` 表），升级到新版本前需要先停止 Bot，然后使用迁移脚本升级 Schema；升级后如果希望把根目录图片整体移入某个合集，可继续使用 `move-root` 子命令。
-
-```bash
-# 0. 停止 Bot（脚本不会自动检测 Bot 进程）
-docker compose down
-
-# 1. 预演 Schema 升级（不修改任何文件）
-uv run python -m scripts.migrate_meme_collections upgrade-schema --dry-run
-
-# 2. 正式升级 Schema（会自动备份 SQLite，并补齐 Chroma collection_id 元数据）
-uv run python -m scripts.migrate_meme_collections upgrade-schema
-
-# 3.（可选）把根目录的已索引图片整体迁移到指定合集
-#    目标可以是合集编号、精确名称；名称不存在时会自动创建目录和合集
-uv run python -m scripts.migrate_meme_collections move-root 新三国 --dry-run
-uv run python -m scripts.migrate_meme_collections move-root 新三国
-```
-
-迁移注意事项：
-
-- 运行迁移前必须停止 Bot，否则可能导致 SQLite 或 Chroma 状态不一致。
-- `upgrade-schema` 默认使用 `MEMES_DIR`、`INDEX_DB_PATH`、`CHROMA_DIR` 路径；也可通过 `--memes-dir`、`--db-path`、`--chroma-dir` 显式指定。
-- 脚本会先用 SQLite Backup API 创建 `index.db.<时间戳>.bak` 备份；正式修改前建议再额外备份整个 `data/` 目录。
-- `--dry-run` 只输出计划，不生成备份、不修改 SQLite 或 Chroma。
-- 强制中断（Ctrl-C、进程崩溃、断电）可能导致 SQLite 与 Chroma 不一致；中断后请使用升级前备份恢复，或重新运行迁移脚本由阶段0一致性检查修复。
-- `move-root` 只处理 `memes/` 根目录直接存放、且已在 SQLite 中索引的受支持图片；未索引图片会跳过并报告；目标合集已有相同 OCR 文本时保留源条目并跳过。
 
 ### 扫码登录与反向 WebSocket
 
@@ -395,34 +244,6 @@ ssh -L 6099:127.0.0.1:6099 用户@服务器
 v1.0 使用反向 WebSocket：NapCat 通过 `napcat/entrypoint.sh` 自动生成反向 WebSocket 配置，主动连接 Bot 容器（`ws://bot:8080/onebot/v11/ws`），无需手动配置。
 
 如果修改了 `BOT_PORT`，首次启动后需在 NapCat WebUI 中手动更新 WebSocket 地址中的端口号。
-
-### 验证
-
-登录成功后，向你的 QQ 发送 `/query 测试` 试试吧！
-
-### 🧪 持续集成（CI）集成测试
-
-push 或 PR 到 `main` 时，CI 会先跑单元测试，通过后并行执行集成测试（调用 OpenAI 兼容 Embedding/OCR 与 PaddleOCR 真实 API）与构建验证。集成测试失败不阻塞构建。
-
-集成测试需要以下 GitHub secrets（仓库 Settings -> Secrets and variables -> Actions -> New repository secret），命名与环境变量一致；未配置的 Key 对应用例自动跳过：
-
-- `OPENAI_EMBEDDING_API_KEY`（Embedding）
-- `OPENAI_OCR_API_KEY`（OpenAI 兼容 OCR）
-- `PADDLEOCR_ACCESS_TOKEN`（PaddleOCR）
-
-> Embedding/OCR 的 `BASE_URL`/`MODEL` 为非敏感配置，已明文写在 `.github/workflows/ci.yml`（与 `.env.example` 一致），无需配 secret。fork 来源的 PR 无法读取仓库 secrets，集成测试将全部跳过。
-
-### 🔒 持续集成（CD）审批
-
-推送 `v*` tag 会自动触发 CD：先跑单元测试，通过后构建镜像并发布到 Docker Hub。发布环节（`publish` job）配置了 `environment: deploy` 审批门。
-
-一次性配置（须仓库管理员操作）：
-
-1. 进入 GitHub 仓库 Settings -> Environments -> New environment，命名为 `deploy`。
-2. 在 `deploy` 环境下添加 Required reviewers，勾选审批人。
-3. 此后推送 `v*` tag 会触发 test 自动运行，`publish` 须人工 approve 后才会发版。
-
-> 注意：`environment: deploy` 仅在配置了 required reviewers 时才生效；未配则等同无审批门（仅打上环境标签）。如果该环境限制了 Deployment branches and tags，还需允许 `v*` tag。
 
 ## 🏗️ 架构
 
@@ -501,137 +322,10 @@ CREATE TABLE chat_collection_scope (
 
 `data/index.db` 是 sqlite 元数据库，可用 `sqlite3` CLI 查询（如 `sqlite3 data/index.db "SELECT id, collection_id, local_id, image_path, text FROM meme;"`）；`data/chroma/` 是 ChromaDB 向量库（collection `memes`，HNSW cosine），每条向量附带 `collection_id` 元数据用于按合集过滤召回，由系统自动维护，不建议手动编辑。OCR 文本在写入前统一去除所有空白字符。
 
-## 📂 项目结构
-
-```
-meme-pilot/
-├── docker-compose.yml       # 默认拉取 northhalf/meme-pilot:latest
-├── docker-compose.build.yml # 从当前源码构建本地镜像
-├── docker-compose.build.override.yml.example # 本地构建代理覆盖示例
-├── .env                     # 配置（QQ号、API Key）
-├── napcat/                  # NapCat 配置（运行时自动生成）
-│   ├── config/              # OneBot v11 + WebUI 配置
-│   ├── qq/                  # QQ 登录数据
-│   └── entrypoint.sh        # 自动生成反向 WebSocket 配置
-├── memes/                   # 放你的表情包图片；根目录=全局，一级目录=合集
-├── meme_no_text/            # OCR 无文字图片（不进索引，Docker 卷挂载）
-├── memes_deleted/           # 被 /del 删除的表情包备份目录，可手动恢复
-├── memes_replaced/          # 被替换表情包的归档目录
-├── memes_migrated_backup/   # 迁移脚本备份目录（转 WebP 后的原文件备份）
-├── data/                    # 索引数据
-│   ├── index.db             # sqlite 元数据（meme、meme_tag、meme_collection、chat_collection_scope、schema_version）
-│   └── chroma/              # ChromaDB 向量库（collection memes，cosine，记录含 collection_id）
-├── log/                     # 日志目录（Docker 卷挂载）
-│   ├── bot.log              # 当前日志（<= 10MB）
-│   ├── bot.log.1            # 上一份日志备份
-│   ├── bot.log.2            # 上二份日志备份
-│   └── bot.log.3            # 上三份日志备份
-├── scripts/
-│   ├── convert_memes_to_webp.py   # 存量图片批量转 WebP 迁移脚本
-│   └── migrate_meme_collections.py # 合集 Schema 升级与根目录迁移脚本（upgrade-schema / move-root）
-├── tests/                   # 测试目录规划
-│   ├── unit/                # 单元测试
-│   │   ├── engine/
-│   │   └── plugins/
-│   ├── integration/         # 集成测试
-│   └── fixtures/            # 测试样本和基准数据
-└── bot/
-    ├── Dockerfile
-    ├── bot.py               # 入口
-    ├── config.py            # 配置读取
-    ├── app_state.py         # 共享实例管理（模块级单例）
-    ├── auth.py              # 授权校验模块
-    ├── session.py           # 共享会话管理（/add、兜底搜索防重复提交）
-    ├── logging_config.py    # 日志滚动配置
-    ├── log_context.py       # request_id 传播与耗时统计工具
-    ├── plugins/
-    │   ├── query.py        # /query 命令
-    │   ├── rand.py         # /rand 命令
-    │   ├── sim.py          # /sim 命令
-    │   ├── collection.py   # /collection create/delete/rename 命令
-    │   ├── add.py          # /add 命令
-    │   ├── addtag.py       # /addtag 命令
-    │   ├── delete.py       # /del 命令
-    │   ├── edit.py         # /edittext 命令
-    │   ├── setspeaker.py   # /setspeaker 命令
-    │   ├── switch.py       # /switch 合集切换命令
-    │   ├── move.py         # /mv 跨合集移动命令
-    │   ├── refresh.py      # /refresh 命令
-    │   ├── info.py         # /info 命令
-    │   ├── help.py         # /help 命令
-    │   ├── cancel.py       # /cancel 命令
-    │   ├── plain_text.py   # 兜底：普通文本/未知命令
-    │   ├── _collection_utils.py # 合集与公开 ID 插件适配（共享模块）
-    │   ├── _help_text.py        # 帮助文本常量（共享模块）
-    │   └── _search_utils.py     # 搜索核心逻辑（共享模块）
-    └── engine/
-        ├── __init__.py          # 包级公共接口导出与 provider 自动注册
-        ├── protocols.py         # 共享协议定义（EmbeddingProvider 等）
-        ├── provider_factory.py  # OCR/Embedding provider 注册表与工厂函数
-        ├── retry_config.py      # 统一 tenacity 网络重试配置
-        ├── image_optimizer.py   # 图片压缩/转换（含 WebP 转换）
-        ├── openai_ocr.py        # OpenAI 兼容 OCR 封装（原 deepseek_ocr.py）
-        ├── paddle_ocr.py        # PaddleOCR 云 API 封装
-        ├── rapidocr_ocr.py      # RapidOCR 本地 ONNX OCR 封装
-        ├── openai_embedding.py  # OpenAI 兼容 Embedding 封装（原 embedding_service.py）
-        ├── google_embedding.py  # Google Embedding API 封装
-        ├── metadata_store.py    # sqlite3 元数据存储（MemeEntry + MetadataStore）
-        ├── vector_store.py      # chromadb 向量存储（VectorHit + VectorStore）
-        ├── collection_manager.py # 表情包合集、公开 ID 与 ChatScope 选择解析
-        ├── index_manager.py     # 索引薄编排（委托两个 Store）
-        ├── rwlock.py            # 读写锁（写者优先）
-        ├── types.py             # 共享数据类型（SearchResult、MemePublicId 等）
-        ├── utils.py             # 共享工具（vector_norm、resolve_unique_filename 等）
-        ├── keyword_searcher.py  # 模糊搜索
-        ├── random_searcher.py   # 随机取样搜索
-        ├── semantic_searcher.py # 语义搜索
-        └── combined_searcher.py # 组合检索（keyword+speaker+tag 过滤）
-```
-
-## 🧪 测试目录规划
-
-测试文件统一放在仓库根目录 `tests/` 下：
-
-```text
-tests/
-├── unit/
-│   ├── engine/      # 索引、搜索、合集和图片压缩等单元测试（使用 mock）
-│   └── plugins/     # 命令解析、权限判断、回复内容等单元测试
-├── integration/     # 集成测试（实际调用 API，需要配置真实 API Key）
-├── fixtures/
-│   ├── memes/       # 测试表情包图片
-│   ├── data/        # 测试索引样本
-│   └── images/      # 图片格式和压缩样本
-└── conftest.py      # pytest 共享 fixture，添加测试框架后再创建
-```
-
-**单元测试 vs 集成测试：**
-- `unit/`：使用 mock 隔离外部依赖，快速运行，无需 API Key
-- `integration/`：实际调用 API 验证端到端流程，需要按测试配置对应 provider 的 API Key
-
-运行集成测试：
-```bash
-# 确保已设置所选 provider 的 API Key
-export OPENAI_EMBEDDING_API_KEY=sk-your-key
-export OPENAI_OCR_API_KEY=sk-your-key
-
-# 运行集成测试（-s 显示输出）
-uv run pytest tests/integration/ -v -s
-```
-
 ## ⚙️ 依赖
 
 - [NapCatQQ](https://github.com/NapNeko/NapCatQQ) — QQ 协议端 (9.4k ⭐)
 - [NoneBot2](https://github.com/nonebot/nonebot2) — 聊天机器人框架 (7.5k ⭐)
-- [OpenAI 兼容 OCR](https://siliconflow.cn) — 视觉 OCR 模型（默认 `deepseek-ai/DeepSeek-OCR`，可通过 `OPENAI_OCR_MODEL` 切换）
-- [GLM](https://open.bigmodel.cn/) — OpenAI 兼容 Embedding API，默认模型 `embedding-3`
-- [Google GenAI](https://aistudio.google.com) — Google Embedding API，模型 `gemini-embedding-001`
-- [RapidOCR](https://github.com/RapidAI/RapidOCR) — 本地 ONNX OCR 引擎
-- [ChromaDB](https://www.trychroma.com/) — 向量索引（HNSW cosine `PersistentClient`，`data/chroma/`）
-- [pylcs](https://github.com/InoriLyude/pylcs) — 最长公共子序列算法库（关键词模糊匹配）
-- [Pillow](https://python-pillow.org/) - 图片压缩/转换（支持 `.jpg/.jpeg/.png/.webp/.gif`，`.bmp` 跳过；`CONVERT_TO_WEBP=true` 时转有损 WebP）
-- [tenacity](https://github.com/jd/tenacity) — 统一网络请求重试机制
-- [psutil](https://github.com/giampaolo/psutil) — 系统资源监控（用于 `/info`）
 
 ## 📄 许可
 
