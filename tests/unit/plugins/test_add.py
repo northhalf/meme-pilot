@@ -8,7 +8,7 @@ import httpx
 import pytest
 from nonebot.adapters.onebot.v11 import Message
 
-from bot.engine.index_manager import (
+from bot.index_manager import (
     AddResult,
     CompressionError,
     EmbeddingError,

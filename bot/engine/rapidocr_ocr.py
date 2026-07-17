@@ -1,6 +1,6 @@
 """RapidOCR 本地 OCR 服务模块。
 
-使用本地 ONNX 模型进行图片文字识别，实现 index_manager.OcrProvider 协议。
+使用本地 ONNX 模型进行图片文字识别，实现 engine.protocols.OcrProvider 协议。
 """
 
 import asyncio
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 class RapidOcrService:
     """RapidOCR 本地 OCR 服务。
 
-    使用本地 ONNX 模型进行图片文字识别，实现 index_manager.OcrProvider 协议。
+    使用本地 ONNX 模型进行图片文字识别，实现 engine.protocols.OcrProvider 协议。
 
     Attributes:
         _engine: RapidOCR 推理实例。

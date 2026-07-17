@@ -6,8 +6,7 @@
 
 from typing import Callable, TypeAlias
 
-from .index_manager import OcrProvider
-from .protocols import EmbeddingProvider
+from .protocols import EmbeddingProvider, OcrProvider
 
 Factory: TypeAlias = Callable[[], OcrProvider]
 EmbeddingFactory: TypeAlias = Callable[[], EmbeddingProvider]

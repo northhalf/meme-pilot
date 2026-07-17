@@ -10,29 +10,9 @@ import logging
 from .collection_manager import CollectionManager
 from .combined_searcher import CombinedSearcher
 from .image_optimizer import ImageOptimizer, OptimizeResult
-from .index_manager import (
-    AddResult,
-    CollectionAlreadyExistsError,
-    CollectionCreateError,
-    CollectionPathConflictError,
-    CreateCollectionResult,
-    DuplicateMemeInCollectionError,
-    DuplicateTextError,
-    EditTextResult,
-    IndexCorruptedError,
-    IndexManager,
-    MemeMoveError,
-    MemeMoveSourceExpiredError,
-    MovePreview,
-    MoveResult,
-    MoveSourceSnapshot,
-    OcrProvider,
-    SyncResult,
-    resolve_unique_filename,
-)
 from .keyword_searcher import KeywordSearcher
 from .metadata_store import MemeEntry, MetadataStore
-from .protocols import EmbeddingProvider
+from .protocols import EmbeddingProvider, OcrProvider
 from .provider_factory import (
     mark_embedding_unavailable,
     mark_ocr_unavailable,
@@ -40,6 +20,7 @@ from .provider_factory import (
     register_ocr,
 )
 from .types import SearchResult
+from .utils import resolve_unique_filename
 from .vector_store import VectorHit, VectorStore
 
 logger = logging.getLogger(__name__)
@@ -101,23 +82,7 @@ __all__ = [
     # image_optimizer
     "ImageOptimizer",
     "OptimizeResult",
-    # index_manager
-    "AddResult",
-    "CollectionAlreadyExistsError",
-    "CollectionCreateError",
-    "CollectionPathConflictError",
-    "CreateCollectionResult",
-    "DuplicateMemeInCollectionError",
-    "DuplicateTextError",
-    "EditTextResult",
-    "IndexCorruptedError",
-    "IndexManager",
-    "MemeMoveError",
-    "MemeMoveSourceExpiredError",
-    "MovePreview",
-    "MoveResult",
-    "MoveSourceSnapshot",
-    "SyncResult",
+    # utils
     "resolve_unique_filename",
     # keyword_searcher
     "KeywordSearcher",

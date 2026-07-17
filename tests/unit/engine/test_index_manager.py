@@ -13,7 +13,7 @@ import pytest
 from typing import cast
 
 from bot.engine.collection_manager import CollectionManager, CollectionNotFoundError
-from bot.engine.index_manager import (
+from bot.index_manager import (
     AddResult,
     CollectionSelectionExpiredError,
     CompressionError,
@@ -27,9 +27,9 @@ from bot.engine.index_manager import (
     RefreshInProgressError,
     SyncResult,
     WriteOp,
-    _WriteRequest,
-    resolve_unique_filename,
 )
+from bot.index_manager.index_types import _WriteRequest
+from bot.engine.utils import resolve_unique_filename
 from bot.engine.image_optimizer import ImageOptimizer, OptimizeResult
 from bot.engine.keyword_searcher import KeywordSearcher
 from bot.engine.metadata_store import MemeEntry, MetadataStore
@@ -868,7 +868,7 @@ class TestAdd:
         # 第二次替换：再次把同名 old.jpg 移入 memes_replaced/
         # 通过手动调用 _move_to_replaced 模拟同名冲突
         (Path(index_manager._memes_dir) / "old.jpg").write_bytes(b"3")
-        archived = await asyncio.to_thread(index_manager._move_to_replaced, "old.jpg")
+        archived = await asyncio.to_thread(index_manager._coordinator._move_to_replaced, "old.jpg")
         assert archived == str(replaced_dir / "old_1.jpg")
         assert (replaced_dir / "old_1.jpg").exists()
 
@@ -939,7 +939,7 @@ class TestAdd:
         def fail_archive(filename: str) -> str:
             raise OSError("archive failed")
 
-        index_manager._move_to_replaced = fail_archive  # ty: ignore[invalid-assignment]
+        index_manager._coordinator._move_to_replaced = fail_archive  # ty: ignore[invalid-assignment]
 
         with pytest.raises(OSError, match="archive failed"):
             await index_manager.add("new.jpg")
@@ -1906,7 +1906,7 @@ class TestConcurrencyAndDrain:
     @pytest.mark.asyncio
     async def test_no_concurrency_params_in_init(self) -> None:
         """IndexManager 不再接受 sync_concurrency 参数。"""
-        from bot.engine.index_manager import IndexManager
+        from bot.index_manager import IndexManager
 
         md = FakeMetadataStore()
         vs = FakeVectorStore()

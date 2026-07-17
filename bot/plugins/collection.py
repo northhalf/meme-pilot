@@ -11,14 +11,15 @@ from nonebot.rule import to_me
 from bot import reply as reply_utils
 from bot.app_state import get_index_manager
 from bot.auth import is_authorized, log_unauthorized
-from bot.engine import (
+from bot.engine.collection_manager import InvalidCollectionNameError
+from bot.index_manager import (
     CollectionAlreadyExistsError,
     CollectionCreateError,
     CollectionPathConflictError,
     CreateCollectionResult,
+    IndexAddCancelledError,
+    RefreshInProgressError,
 )
-from bot.engine.collection_manager import InvalidCollectionNameError
-from bot.engine.index_manager import IndexAddCancelledError, RefreshInProgressError
 from bot.log_context import generate_request_id, set_request_id
 from bot.session import ChatScope, session_manager
 

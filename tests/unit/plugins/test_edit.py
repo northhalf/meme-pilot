@@ -14,7 +14,7 @@ from bot.engine.collection_manager import (
     MemeNotFoundError,
     ShortIdUnavailableError,
 )
-from bot.engine.index_manager import EditTextResult
+from bot.index_manager import EditTextResult
 from bot.engine.metadata_store import MemeEntry
 from bot.engine.types import MemePublicId
 from tests.conftest import extract_message_text

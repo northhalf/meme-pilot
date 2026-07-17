@@ -8,14 +8,14 @@ from typing import Any
 import pytest
 import pytest_asyncio
 
-from bot.engine import (
+from bot.index_manager import (
     DuplicateMemeInCollectionError as ExportedDuplicateMemeInCollectionError,
 )
-from bot.engine import MemeMoveError as ExportedMemeMoveError
-from bot.engine import MovePreview as ExportedMovePreview
-from bot.engine import MoveResult as ExportedMoveResult
+from bot.index_manager import MemeMoveError as ExportedMemeMoveError
+from bot.index_manager import MovePreview as ExportedMovePreview
+from bot.index_manager import MoveResult as ExportedMoveResult
 from bot.engine.collection_manager import CollectionNotFoundError, MemeNotFoundError
-from bot.engine.index_manager import (
+from bot.index_manager import (
     DuplicateMemeInCollectionError,
     IndexManager,
     MemeMoveError,
@@ -769,7 +769,7 @@ async def test_move_restores_file_when_secure_move_succeeds_then_raises(
         return result
 
     monkeypatch.setattr(
-        "bot.engine.index_manager.secure_move_file",
+        "bot.index_manager.write_coordinator.secure_move_file",
         move_then_fail,
     )
 
@@ -905,7 +905,7 @@ async def test_cancelled_queued_move_is_skipped(
         "第二条",
         collection_id=source.id,
     )
-    original_execute = index_manager._execute_move
+    original_execute = index_manager._coordinator._execute_move
     first_started = asyncio.Event()
     release_first = asyncio.Event()
 
@@ -915,7 +915,7 @@ async def test_cancelled_queued_move_is_skipped(
             await release_first.wait()
         return await original_execute(req)
 
-    monkeypatch.setattr(index_manager, "_execute_move", block_first)
+    monkeypatch.setattr(index_manager._coordinator, "_execute_move", block_first)
     first_task = asyncio.create_task(index_manager.move(first_id, target.id))
     await first_started.wait()
     second_task = asyncio.create_task(index_manager.move(second_id, target.id))
@@ -949,7 +949,7 @@ async def test_cancel_at_move_start_boundary_has_complete_final_state(
         collection_id=source.id,
         content=b"source",
     )
-    original_execute = index_manager._execute_move
+    original_execute = index_manager._coordinator._execute_move
     dequeued = asyncio.Event()
     release = asyncio.Event()
 
@@ -958,7 +958,7 @@ async def test_cancel_at_move_start_boundary_has_complete_final_state(
         await release.wait()
         return await original_execute(req)
 
-    monkeypatch.setattr(index_manager, "_execute_move", pause_at_start)
+    monkeypatch.setattr(index_manager._coordinator, "_execute_move", pause_at_start)
     task = asyncio.create_task(index_manager.move(entry_id, target.id))
     await dequeued.wait()
     task.cancel()

@@ -14,7 +14,7 @@ from bot.engine.collection_manager import (
     ShortIdUnavailableError,
     validate_collection_name,
 )
-from bot.engine.index_types import (
+from bot.index_manager.index_types import (
     CollectionAlreadyExistsError,
     CollectionCreateError,
     CollectionPathConflictError,

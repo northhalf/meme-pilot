@@ -65,7 +65,6 @@ description: Use when the user requests to write a git commit message for the me
 ```
 文档：
 - 更新 docs/process.md：追加 image_optimizer.py 完成记录
-- 更新 docs/api/API.md：索引追加 image_optimizer 章节
 ```
 
 ## 完整示例
@@ -96,8 +95,6 @@ feat(engine): 实现 image_optimizer 图片无损压缩模块
 - uv run pytest：237 passed（215 unit + 22 integration）
 
 文档：
-- 新增 docs/api/bot/engine/image_optimizer.md：接口说明
-- 更新 docs/api/API.md：索引追加 image_optimizer 章节
 - 更新 docs/process.md：追加完成记录
 ```
 
@@ -112,7 +109,6 @@ feat(engine): 实现 image_optimizer 图片无损压缩模块
 - `docs/PRD.md` — 需求与功能边界
 - `CONTEXT.md` — 术语与领域概念
 - `README.md` / `.env.example` / `docker-compose.yml` — 部署与环境
-- `docs/api/API.md` — 已有模块接口
 
 ### 2. 查看历史提交作为参考
 

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from bot.engine.collection_manager import InvalidPublicIdError, MemeNotFoundError
-from bot.engine.index_manager import SetSpeakerResult
+from bot.index_manager import SetSpeakerResult
 from bot.engine.metadata_store import MemeEntry
 from bot.engine.types import MemePublicId
 from bot.session import ChatScope

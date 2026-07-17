@@ -24,7 +24,7 @@ from bot import reply as reply_utils
 from bot.app_state import get_index_manager
 from bot.auth import is_authorized, log_unauthorized
 from bot.config import MEMES_DIR
-from bot.engine.index_manager import CollectionSelectionExpiredError
+from bot.index_manager import CollectionSelectionExpiredError
 from bot.engine.types import CollectionSelection
 from bot.log_context import generate_request_id, set_request_id
 from bot.plugins._help_text import help_text_for

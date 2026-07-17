@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from bot.engine.index_manager import RefreshInProgressError
+from bot.index_manager import RefreshInProgressError
 from tests.conftest import _assert_has_reply, _assert_no_reply, extract_message_text
 
 # ---------------------------------------------------------------------------
@@ -59,7 +59,7 @@ def _make_index_manager(
     refresh_side_effect: Exception | None = None,
 ) -> MagicMock:
     """创建模拟的 IndexManager。"""
-    from bot.engine.index_manager import SyncResult
+    from bot.index_manager import SyncResult
 
     im = MagicMock()
     im.entry_count = entry_count
@@ -225,7 +225,7 @@ class TestHandleRefreshResult:
         self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
         """memes/ 为空时应回复空目录提示。"""
-        from bot.engine.index_manager import SyncResult
+        from bot.index_manager import SyncResult
 
         matcher = _make_matcher()
         im = _make_index_manager(entry_count=0, sync_result=SyncResult())
@@ -246,7 +246,7 @@ class TestHandleRefreshResult:
         self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
         """正常同步后应回复摘要。"""
-        from bot.engine.index_manager import SyncResult
+        from bot.index_manager import SyncResult
 
         matcher = _make_matcher()
         result = SyncResult(
@@ -281,7 +281,7 @@ class TestHandleRefreshResult:
         self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
         """有失败文件时应列出。"""
-        from bot.engine.index_manager import SyncResult
+        from bot.index_manager import SyncResult
 
         matcher = _make_matcher()
         result = SyncResult(added=1, failed=("bad.jpg", "corrupt.png"))
@@ -304,7 +304,7 @@ class TestHandleRefreshResult:
         self, mock_get_im: MagicMock, mock_auth: MagicMock
     ) -> None:
         """失败文件最多显示前 10 个。"""
-        from bot.engine.index_manager import SyncResult
+        from bot.index_manager import SyncResult
 
         matcher = _make_matcher()
         failed = [f"f{i}.jpg" for i in range(15)]

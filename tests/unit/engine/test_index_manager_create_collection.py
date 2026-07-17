@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 import pytest_asyncio
 
-from bot.engine.index_manager import (
+from bot.index_manager import (
     AddResult,
     CollectionAlreadyExistsError,
     CollectionCreateError,
@@ -221,7 +221,7 @@ async def test_create_collection_rejects_directory_replaced_before_sqlite(
         return path_stat.st_dev, path_stat.st_ino
 
     monkeypatch.setattr(
-        index_manager,
+        index_manager._coordinator,
         "_get_collection_directory_identity",
         identity_with_replacement,
         raising=False,
@@ -264,7 +264,7 @@ async def test_database_failure_does_not_remove_replaced_directory(
         fail_after_replace,
     )
     monkeypatch.setattr(Path, "rmdir", record_rmdir)
-    caplog.set_level(logging.CRITICAL, logger="bot.engine.index_manager")
+    caplog.set_level(logging.CRITICAL, logger="bot.index_manager.manager")
 
     with pytest.raises(CollectionCreateError):
         await index_manager.create_collection("补偿身份变化")
@@ -340,7 +340,7 @@ async def test_cleanup_failure_raises_collection_create_error(
         raise sqlite3.OperationalError("database unavailable")
 
     monkeypatch.setattr(index_manager._metadata_store, "create_collection", fail_create)
-    caplog.set_level(logging.CRITICAL, logger="bot.engine.index_manager")
+    caplog.set_level(logging.CRITICAL, logger="bot.index_manager.manager")
 
     with pytest.raises(CollectionCreateError) as caught:
         await index_manager.create_collection("失败合集")

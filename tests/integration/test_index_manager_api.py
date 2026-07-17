@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
 from bot.engine.collection_manager import CollectionManager  # noqa: E402
-from bot.engine.index_manager import IndexManager  # noqa: E402
+from bot.index_manager import IndexManager  # noqa: E402
 from bot.engine.openai_embedding import OpenAIEmbeddingService  # noqa: E402
 from bot.engine.openai_ocr import OpenAIOcrService  # noqa: E402
 from bot.engine.metadata_store import MetadataStore  # noqa: E402

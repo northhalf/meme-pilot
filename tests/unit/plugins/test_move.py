@@ -14,7 +14,7 @@ from bot.engine.collection_manager import (
     MemeNotFoundError,
     ShortIdUnavailableError,
 )
-from bot.engine.index_manager import (
+from bot.index_manager import (
     DuplicateMemeInCollectionError,
     IndexAddCancelledError,
     MemeMoveError,

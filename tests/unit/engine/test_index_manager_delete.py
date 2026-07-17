@@ -6,7 +6,7 @@ from typing import cast
 import pytest
 import pytest_asyncio
 
-from bot.engine.index_manager import (
+from bot.index_manager import (
     DeleteResult,
     IndexManager,
 )

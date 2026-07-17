@@ -32,7 +32,6 @@ from bot.log_context import set_request_id
 from bot.engine import (
     CollectionManager,
     ImageOptimizer,
-    IndexManager,
     KeywordSearcher,
     MetadataStore,
     VectorStore,
@@ -44,6 +43,7 @@ from bot.engine.provider_factory import (
 from bot.engine.random_searcher import RandomSearcher
 from bot.engine.semantic_searcher import SemanticSearcher
 from bot.engine.combined_searcher import CombinedSearcher
+from bot.index_manager import IndexManager
 from bot.logging_config import setup_logging
 
 logger = logging.getLogger("bot")

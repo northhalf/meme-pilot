@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from nonebot.adapters.onebot.v11 import Message
 
 from bot.engine.collection_manager import InvalidPublicIdError, MemeNotFoundError
-from bot.engine.index_manager import AddTagResult
+from bot.index_manager import AddTagResult
 from bot.engine.types import MemePublicId
 from tests.conftest import extract_message_text
 

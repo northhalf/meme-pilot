@@ -16,7 +16,7 @@ from nonebot.rule import to_me
 from bot import reply as reply_utils
 from bot.app_state import get_index_manager
 from bot.auth import is_authorized, log_unauthorized
-from bot.engine.index_manager import RefreshInProgressError
+from bot.index_manager import RefreshInProgressError
 from bot.log_context import generate_request_id, set_request_id
 from bot.session import ChatScope, session_manager
 

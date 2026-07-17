@@ -23,7 +23,7 @@ from bot.engine.collection_manager import (
     MemeNotFoundError,
     ShortIdUnavailableError,
 )
-from bot.engine.index_manager import IndexAddCancelledError, RefreshInProgressError
+from bot.index_manager import IndexAddCancelledError, RefreshInProgressError
 from bot.engine.metadata_store import MemeEntry
 from bot.engine.types import MemePublicId
 from bot.log_context import generate_request_id, set_request_id

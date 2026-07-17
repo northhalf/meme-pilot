@@ -6,14 +6,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from nonebot.adapters.onebot.v11 import Message
 
-from bot.engine import (
+from bot.index_manager import (
     CollectionAlreadyExistsError,
     CollectionCreateError,
     CollectionPathConflictError,
     CreateCollectionResult,
+    IndexAddCancelledError,
+    RefreshInProgressError,
 )
 from bot.engine.collection_manager import InvalidCollectionNameError
-from bot.engine.index_manager import IndexAddCancelledError, RefreshInProgressError
 from bot.engine.types import MemeCollection
 from bot.session import ChatScope
 from tests.conftest import extract_message_text

@@ -1,7 +1,7 @@
 """OCR 服务模块 — 基于 OpenAI 兼容 API。
 
 通过 OpenAI 兼容的 chat completions API 调用视觉模型进行图片文字识别。
-实现 index_manager.OcrProvider 协议。
+实现 engine.protocols.OcrProvider 协议。
 """
 
 import asyncio
@@ -46,7 +46,7 @@ def _clean_ocr_result(raw: str) -> str:
 class OpenAIOcrService:
     """OpenAI 兼容 OCR 服务，通过 OpenAI 兼容 API 进行图片文字识别。
 
-    实现 index_manager.OcrProvider 协议，可直接注入给 IndexManager 使用。
+    实现 engine.protocols.OcrProvider 协议，可直接注入给 IndexManager 使用。
 
     Attributes:
         _client: AsyncOpenAI 客户端。

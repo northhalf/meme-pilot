@@ -3,7 +3,7 @@
 通过 paddleocr 库的 AsyncPaddleOCRClient 调用
 PaddleOCR 官方云 API 进行图片文字识别。
 
-实现 index_manager.OcrProvider 协议。
+实现 engine.protocols.OcrProvider 协议。
 """
 
 import asyncio
@@ -116,7 +116,7 @@ class PaddleOcrClientService:
     """PaddleOCR 云 API OCR 服务。
 
     使用 AsyncPaddleOCRClient 调用 PaddleOCR 官方云 API
-    进行图片文字识别。实现 index_manager.OcrProvider 协议。
+    进行图片文字识别。实现 engine.protocols.OcrProvider 协议。
 
     Attributes:
         _client: AsyncPaddleOCRClient 实例。

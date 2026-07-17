@@ -1,0 +1,68 @@
+"""index_manager 子包 - 索引管理薄编排层。
+
+导出门面 IndexManager 及 index_types 的公开符号，供插件层与外部代码使用。
+"""
+
+from .index_types import (
+    AddResult,
+    AddTagResult,
+    CollectionAlreadyExistsError,
+    CollectionCreateError,
+    CollectionPathConflictError,
+    CollectionSelectionExpiredError,
+    CompressionError,
+    CreateCollectionResult,
+    DeleteResult,
+    DuplicateMemeInCollectionError,
+    DuplicateTextError,
+    EditTextResult,
+    EmbeddingError,
+    FileSystemSnapshot,
+    IndexAddCancelledError,
+    IndexCorruptedError,
+    IndexInfo,
+    MemeMoveError,
+    MemeMoveSourceExpiredError,
+    MovePreview,
+    MoveResult,
+    MoveSourceSnapshot,
+    OcrError,
+    RefreshInProgressError,
+    SetSpeakerResult,
+    SyncResult,
+    WriteOp,
+)
+from .manager import IndexManager
+from .rwlock import IndexRwLock
+
+__all__ = [
+    "IndexManager",
+    "IndexRwLock",
+    "AddResult",
+    "AddTagResult",
+    "CollectionAlreadyExistsError",
+    "CollectionCreateError",
+    "CollectionPathConflictError",
+    "CollectionSelectionExpiredError",
+    "CompressionError",
+    "CreateCollectionResult",
+    "DeleteResult",
+    "DuplicateMemeInCollectionError",
+    "DuplicateTextError",
+    "EditTextResult",
+    "EmbeddingError",
+    "FileSystemSnapshot",
+    "IndexAddCancelledError",
+    "IndexCorruptedError",
+    "IndexInfo",
+    "MemeMoveError",
+    "MemeMoveSourceExpiredError",
+    "MovePreview",
+    "MoveResult",
+    "MoveSourceSnapshot",
+    "OcrError",
+    "RefreshInProgressError",
+    "SetSpeakerResult",
+    "SyncResult",
+    "WriteOp",
+]

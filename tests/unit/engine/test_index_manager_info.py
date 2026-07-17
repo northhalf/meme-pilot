@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 import pytest_asyncio
 
-from bot.engine.index_manager import IndexInfo, IndexManager
+from bot.index_manager import IndexInfo, IndexManager
 from bot.engine.metadata_store import MemeEntry, MetadataStore
 from bot.engine.types import MemeCollection, MemePublicId
 from bot.engine.vector_store import VectorStore

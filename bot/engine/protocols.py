@@ -28,3 +28,13 @@ class EmbeddingProvider(Protocol):
     async def close(self) -> None:
         """关闭 provider 占用的资源。"""
         ...
+
+
+class OcrProvider(Protocol):
+    """OCR 服务提供者协议。ocr() 返回去除所有空白后的文本。"""
+
+    async def ocr(self, image_path: str) -> str: ...
+
+    async def close(self) -> None:
+        """关闭 provider 占用的资源。"""
+        ...

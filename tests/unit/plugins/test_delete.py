@@ -684,7 +684,7 @@ class TestGotConfirm:
 
     def test_refresh_in_progress(self) -> None:
         """删除时触发 RefreshInProgressError → 回复索引正在刷新。"""
-        from bot.engine.index_manager import RefreshInProgressError
+        from bot.index_manager import RefreshInProgressError
 
         with (
             patch("bot.plugins.delete.session_manager.handler_context"),

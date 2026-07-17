@@ -25,16 +25,16 @@ from bot.app_state import get_index_manager
 from bot.auth import is_authorized, log_unauthorized
 from bot.config import MEMES_DIR, read_session_timeout
 from bot.engine.collection_manager import CollectionNotFoundError
-from bot.engine.index_manager import (
+from bot.index_manager import (
     CollectionSelectionExpiredError,
     CompressionError,
     EmbeddingError,
     IndexAddCancelledError,
     OcrError,
     RefreshInProgressError,
-    resolve_unique_filename,
 )
 from bot.engine.retry_config import api_retry
+from bot.engine.utils import resolve_unique_filename
 from bot.log_context import generate_request_id, set_request_id
 from bot.plugins._help_text import HELP_TEXT
 from bot.plugins._search_utils import format_metadata_line, got_intercept_bypass

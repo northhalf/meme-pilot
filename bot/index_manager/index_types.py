@@ -6,13 +6,13 @@
 import asyncio
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from bot.session import ChatScope
 
-from .metadata_store import MemeEntry
-from .types import CollectionSelection, MemeCollection, MemePublicId
+from bot.engine.metadata_store import MemeEntry
+from bot.engine.types import CollectionSelection, MemeCollection, MemePublicId
 
 
 @dataclass(slots=True)
@@ -316,16 +316,6 @@ class DuplicateTextError(RuntimeError):
 
 class CollectionSelectionExpiredError(RuntimeError):
     """交互会话保存的合集选择已失效。"""
-
-
-class OcrProvider(Protocol):
-    """OCR 服务提供者协议。ocr() 返回去除所有空白后的文本。"""
-
-    async def ocr(self, image_path: str) -> str: ...
-
-    async def close(self) -> None:
-        """关闭 provider 占用的资源。"""
-        ...
 
 
 @dataclass(frozen=True, slots=True)

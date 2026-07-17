@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from bot.engine.rwlock import IndexRwLock
+from bot.index_manager.rwlock import IndexRwLock
 
 pytestmark = pytest.mark.asyncio
 
