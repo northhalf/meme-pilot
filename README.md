@@ -7,7 +7,7 @@
 
 <h1>MemePilot</h1>
 
-![Status](https://img.shields.io/badge/status-active-brightgreen) ![Stage](https://img.shields.io/badge/stage-beta-blue) ![Build Status](https://github.com/northhalf/meme-pilot/actions/workflows/ci.yml/badge.svg) ![Release](https://img.shields.io/github/v/release/northhalf/meme-pilot) ![Docker Pulls](https://img.shields.io/docker/pulls/northhalf/meme-pilot) ![License](https://img.shields.io/badge/license-MIT-blue)
+![Status](https://img.shields.io/badge/status-active-brightgreen) ![Stage](https://img.shields.io/badge/stage-beta-blue) ![Build Status](https://github.com/northhalf/meme-pilot/actions/workflows/ci.yml/badge.svg) ![Docker Pulls](https://img.shields.io/docker/pulls/northhalf/meme-pilot) ![License](https://img.shields.io/badge/license-MIT-blue)
 
 <h5>一个部署在 Docker 中的 QQ 表情包机器人，帮你从本地表情包库中快速找到想要的表情包。</h5>
 
