@@ -103,7 +103,7 @@ class TestOcr:
         service._client.chat.completions.create = AsyncMock(return_value=mock_response)
 
         result = await service.ocr(str(img))
-        assert result == "不可惊扰先生真乃奇人也"
+        assert result == "不可惊扰,先生真乃奇人也"
 
     @pytest.mark.asyncio
     async def test_ocr_without_ref_tags(self, tmp_path) -> None:
@@ -172,7 +172,7 @@ class TestOcr:
 
     @pytest.mark.asyncio
     async def test_ocr_strips_all_whitespace(self, tmp_path) -> None:
-        """OCR 返回去除所有空白字符。"""
+        """OCR 返回按英文逗号拼接的文本。"""
         img = tmp_path / "test.png"
         img.write_text("fake-png-data")
 
@@ -187,7 +187,7 @@ class TestOcr:
         service._client.chat.completions.create = AsyncMock(return_value=mock_response)
 
         result = await service.ocr(str(img))
-        assert result == "加班心累"
+        assert result == "加,班,心,累"
 
 
 class TestOcrRetry:

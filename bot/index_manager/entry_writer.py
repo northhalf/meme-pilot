@@ -68,7 +68,7 @@ class EntryWriter:
 
         Args:
             filename: memes/ 下的文件名。
-            text: OCR 去除所有空白后的文本（空串表示无文字）。
+            text: OCR 按空白分割后以英文逗号拼接的文本（空串表示无文字）。
             embedding: 与 text 对应的 embedding 向量（list 或 tuple 均可）。
             speaker: 可选说话人。
             tags: 可选标签序列（list 或 tuple 均可）。

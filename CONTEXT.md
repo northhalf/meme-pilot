@@ -10,8 +10,8 @@
 | **表情包** | 存储在本地的图片文件（.jpg/.jpeg/.png/.gif/.webp/.bmp），带有搞笑/吐槽含义 |
 | **索引** | 从表情包图片中 OCR 提取的文字和图片路径信息，存储在 sqlite `data/index.db` 中（`meme` 表 + `meme_tag` 关联表），向量存储在 ChromaDB `data/chroma/` 中 |
 | **测试目录** | 仓库根目录 `tests/`；按 `unit/`、`integration/`、`fixtures/` 分层，当前只规划目录结构，不代表已经引入测试框架或固定测试命令 |
-| **按文件名同步的增量刷新** | 启动和 `/refresh` 时使用的 v1.0 同步策略：阶段0 跨库一致性修复（对齐 sqlite ↔ chroma 的 id 集合，chroma 损坏/为空且 sqlite 有数据时全量重 embed `rebuild_all`）；阶段1 删除 `memes/` 已不存在图片的记录；阶段2 新增图片先执行图片压缩/转换（`CONVERT_TO_WEBP` 开启时转 WebP，关闭时同格式无损压缩），再追加索引记录；文件名仍存在的图片不重新 OCR，不检测同名覆盖；删除记录后保持其他已有 id 稳定，允许临时编号空洞；新增图片按文件名升序处理，并优先复用最小空洞 id；新增图片 OCR 后按「去除所有空白字符的去重键」去重，与已有条目或其他新图同键时保留已有/靠前者、将重复新图归档到 `memes_replaced/`；OCR 无文字的新图移至 `meme_no_text/` 不进索引 |
-| **关键词搜索** | 功能一：用户输入关键词，先用「原始输入去所有空白、保留助词」的关键词对索引中的 OCR 文本做精确子串匹配，命中则只返回包含该子串的全部表情包（多结果每页 10 条分页）；未命中时回退到 jieba.posseg 分词过滤助词后的关键词，用 pylcs LCS 模糊匹配（阈值统一 >= 60），按分数降序返回全量匹配（多结果每页 10 条分页）；模糊回退阶段如果存在分数为 100 的结果，只返回分数为 100 的结果；不匹配文件名 |
+| **按文件名同步的增量刷新** | 启动和 `/refresh` 时使用的 v1.0 同步策略：阶段0 跨库一致性修复（对齐 sqlite ↔ chroma 的 id 集合，chroma 损坏/为空且 sqlite 有数据时全量重 embed `rebuild_all`）；阶段1 删除 `memes/` 已不存在图片的记录；阶段2 新增图片先执行图片压缩/转换（`CONVERT_TO_WEBP` 开启时转 WebP，关闭时同格式无损压缩），再追加索引记录；文件名仍存在的图片不重新 OCR，不检测同名覆盖；删除记录后保持其他已有 id 稳定，允许临时编号空洞；新增图片按文件名升序处理，并优先复用最小空洞 id；新增图片 OCR 后按「按英文逗号拼接的去重键」去重，与已有条目或其他新图同键时保留已有/靠前者、将重复新图归档到 `memes_replaced/`；OCR 无文字的新图移至 `meme_no_text/` 不进索引 |
+| **关键词搜索** | 功能一：用户输入关键词，先用「原始输入去所有空白、保留助词」的关键词对索引中的 OCR 文本（按英文逗号拼接存储，匹配时忽略逗号分隔符）做精确子串匹配，命中则只返回包含该子串的全部表情包（多结果每页 10 条分页）；未命中时回退到 jieba.posseg 分词过滤助词后的关键词，用 pylcs LCS 模糊匹配（阈值统一 >= 60），按分数降序返回全量匹配（多结果每页 10 条分页）；模糊回退阶段如果存在分数为 100 的结果，只返回分数为 100 的结果；不匹配文件名 |
 | **随机选择** | `/rand [关键词]` 命令的行为：有关键词时在关键词搜索结果中随机取 10 个，无关键词时全库随机；回复 `0` 换一批，每次独立抽样 |
 | **语义选择** | `/sim <描述文本>` 命令的行为：基于 embedding 语义搜索全库召回候选供用户选择（多结果每页 10 条分页） |
 | **创建合集** | `/collection create <名称>` 的行为：授权用户仅限私聊直接创建；名称去首尾空白但禁止内部空白、路径字符、隐藏名与保留名；命令通过 IndexManager Write Worker 在写锁内创建或登记 `memes/` 一级普通目录，并写入 `meme_collection`；创建成功后不自动切换，已有目录图片需 `/refresh` 入库。 |
@@ -23,8 +23,8 @@
 | **授权用户列表** | 环境变量 `AUTHORIZED_USER_IDS` 声明的 QQ 号白名单，多个 QQ 号用英文逗号分隔，例如 `123456,987654` |
 | **非授权用户** | 不在 `AUTHORIZED_USER_IDS` 中的 QQ 用户；v1.0 中其私聊消息会被静默忽略，只记录日志，不回复提示 |
 | **群聊消息** | `/query`、`/rand`、`/sim`、`/help`、`/info`、`/switch`、普通文本（组 B）可通过群聊中 @bot 的方式触发；`/collection`、`/add`、`/addtag`、`/del`、`/edittext`、`/setspeaker`、`/refresh`、`/move`（组 A）群聊中 @bot 调用时回复"此命令仅限私聊使用"。`/cancel`（组 C）私聊和群聊均可用；非授权用户在群聊中 @bot 发送任何消息时静默忽略。 |
-| **去重键** | OCR 文本去除所有空白字符（含半角/全角空格、制表符、换行）后的纯文本；用于在 `/add` 和 `sync_with_filesystem` 新增阶段判定「是否完全相同的图片」，通过 `MetadataStore.get_id_by_text` 查询，实时计算不落盘；DB 层 `text` UNIQUE 约束兜底，冲突抛 `DuplicateEntryError` |
-| **无文字目录** | `memes/` 同级的 `meme_no_text/` 目录；OCR 去除所有空白后为空的图片在此场景下不进入索引，被移动到该目录并由日志 warning 提示，本项目不处理该类表情包 |
+| **去重键** | OCR 文本按空白分割后以英文逗号拼接的文本（空白含半角/全角空格、制表符、换行）；用于在 `/add` 和 `sync_with_filesystem` 新增阶段判定「是否完全相同的图片」，通过 `MetadataStore.get_id_by_text` 查询，实时计算不落盘；DB 层 `text` UNIQUE 约束兜底，冲突抛 `DuplicateEntryError` |
+| **无文字目录** | `memes/` 同级的 `meme_no_text/` 目录；OCR 按英文逗号拼接后为空的图片在此场景下不进入索引，被移动到该目录并由日志 warning 提示，本项目不处理该类表情包 |
 | **删除备份目录** | `memes/` 同级的 `memes_deleted/` 目录；被 `/del` 命令删除的表情包图片会移动到该目录备份，可手动恢复 |
 | **替换归档目录** | `memes/` 同级的 `memes_replaced/` 目录；`/add` 去重替换旧图或 `/refresh` 去重归档重复新图时，被替换的图片文件会被移动到此目录，保留原文件名（冲突时追加 `_n` 序号），可手动恢复 |
 | **迁移备份目录** | `memes/` 同级的 `memes_migrated_backup/` 目录；运行 `scripts/convert_memes_to_webp.py` 迁移脚本将存量图片批量转 WebP 时，原文件会移动到此目录备份，默认在 `memes` 同级创建，可通过 `--backup-dir` 自定义 |
@@ -46,8 +46,8 @@
 |------|------|
 | **NapCatQQ** | QQ 协议端，基于 NTQQ 的 OneBot v11 实现，负责收发 QQ 消息 |
 | **NoneBot2** | Python 异步聊天机器人框架，负责业务逻辑 |
-| **OpenAI 兼容 OCR** | `OCR_PROVIDER=deepseek` 时使用的 OpenAI 兼容视觉 OCR 服务；原模块 `bot/engine/deepseek_ocr.py` 已重命名为 `openai_ocr.py`，实现 `index_manager.OcrProvider` 协议，返回去除所有空白后的文本；示例模型为 `deepseek-ai/DeepSeek-OCR` |
-| **index.db** | 业务索引数据库，sqlite3 格式，存于 `data/index.db`；`meme` 表保存每个 id 对应的 `image_path`、OCR `text`（去空白后）、`speaker`，`meme_tag` 关联表保存多值标记词；`UNIQUE INDEX` 加在 `image_path` 与 `text` 上，`PRAGMA foreign_keys = ON` |
+| **OpenAI 兼容 OCR** | `OCR_PROVIDER=deepseek` 时使用的 OpenAI 兼容视觉 OCR 服务；原模块 `bot/engine/deepseek_ocr.py` 已重命名为 `openai_ocr.py`，实现 `index_manager.OcrProvider` 协议，返回按空白分割后以英文逗号拼接的文本；示例模型为 `deepseek-ai/DeepSeek-OCR` |
+| **index.db** | 业务索引数据库，sqlite3 格式，存于 `data/index.db`；`meme` 表保存每个 id 对应的 `image_path`、OCR `text`（按英文逗号拼接）、`speaker`，`meme_tag` 关联表保存多值标记词；`UNIQUE INDEX` 加在 `image_path` 与 `text` 上，`PRAGMA foreign_keys = ON` |
 | **原子索引更新** | 更新 sqlite 与 chroma 时统一「先 sqlite 后 chroma」写入顺序，`VectorStore.upsert` 失败时回滚 sqlite 写入，保证两库一致；失败时保留旧索引 |
 | **chroma 向量库** | 服务 `/sim`、Embedding 索引和新增图片向量化的向量存储，位于 `data/chroma/`；使用 ChromaDB `PersistentClient`，collection 默认 `memes`，HNSW `cosine` 距离；每条向量保存与 sqlite `meme.id` 一一对应的字符串 `id`、1024 维 `embedding` 和 `collection_id` 元数据；`similarity = 1 - distance`；首次建索引和 `/refresh` 时由 `VectorStore` 维护，sync 阶段0负责跨库一致性修复 |
 | **pylcs** | C++ 实现的最长公共子序列/子串算法库，用于关键词的非精确匹配 |
@@ -60,7 +60,7 @@
 | **OpenAI 兼容 Embedding** | OpenAI 兼容 Embedding API 提供商；当 `EMBEDDING_PROVIDER=openai`（默认）时可用于生成用户描述和索引文本的向量；`.env.example` 示例默认使用 GLM，模型为 `embedding-3` |
 | **依赖协议（Protocol）** | engine 模块用 `typing.Protocol` 解耦依赖的约定：消费者按自身需要定义**最小接口**协议（接口隔离），不依赖具体 Store 实现，便于测试用 mock 替换。**放置规则**：只被一个模块使用的 Protocol 定义在该模块内，多模块共用的放 `bot/engine/protocols.py`；多模块共用的数据类型放 `bot/engine/types.py`（如 `SearchResult`）。现有协议包括 `protocols.py.EmbeddingProvider`、`index_manager.OcrProvider`、`MetadataStoreProvider`、`MetadataStoreProtocol`、`VectorStoreProtocol`、`ImageOptimizerProtocol` 等；生产代码 `bot.py` 传入真实 `MetadataStore`、`VectorStore`、`ImageOptimizer` 和 provider 实例，结构子类型天然满足协议。 |
 | **Provider 工厂** | `bot/engine/provider_factory.py` 维护的 OCR 与 Embedding provider 注册表，提供 `register_ocr()` / `register_embedding()` 注册函数、`create_ocr_provider()` / `create_embedding_provider()` 工厂函数，以及 `ProviderNotAvailableError`；`bot/engine/__init__.py` 在导入时自动注册所有可用 provider，依赖缺失的 provider 会被标记为不可用 |
-| **RapidOCR** | 本地 ONNX OCR 引擎；`OCR_PROVIDER=rapidocr` 时由 `bot/engine/rapidocr_ocr.py` 调用，无需联网即可从图片中提取文字，返回去除所有空白后的文本；与 PaddleOCR 共用 `OCR_TEXT_SCORE` 置信度阈值 |
+| **RapidOCR** | 本地 ONNX OCR 引擎；`OCR_PROVIDER=rapidocr` 时由 `bot/engine/rapidocr_ocr.py` 调用，无需联网即可从图片中提取文字，返回按空白分割后以英文逗号拼接的文本；与 PaddleOCR 共用 `OCR_TEXT_SCORE` 置信度阈值 |
 | **Google Embedding** | `EMBEDDING_PROVIDER=google` 时使用的文本向量服务，基于 `google-genai` SDK 调用 Google GenAI API，固定输出 1024 维向量，示例默认模型 `gemini-embedding-001`，由 `bot/engine/google_embedding.py` 实现 `protocols.EmbeddingProvider` |
 | **psutil** | 系统资源监控库；`/info` 命令通过它读取本机内存、CPU 占用以及当前进程 RSS，纯本地调用，不依赖网络 |
 | **OCR_TEXT_SCORE** | OCR 文本置信度阈值，环境变量，默认 `0.9`；PaddleOCR 与 RapidOCR 共用此阈值过滤低置信度识别结果 |

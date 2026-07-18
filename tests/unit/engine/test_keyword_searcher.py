@@ -225,6 +225,21 @@ class TestSearchExactSubstringLayer:
         assert {r.entry_id for r in results} == {1}
         assert all(r.similarity == 100.0 for r in results)
 
+    def test_comma_delimited_ocr_text_matches_stripped_keyword(self):
+        # OCR 文本按英文逗号拼接存储，匹配时忽略逗号分隔符；
+        # 去空白关键词仍能命中跨原空白边界的子串（与旧版去空白存储行为一致）
+        entries = {1: MemeEntry(id=1, image_path="a.jpg", text="加,班,心,累")}
+        s = KeywordSearcher(MockMetadataStore(entries))
+        # raw="加班" 在去除逗号后的 "加班心累" 中命中
+        results = s.search("加班")
+        assert len(results) == 1
+        assert results[0].entry_id == 1
+        assert results[0].similarity == 100.0
+        # 跨原 token 边界的子串也应命中
+        results_span = s.search("班心")
+        assert len(results_span) == 1
+        assert results_span[0].similarity == 100.0
+
 
 class TestSearchFuzzy:
     def test_partial_overlap(self, searcher: KeywordSearcher) -> None:

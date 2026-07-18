@@ -1,6 +1,6 @@
 """关键词模糊搜索模块。
 
-对 MetadataStore 中的 OCR 文本（已去除所有空白）使用 LCS（最长公共子序列）进行匹配。
+对 MetadataStore 中的 OCR 文本（按英文逗号拼接存储）使用 LCS（最长公共子序列）进行匹配，匹配时去除逗号分隔符。
 """
 
 import logging
@@ -48,10 +48,25 @@ def _strip_all_whitespace(text: str) -> str:
     return "".join(text.split())
 
 
+def _strip_ocr_delimiter(text: str) -> str:
+    """去除 OCR 文本中的英文逗号分隔符，用于关键词匹配。
+
+    OCR 文本按英文逗号拼接存储（见 image_pipeline），匹配时需还原为无分隔符
+    的纯文本，使去空白关键词的子串/LCS 命中行为与旧版去空白存储一致。
+
+    Args:
+        text: OCR 文本（英文逗号分隔）。
+
+    Returns:
+        去除英文逗号后的字符串。
+    """
+    return text.replace(",", "")
+
+
 class KeywordSearcher:
     """关键词模糊搜索引擎。
 
-    使用 LCS 对 OCR 文本进行匹配：
+    使用 LCS 对 OCR 文本进行匹配（OCR 文本按英文逗号拼接存储，匹配时忽略逗号分隔符）：
     - 关键词是 OCR 文本的子串时，相似度为 100（精确命中）。
     - 否则按 LCS 长度与关键词长度的比值计算相似度。
 
@@ -99,7 +114,7 @@ class KeywordSearcher:
 
         Args:
             keyword: 搜索关键词（已去助词去空格）。
-            text: OCR 文本（无空格）。
+            text: 去除英文逗号分隔符后的 OCR 文本。
 
         Returns:
             相似度分数，0-100。
@@ -114,8 +129,8 @@ class KeywordSearcher:
     ) -> list[SearchResult]:
         """第一层：精确子串匹配。
 
-        用「原始输入去所有空白、保留助词」的关键词对 OCR 文本做子串判定，
-        命中条目 similarity=100.0。
+        用「原始输入去所有空白、保留助词」的关键词对 OCR 文本（去除英文逗号
+        分隔符后）做子串判定，命中条目 similarity=100.0。
 
         Args:
             entries: 全部索引条目，key=int(id)。
@@ -127,7 +142,7 @@ class KeywordSearcher:
         return [
             SearchResult.from_entry(entry, 100.0)
             for entry in entries.values()
-            if entry.text and raw in entry.text
+            if entry.text and raw in _strip_ocr_delimiter(entry.text)
         ]
 
     def _search_fuzzy_lcs(
@@ -137,8 +152,8 @@ class KeywordSearcher:
     ) -> list[SearchResult]:
         """第二层：LCS 模糊回退。
 
-        用「去助词+去空白」的关键词走现有 LCS 模糊匹配，阈值过滤 + 降序排序
-        +「存在 100 分只保留 100 分」规则。
+        用「去助词+去空白」的关键词对 OCR 文本（去除英文逗号分隔符后）走 LCS
+        模糊匹配，阈值过滤 + 降序排序 +「存在 100 分只保留 100 分」规则。
 
         Args:
             entries: 全部索引条目，key=int(id)。
@@ -149,7 +164,7 @@ class KeywordSearcher:
         """
         results: list[SearchResult] = []
         for entry in entries.values():
-            text = entry.text
+            text = _strip_ocr_delimiter(entry.text)
             if not text:
                 continue
             score = self._compute_similarity(cleaned, text)

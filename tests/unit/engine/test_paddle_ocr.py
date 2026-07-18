@@ -169,7 +169,7 @@ class TestOcr:
         service._client = mock_client
 
         result = await service.ocr("/path/to/image.png")
-        assert result == "酒你是想收买我"
+        assert result == "酒,你是想收买我"
 
     @pytest.mark.asyncio
     async def test_pruned_result_dict_with_rec_texts_filters_low_score(self) -> None:
@@ -191,7 +191,7 @@ class TestOcr:
 
         result = await service.ocr("/path/to/image.png")
         # "模糊不清" 得分 0.85 < 0.9 应被过滤
-        assert result == "皇叔入住的话能使我东吴人丁兴旺"
+        assert result == "皇叔入住的话,能使我东吴人丁兴旺"
 
     @pytest.mark.asyncio
     async def test_rec_texts_without_scores_all_included(self) -> None:
@@ -209,7 +209,7 @@ class TestOcr:
         service._client = mock_client
 
         result = await service.ocr("/path/to/image.png")
-        assert result == "第一行第二行"
+        assert result == "第一行,第二行"
 
     @pytest.mark.asyncio
     async def test_all_texts_below_threshold_returns_empty(self) -> None:
@@ -259,7 +259,7 @@ class TestOcr:
 
     @pytest.mark.asyncio
     async def test_ocr_strips_all_whitespace(self) -> None:
-        """OCR 返回去除所有空白字符。"""
+        """OCR 返回按英文逗号拼接的文本。"""
         mock_client = MagicMock()
         mock_ocr_result = MagicMock()
         mock_page = MagicMock()
@@ -274,7 +274,7 @@ class TestOcr:
         service._client = mock_client
 
         result = await service.ocr("/path/to/image.png")
-        assert result == "加班心累"
+        assert result == "加,班,心,累"
 
 
 class TestPaddleOcrSemaphore:

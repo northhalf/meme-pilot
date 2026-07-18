@@ -194,7 +194,7 @@ class PaddleOcrClientService:
             image_path: 图片文件路径。
 
         Returns:
-            识别到的文本字符串（已去除所有空白字符，可能为空字符串）。
+            识别到的文本字符串（按空白分割后以英文逗号连接，可能为空字符串）。
 
         Raises:
             PaddleOCRAPIError: 不可重试的 API 错误（如鉴权失败、参数非法），
@@ -227,7 +227,7 @@ class PaddleOcrClientService:
                 if text:
                     texts.append(text)
 
-            full_text = "".join(" ".join(texts).split())
+            full_text = ",".join(" ".join(texts).split())
             logger.debug("PaddleOCR 完成: %s → %s", image_path, full_text)
             return full_text
 

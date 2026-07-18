@@ -108,7 +108,7 @@ async def handle_edit(
 
             entry_id = entry.id
             public_id = entry.public_id
-            new_text = "".join(parts[1].split())  # 统一去空白
+            new_text = ",".join(parts[1].split())  # 按空白分割后以英文逗号拼接
             if not new_text:
                 session_manager.deactivate_chat(scope)
                 await reply_utils.finish(event, matcher, "新文本不能为空")

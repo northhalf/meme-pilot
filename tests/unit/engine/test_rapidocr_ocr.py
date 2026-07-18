@@ -9,7 +9,7 @@ from bot.engine.rapidocr_ocr import RapidOcrService, create_rapidocr_service
 
 @pytest.mark.asyncio
 async def test_ocr_returns_cleaned_text() -> None:
-    """ocr 应返回去除空白后的文本。"""
+    """ocr 应返回按英文逗号拼接的文本。"""
     service = RapidOcrService(text_score=0.9)
     fake_result = MagicMock()
     fake_result.txts = ("hello  world", "第二行")
@@ -20,7 +20,7 @@ async def test_ocr_returns_cleaned_text() -> None:
         patch("asyncio.to_thread", return_value=fake_result) as mock_to_thread,
     ):
         text = await service.ocr("/tmp/fake.png")
-        assert text == "helloworld第二行"
+        assert text == "hello,world,第二行"
         mock_to_thread.assert_awaited_once()
         # 直接把引擎交给 to_thread，由标准库传播 contextvars
         args, kwargs = mock_to_thread.call_args

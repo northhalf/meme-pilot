@@ -77,13 +77,13 @@ class RapidOcrService:
         """对图片执行 OCR 识别。
 
         调用 RapidOCR 本地引擎，默认启用检测+识别，关闭方向分类。
-        识别结果按行置信度过滤后拼接，并去除所有空白字符。
+        识别结果按行置信度过滤后，按空白分割以英文逗号拼接。
 
         Args:
             image_path: 图片文件路径。
 
         Returns:
-            识别到的文本字符串（已去除所有空白字符，可能为空字符串）。
+            识别到的文本字符串（按空白分割后以英文逗号连接，可能为空字符串）。
 
         Raises:
             FileNotFoundError: 图片文件不存在。
@@ -129,7 +129,7 @@ class RapidOcrService:
                         continue
                 lines.append(str(text))
 
-            full_text = "".join(" ".join(lines).split())
+            full_text = ",".join(" ".join(lines).split())
             logger.debug("RapidOCR 完成: %s -> %s", image_path, full_text)
             return full_text
 

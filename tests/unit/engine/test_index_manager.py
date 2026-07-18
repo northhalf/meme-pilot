@@ -575,6 +575,29 @@ async def test_add_returns_add_result(index_manager: IndexManager) -> None:
 
 
 @pytest.mark.asyncio
+async def test_add_comma_joins_multi_token_ocr_text(
+    index_manager: IndexManager,
+) -> None:
+    """image_pipeline 应将 OCR 多 token 文本按英文逗号拼接入库（非去空白）。"""
+
+    class CommaOcrProvider:
+        async def ocr(self, image_path: str) -> str:
+            return "加 班\t心\n累"
+
+        async def close(self) -> None:
+            pass
+
+    index_manager._ocr_provider = CommaOcrProvider()
+    (Path(index_manager._memes_dir) / "comma.jpg").write_bytes(b"fake")
+
+    result = await index_manager.add("comma.jpg")
+    assert result.reason == "added"
+    assert result.entry_id is not None
+    # 按空白分割后以英文逗号拼接，而非旧版去除所有空白
+    assert result.text == "加,班,心,累"
+
+
+@pytest.mark.asyncio
 async def test_add_fifo_order(index_manager: IndexManager) -> None:
     for i in range(3):
         (Path(index_manager._memes_dir) / f"img{i}.jpg").write_bytes(b"fake")

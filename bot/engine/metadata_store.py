@@ -130,7 +130,7 @@ class MemeEntry:
     Attributes:
         id: 内部索引 id，与 VectorStore 向量 id 一一对应。
         image_path: memes/ 目录下相对路径。
-        text: OCR 去除所有空白后的文本。
+        text: 按英文逗号拼接的 OCR 文本。
         speaker: 说话人，可空。
         tags: 标记词元组（不可变）。
         collection_id: 所属合集编号，0 表示全局根目录。
@@ -400,7 +400,7 @@ class MetadataStore:
         """按合集和 text 查询内部 id。
 
         Args:
-            text: 去空白后的 OCR 文本。
+            text: 按英文逗号拼接的 OCR 文本。
             collection_id: 合集编号，默认全局合集。
 
         Returns:
@@ -747,7 +747,7 @@ class MetadataStore:
 
         Args:
             image_path: memes/ 下相对路径。
-            text: 去空白后的 OCR 文本。
+            text: 按英文逗号拼接的 OCR 文本。
             speaker: 说话人，可空。
             tags: 标记词列表，可空。
             collection_id: 目标合集编号，默认全局合集。
@@ -820,7 +820,7 @@ class MetadataStore:
         Args:
             entry_id: 指定的内部 id。
             image_path: memes/ 下相对路径。
-            text: 去空白后的 OCR 文本。
+            text: 按英文逗号拼接的 OCR 文本。
             speaker: 说话人，可空。
             tags: 标记词列表，可空。
             collection_id: 目标合集编号，默认全局合集。

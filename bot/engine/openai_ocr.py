@@ -121,7 +121,7 @@ class OpenAIOcrService:
             image_path: 图片文件路径。
 
         Returns:
-            识别到的文本字符串（已清洗定位标记并去除所有空白字符）。
+            识别到的文本字符串（已清洗定位标记，按空白分割后以英文逗号连接）。
 
         Raises:
             FileNotFoundError: 图片文件不存在。
@@ -171,7 +171,7 @@ class OpenAIOcrService:
                 raise RuntimeError(f"OCR API 调用失败: {exc}") from exc
 
             raw = response.choices[0].message.content or ""
-            text = "".join(_clean_ocr_result(raw).split())
+            text = ",".join(_clean_ocr_result(raw).split())
             logger.debug("OCR 完成: %s → %d 字符", path.name, len(text))
             return text
 
