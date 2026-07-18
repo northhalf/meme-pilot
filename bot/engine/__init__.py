@@ -27,6 +27,14 @@ logger = logging.getLogger(__name__)
 
 # OCR providers（导入失败时标记为不可用）
 try:
+    from .baidu_ocr import BaiduOcrService, create_baidu_ocr_service
+
+    register_ocr("baidu", create_baidu_ocr_service)
+except ImportError as exc:
+    mark_ocr_unavailable("baidu", f"baidu_ocr 模块加载失败: {exc}")
+    logger.warning("百度 OCR provider 不可用: %s", exc)
+
+try:
     from .openai_ocr import OpenAIOcrService, create_openai_ocr_service
 
     register_ocr("deepseek", create_openai_ocr_service)
@@ -98,6 +106,7 @@ __all__ = [
     "OpenAIEmbeddingService",
     "GoogleEmbeddingService",
     # ocr
+    "BaiduOcrService",
     "OpenAIOcrService",
     "PaddleOcrClientService",
     "RapidOcrService",

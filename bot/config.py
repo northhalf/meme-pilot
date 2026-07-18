@@ -65,7 +65,22 @@ def read_session_timeout() -> int:
 
 
 # 有效 OCR Provider 值
-_VALID_OCR_PROVIDERS: frozenset[str] = frozenset({"deepseek", "paddle", "rapidocr"})
+_VALID_OCR_PROVIDERS: frozenset[str] = frozenset(
+    {"baidu", "deepseek", "paddle", "rapidocr"}
+)
+
+# 有效百度 OCR 类型
+_VALID_BAIDU_OCR_TYPES: frozenset[str] = frozenset(
+    {
+        "pp_ocrv6",
+        "general_basic",
+        "general",
+        "accurate_basic",
+        "accurate",
+        "webimage",
+        "webimage_loc",
+    }
+)
 
 # 有效 Embedding Provider 值
 _VALID_EMBEDDING_PROVIDERS: frozenset[str] = frozenset({"openai", "google"})
@@ -123,10 +138,20 @@ def read_ocr_provider() -> str:
     """从环境变量读取 OCR provider 类型。
 
     Returns:
-        "rapidocr"（默认）、"paddle" 或 "deepseek"。
+        "rapidocr"（默认）、"paddle"、"deepseek" 或 "baidu"。
     """
     raw = os.environ.get("OCR_PROVIDER", "rapidocr").strip().lower()
     return raw if raw in _VALID_OCR_PROVIDERS else "rapidocr"
+
+
+def read_baidu_ocr_type() -> str:
+    """从环境变量读取百度 OCR 接口类型。
+
+    Returns:
+        百度 OCR 类型，缺失或非法时回退为 ``pp_ocrv6``。
+    """
+    raw = os.environ.get("BAIDU_OCR_TYPE", "pp_ocrv6").strip().lower()
+    return raw if raw in _VALID_BAIDU_OCR_TYPES else "pp_ocrv6"
 
 
 def read_embedding_provider() -> str:
@@ -146,7 +171,7 @@ _DEFAULT_OCR_TEXT_SCORE = 0.9
 def read_ocr_text_score() -> float:
     """从环境变量读取 OCR 文本置信度阈值。
 
-    PaddleOCR 与 RapidOCR 共用此阈值。
+    PaddleOCR、RapidOCR 与百度 OCR 共用此阈值。
 
     Returns:
         阈值浮点数，默认 0.9；解析失败或越界时回退为 0.9。
@@ -188,6 +213,7 @@ __all__ = [
     "read_read_lock_timeout",
     "read_add_command_timeout",
     "read_ocr_provider",
+    "read_baidu_ocr_type",
     "read_embedding_provider",
     "read_ocr_text_score",
     "read_convert_to_webp",

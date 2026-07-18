@@ -60,10 +60,12 @@
 | **OpenAI 兼容 Embedding** | OpenAI 兼容 Embedding API 提供商；当 `EMBEDDING_PROVIDER=openai`（默认）时可用于生成用户描述和索引文本的向量；`.env.example` 示例默认使用 GLM，模型为 `embedding-3` |
 | **依赖协议（Protocol）** | engine 模块用 `typing.Protocol` 解耦依赖的约定：消费者按自身需要定义**最小接口**协议（接口隔离），不依赖具体 Store 实现，便于测试用 mock 替换。**放置规则**：只被一个模块使用的 Protocol 定义在该模块内，多模块共用的放 `bot/engine/protocols.py`；多模块共用的数据类型放 `bot/engine/types.py`（如 `SearchResult`）。现有协议包括 `protocols.py.EmbeddingProvider`、`index_manager.OcrProvider`、`MetadataStoreProvider`、`MetadataStoreProtocol`、`VectorStoreProtocol`、`ImageOptimizerProtocol` 等；生产代码 `bot.py` 传入真实 `MetadataStore`、`VectorStore`、`ImageOptimizer` 和 provider 实例，结构子类型天然满足协议。 |
 | **Provider 工厂** | `bot/engine/provider_factory.py` 维护的 OCR 与 Embedding provider 注册表，提供 `register_ocr()` / `register_embedding()` 注册函数、`create_ocr_provider()` / `create_embedding_provider()` 工厂函数，以及 `ProviderNotAvailableError`；`bot/engine/__init__.py` 在导入时自动注册所有可用 provider，依赖缺失的 provider 会被标记为不可用 |
-| **RapidOCR** | 本地 ONNX OCR 引擎；`OCR_PROVIDER=rapidocr` 时由 `bot/engine/rapidocr_ocr.py` 调用，无需联网即可从图片中提取文字，返回按空白分割后以英文逗号拼接的文本；与 PaddleOCR 共用 `OCR_TEXT_SCORE` 置信度阈值 |
+| **百度 OCR** | `OCR_PROVIDER=baidu` 时由 `bot/engine/baidu_ocr.py` 直接调用百度智能云异步 REST API；使用 `BAIDU_API_KEY` / `BAIDU_SECRET_KEY` 获取并缓存 access token，支持 PP-OCRv6 与六种传统通用接口，统一返回按空白分割后以英文逗号拼接的文本 |
+| **PP-OCRv6** | 百度 OCR provider 的默认模式（`BAIDU_OCR_TYPE=pp_ocrv6`）；解析 `page_result[].lines` 与对应 `probability[]`，按 `OCR_TEXT_SCORE` 过滤低置信度行；其他可选模式为 `general_basic`、`general`、`accurate_basic`、`accurate`、`webimage`、`webimage_loc` |
+| **RapidOCR** | 本地 ONNX OCR 引擎；`OCR_PROVIDER=rapidocr` 时由 `bot/engine/rapidocr_ocr.py` 调用，无需联网即可从图片中提取文字，返回按空白分割后以英文逗号拼接的文本；与 PaddleOCR、百度 OCR 共用 `OCR_TEXT_SCORE` 置信度阈值 |
 | **Google Embedding** | `EMBEDDING_PROVIDER=google` 时使用的文本向量服务，基于 `google-genai` SDK 调用 Google GenAI API，固定输出 1024 维向量，示例默认模型 `gemini-embedding-001`，由 `bot/engine/google_embedding.py` 实现 `protocols.EmbeddingProvider` |
 | **psutil** | 系统资源监控库；`/info` 命令通过它读取本机内存、CPU 占用以及当前进程 RSS，纯本地调用，不依赖网络 |
-| **OCR_TEXT_SCORE** | OCR 文本置信度阈值，环境变量，默认 `0.9`；PaddleOCR 与 RapidOCR 共用此阈值过滤低置信度识别结果 |
+| **OCR_TEXT_SCORE** | OCR 文本置信度阈值，环境变量，默认 `0.9`；PaddleOCR、RapidOCR 与百度 OCR 共用此阈值过滤低置信度识别结果 |
 | **tenacity 重试** | `bot/engine/retry_config.py` 提供的统一网络请求重试装饰器 `api_retry()`；默认对 `httpx` 网络/连接/超时异常、Python 内置 `ConnectionError` / `TimeoutError` 以及调用方指定的额外异常（如 OpenAI / Google API 异常）进行最多 3 次指数退避重试，本地业务异常（如 `ValueError`、`FileNotFoundError`）不重试 |
 | **授权校验模块** | `bot/auth.py`，从 `AUTHORIZED_USER_IDS` 环境变量读取白名单，提供 `is_authorized()` / `log_unauthorized()` 供各插件统一调用 |
 | **全局路径与配置** | `bot/config.py`，通过 `Path(__file__).resolve().parent.parent` 定位项目根目录，导出 `PROJECT_ROOT`、`MEMES_DIR`、`MEMES_DELETED_DIR`、`DATA_DIR`、`INDEX_DB_PATH`、`CHROMA_DIR` 路径常量和 `read_session_timeout()`、`read_ocr_provider()`、`read_embedding_provider()`、`read_ocr_text_score()`、`read_convert_to_webp()` 等配置读取函数 |

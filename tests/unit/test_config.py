@@ -10,6 +10,7 @@ from bot.config import (
     PROJECT_ROOT,
     _parse_timeout_seconds,
     read_add_command_timeout,
+    read_baidu_ocr_type,
     read_convert_to_webp,
     read_embedding_provider,
     read_ocr_provider,
@@ -135,9 +136,43 @@ class TestReadOcrProvider:
         monkeypatch.setenv("OCR_PROVIDER", "  RAPIDOCR  ")
         assert read_ocr_provider() == "rapidocr"
 
+    def test_valid_baidu(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("OCR_PROVIDER", "baidu")
+        assert read_ocr_provider() == "baidu"
+
     def test_invalid_returns_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("OCR_PROVIDER", "tesseract")
         assert read_ocr_provider() == "rapidocr"
+
+
+class TestReadBaiduOcrType:
+    @pytest.mark.parametrize(
+        "ocr_type",
+        (
+            "pp_ocrv6",
+            "general_basic",
+            "general",
+            "accurate_basic",
+            "accurate",
+            "webimage",
+            "webimage_loc",
+        ),
+    )
+    def test_valid_type(self, monkeypatch: pytest.MonkeyPatch, ocr_type: str) -> None:
+        monkeypatch.setenv("BAIDU_OCR_TYPE", ocr_type)
+        assert read_baidu_ocr_type() == ocr_type
+
+    def test_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("BAIDU_OCR_TYPE", raising=False)
+        assert read_baidu_ocr_type() == "pp_ocrv6"
+
+    def test_invalid_returns_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("BAIDU_OCR_TYPE", "unknown")
+        assert read_baidu_ocr_type() == "pp_ocrv6"
+
+    def test_case_insensitive(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("BAIDU_OCR_TYPE", "  WEBIMAGE  ")
+        assert read_baidu_ocr_type() == "webimage"
 
 
 class TestReadEmbeddingProvider:
