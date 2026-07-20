@@ -584,7 +584,7 @@ async def test_add_comma_joins_multi_token_ocr_text(
         async def close(self) -> None:
             pass
 
-    index_manager._ocr_provider = CommaOcrProvider()
+    index_manager._image_pipeline._ocr_provider = CommaOcrProvider()
     (Path(index_manager._memes_dir) / "comma.jpg").write_bytes(b"fake")
 
     result = await index_manager.add("comma.jpg")
@@ -613,7 +613,7 @@ async def test_add_fifo_order(index_manager: IndexManager) -> None:
 @pytest.mark.asyncio
 async def test_refresh_rejects_pending_add(index_manager: IndexManager) -> None:
     # 通过 monkeypatch _process_image_pipeline 使其挂住，模拟管道阻塞
-    original = index_manager._process_image_pipeline
+    original = index_manager._image_pipeline.process
     started = asyncio.Event()
 
     async def slow_pipeline(filename: str) -> tuple[str, str, list[float]]:
@@ -621,7 +621,7 @@ async def test_refresh_rejects_pending_add(index_manager: IndexManager) -> None:
         await asyncio.sleep(10)
         return await original(filename)
 
-    index_manager._process_image_pipeline = slow_pipeline  # ty: ignore[invalid-assignment]
+    index_manager._image_pipeline.process = slow_pipeline  # ty: ignore[invalid-assignment]
 
     (Path(index_manager._memes_dir) / "hold.jpg").write_bytes(b"fake")
     add_task = asyncio.create_task(index_manager.add("hold.jpg"))
@@ -698,14 +698,14 @@ async def test_search_holds_read_lock(index_manager: IndexManager) -> None:
 async def test_close_cancels_pending_add(index_manager: IndexManager) -> None:
     entered = asyncio.Event()
 
-    original = index_manager._process_image_pipeline
+    original = index_manager._image_pipeline.process
 
     async def slow_pipeline(filename: str) -> tuple[str, str, list[float]]:
         entered.set()
         await asyncio.sleep(10)
         return await original(filename)
 
-    index_manager._process_image_pipeline = slow_pipeline  # ty: ignore[invalid-assignment]
+    index_manager._image_pipeline.process = slow_pipeline  # ty: ignore[invalid-assignment]
 
     (Path(index_manager._memes_dir) / "pending.jpg").write_bytes(b"fake")
     task = asyncio.create_task(index_manager.add("pending.jpg"))
@@ -737,11 +737,11 @@ async def test_process_image_pipeline_empty_text(
         async def close(self) -> None:
             pass
 
-    index_manager._ocr_provider = EmptyOcrProvider()
-    index_manager._embedding_provider = SpyEmbeddingProvider()
+    index_manager._image_pipeline._ocr_provider = EmptyOcrProvider()
+    index_manager._image_pipeline._embedding_provider = SpyEmbeddingProvider()
     (Path(index_manager._memes_dir) / "blank.jpg").write_bytes(b"fake")
 
-    final_filename, text, embedding = await index_manager._process_image_pipeline(
+    final_filename, text, embedding = await index_manager._image_pipeline.process(
         "blank.jpg"
     )
     assert final_filename == "blank.jpg"
@@ -770,14 +770,14 @@ async def test_close_cancels_running_refresh(
     await entered.wait()
 
     # F7: refresh 运行中应已记录自身 task，供 close() 取消
-    assert index_manager._refresh_task is task
+    assert index_manager._sync_engine._refresh_task is task
 
     await index_manager.close()
 
     with pytest.raises(asyncio.CancelledError):
         await task
     # finally 应清理 _refresh_task
-    assert index_manager._refresh_task is None
+    assert index_manager._sync_engine._refresh_task is None
 
 
 # ---------------------------------------------------------------------------
@@ -803,7 +803,9 @@ class TestAdd:
 
         outside = Path(index_manager._memes_dir).parent / "outside.jpg"
         outside.write_bytes(b"outside")
-        index_manager._optimizer = cast(ImageOptimizer, FailIfCalledOptimizer())
+        index_manager._image_pipeline._optimizer = cast(
+            ImageOptimizer, FailIfCalledOptimizer()
+        )
 
         with pytest.raises(ValueError, match="relative_path"):
             await index_manager.add(relative_path, collection_id=99)
@@ -872,7 +874,7 @@ class TestAdd:
                 pass
 
         # 让两次 add 的 OCR 文本相同，触发去重替换
-        index_manager._ocr_provider = ConstantOcrProvider()
+        index_manager._image_pipeline._ocr_provider = ConstantOcrProvider()
         (Path(index_manager._memes_dir) / "old.jpg").write_bytes(b"fake")
         (Path(index_manager._memes_dir) / "new.jpg").write_bytes(b"fake")
         await index_manager.add("old.jpg", speaker="旧说话人", tags=["旧标签"])
@@ -903,7 +905,7 @@ class TestAdd:
             async def close(self) -> None:
                 pass
 
-        index_manager._ocr_provider = ConstantOcrProvider()
+        index_manager._image_pipeline._ocr_provider = ConstantOcrProvider()
         replaced_dir = Path(index_manager._replaced_dir)
 
         (Path(index_manager._memes_dir) / "old.jpg").write_bytes(b"1")
@@ -936,7 +938,7 @@ class TestAdd:
             async def close(self) -> None:
                 pass
 
-        index_manager._ocr_provider = ConstantOcrProvider()
+        index_manager._image_pipeline._ocr_provider = ConstantOcrProvider()
         (Path(index_manager._memes_dir) / "old.jpg").write_bytes(b"fake")
         (Path(index_manager._memes_dir) / "new.jpg").write_bytes(b"fake")
 
@@ -975,7 +977,7 @@ class TestAdd:
             async def close(self) -> None:
                 pass
 
-        index_manager._ocr_provider = ConstantOcrProvider()
+        index_manager._image_pipeline._ocr_provider = ConstantOcrProvider()
         memes_dir = Path(index_manager._memes_dir)
         old_path = memes_dir / "old.jpg"
         new_path = memes_dir / "new.jpg"
@@ -985,7 +987,9 @@ class TestAdd:
         vector_store = cast(FakeVectorStore, index_manager._vector_store)
         old_vector = list(vector_store._vecs[first.entry_id])
         new_path.write_bytes(b"new")
-        index_manager._embedding_provider = FakeEmbeddingProvider([9.0] * 1024)
+        index_manager._image_pipeline._embedding_provider = FakeEmbeddingProvider(
+            [9.0] * 1024
+        )
 
         def fail_archive(filename: str) -> str:
             raise OSError("archive failed")
@@ -1015,7 +1019,7 @@ class TestAdd:
             async def close(self) -> None:
                 pass
 
-        index_manager._ocr_provider = ConstantOcrProvider()
+        index_manager._image_pipeline._ocr_provider = ConstantOcrProvider()
         memes_dir = Path(index_manager._memes_dir)
         (memes_dir / "old.jpg").write_bytes(b"old")
         first = await index_manager.add("old.jpg")
@@ -1023,7 +1027,9 @@ class TestAdd:
         vector_store = cast(FakeVectorStore, index_manager._vector_store)
         old_vector = list(vector_store._vecs[first.entry_id])
         (memes_dir / "new.jpg").write_bytes(b"new")
-        index_manager._embedding_provider = FakeEmbeddingProvider([9.0] * 1024)
+        index_manager._image_pipeline._embedding_provider = FakeEmbeddingProvider(
+            [9.0] * 1024
+        )
         vector_store.upsert_write_then_error_for = {first.entry_id}
 
         with pytest.raises(EmbeddingError):
@@ -1089,7 +1095,7 @@ class TestAdd:
             async def close(self) -> None:
                 pass
 
-        index_manager._ocr_provider = ConstantOcrProvider()
+        index_manager._image_pipeline._ocr_provider = ConstantOcrProvider()
         first = index_manager._metadata_store.create_collection("新三国")
         second = index_manager._metadata_store.create_collection("甄嬛传")
         for collection, filename in ((first, "a.webp"), (second, "b.webp")):
@@ -1119,7 +1125,7 @@ class TestAdd:
             async def close(self) -> None:
                 pass
 
-        index_manager._ocr_provider = ConstantOcrProvider()
+        index_manager._image_pipeline._ocr_provider = ConstantOcrProvider()
         collection = index_manager._metadata_store.create_collection("新三国")
         directory = Path(index_manager._memes_dir) / collection.name
         directory.mkdir()
@@ -1161,8 +1167,10 @@ class TestAdd:
             async def close(self) -> None:
                 pass
 
-        index_manager._optimizer = cast(ImageOptimizer, ConvertingOptimizer())
-        index_manager._ocr_provider = BlockingOcrProvider()
+        index_manager._image_pipeline._optimizer = cast(
+            ImageOptimizer, ConvertingOptimizer()
+        )
+        index_manager._image_pipeline._ocr_provider = BlockingOcrProvider()
         collection = index_manager._metadata_store.create_collection("新三国")
         directory = Path(index_manager._memes_dir) / collection.name
         directory.mkdir()
@@ -1212,13 +1220,13 @@ class TestAdd:
                 return OptimizeResult(4, 4, 0, output_path=image_path)
 
         optimizer = BlockingOptimizer()
-        index_manager._optimizer = cast(ImageOptimizer, optimizer)
+        index_manager._image_pipeline._optimizer = cast(ImageOptimizer, optimizer)
         memes_dir = Path(index_manager._memes_dir)
         (memes_dir / "same.jpg").write_bytes(b"first")
-        first = asyncio.create_task(index_manager._process_image_pipeline("same.jpg"))
+        first = asyncio.create_task(index_manager._image_pipeline.process("same.jpg"))
         await first_entered.wait()
         (memes_dir / "same.png").write_bytes(b"second")
-        second = asyncio.create_task(index_manager._process_image_pipeline("same.png"))
+        second = asyncio.create_task(index_manager._image_pipeline.process("same.png"))
         await asyncio.sleep(0.05)
 
         assert optimizer.calls == 1
@@ -1235,9 +1243,9 @@ class TestAdd:
         for index in range(50):
             filename = f"unique-{index}.jpg"
             (memes_dir / filename).write_bytes(b"image")
-            await index_manager._process_image_pipeline(filename)
+            await index_manager._image_pipeline.process(filename)
 
-        assert index_manager._optimizer_target_locks == {}
+        assert index_manager._image_pipeline._optimizer_target_locks == {}
 
     @pytest.mark.asyncio
     async def test_optimizer_lock_registry_cleans_cancelled_waiter(
@@ -1253,13 +1261,15 @@ class TestAdd:
                 await release_first.wait()
                 return OptimizeResult(4, 4, 0, output_path=image_path)
 
-        index_manager._optimizer = cast(ImageOptimizer, BlockingOptimizer())
+        index_manager._image_pipeline._optimizer = cast(
+            ImageOptimizer, BlockingOptimizer()
+        )
         memes_dir = Path(index_manager._memes_dir)
         (memes_dir / "wait.jpg").write_bytes(b"first")
         (memes_dir / "wait.png").write_bytes(b"second")
-        first = asyncio.create_task(index_manager._process_image_pipeline("wait.jpg"))
+        first = asyncio.create_task(index_manager._image_pipeline.process("wait.jpg"))
         await first_entered.wait()
-        waiter = asyncio.create_task(index_manager._process_image_pipeline("wait.png"))
+        waiter = asyncio.create_task(index_manager._image_pipeline.process("wait.png"))
         await asyncio.sleep(0.05)
 
         waiter.cancel()
@@ -1268,7 +1278,7 @@ class TestAdd:
         release_first.set()
         await first
 
-        assert index_manager._optimizer_target_locks == {}
+        assert index_manager._image_pipeline._optimizer_target_locks == {}
 
     @pytest.mark.asyncio
     async def test_optimizer_context_exit_cancel_cleans_registry_and_output(
@@ -1288,22 +1298,24 @@ class TestAdd:
                 await allow_optimizer_return.wait()
                 return OptimizeResult(4, 3, 1, output_path=str(target))
 
-        index_manager._optimizer = cast(ImageOptimizer, CreatingOptimizer())
+        index_manager._image_pipeline._optimizer = cast(
+            ImageOptimizer, CreatingOptimizer()
+        )
         source = Path(index_manager._memes_dir) / "exit-cancel.jpg"
         final_path = source.with_suffix(".webp")
         source.write_bytes(b"image")
-        task = asyncio.create_task(index_manager._process_image_pipeline(source.name))
+        task = asyncio.create_task(index_manager._image_pipeline.process(source.name))
         await optimizer_ready.wait()
-        await index_manager._optimizer_registry_guard.acquire()
+        await index_manager._image_pipeline._optimizer_registry_guard.acquire()
         allow_optimizer_return.set()
         await asyncio.sleep(0)
         task.cancel()
-        index_manager._optimizer_registry_guard.release()
+        index_manager._image_pipeline._optimizer_registry_guard.release()
 
         with pytest.raises(asyncio.CancelledError):
             await task
         assert not final_path.exists()
-        assert index_manager._optimizer_target_locks == {}
+        assert index_manager._image_pipeline._optimizer_target_locks == {}
 
     @pytest.mark.asyncio
     async def test_cancelled_optimizer_stays_locked_until_background_finishes(
@@ -1330,7 +1342,9 @@ class TestAdd:
                 second_entered.set()
                 return OptimizeResult(4, 4, 0, output_path=image_path)
 
-        index_manager._optimizer = cast(ImageOptimizer, ThreadStyleOptimizer())
+        index_manager._image_pipeline._optimizer = cast(
+            ImageOptimizer, ThreadStyleOptimizer()
+        )
         memes_dir = Path(index_manager._memes_dir)
         first_source = memes_dir / "thread.jpg"
         second_source = memes_dir / "thread.png"
@@ -1338,12 +1352,12 @@ class TestAdd:
         first_source.write_bytes(b"first")
         second_source.write_bytes(b"second")
         first = asyncio.create_task(
-            index_manager._process_image_pipeline(first_source.name)
+            index_manager._image_pipeline.process(first_source.name)
         )
         await first_entered.wait()
         first.cancel()
         second = asyncio.create_task(
-            index_manager._process_image_pipeline(second_source.name)
+            index_manager._image_pipeline.process(second_source.name)
         )
         await asyncio.sleep(0.05)
 
@@ -1362,7 +1376,7 @@ class TestAdd:
             await first
         await second
         assert not first_output.exists()
-        assert index_manager._optimizer_target_locks == {}
+        assert index_manager._image_pipeline._optimizer_target_locks == {}
 
     @pytest.mark.asyncio
     async def test_cancelled_optimizer_consumes_background_exception(
@@ -1378,17 +1392,19 @@ class TestAdd:
                 await asyncio.to_thread(release_optimizer.wait)
                 raise RuntimeError("background failure")
 
-        index_manager._optimizer = cast(ImageOptimizer, FailingThreadStyleOptimizer())
+        index_manager._image_pipeline._optimizer = cast(
+            ImageOptimizer, FailingThreadStyleOptimizer()
+        )
         source = Path(index_manager._memes_dir) / "background.jpg"
         source.write_bytes(b"image")
-        task = asyncio.create_task(index_manager._process_image_pipeline(source.name))
+        task = asyncio.create_task(index_manager._image_pipeline.process(source.name))
         await optimizer_entered.wait()
         task.cancel()
         release_optimizer.set()
 
         with pytest.raises(asyncio.CancelledError):
             await task
-        assert index_manager._optimizer_target_locks == {}
+        assert index_manager._image_pipeline._optimizer_target_locks == {}
 
     @pytest.mark.asyncio
     async def test_pipeline_failure_does_not_delete_other_task_output(
@@ -1428,14 +1444,16 @@ class TestAdd:
             async def close(self) -> None:
                 pass
 
-        index_manager._optimizer = cast(ImageOptimizer, SharedOutputOptimizer())
-        index_manager._ocr_provider = SecondFailingOcrProvider()
+        index_manager._image_pipeline._optimizer = cast(
+            ImageOptimizer, SharedOutputOptimizer()
+        )
+        index_manager._image_pipeline._ocr_provider = SecondFailingOcrProvider()
         memes_dir = Path(index_manager._memes_dir)
         (memes_dir / "same.jpg").write_bytes(b"first")
         (memes_dir / "same.png").write_bytes(b"second")
-        first = asyncio.create_task(index_manager._process_image_pipeline("same.jpg"))
+        first = asyncio.create_task(index_manager._image_pipeline.process("same.jpg"))
         await first_optimizer_entered.wait()
-        second = asyncio.create_task(index_manager._process_image_pipeline("same.png"))
+        second = asyncio.create_task(index_manager._image_pipeline.process("same.png"))
         await asyncio.sleep(0.05)
         allow_first_create.set()
         await first_ocr_entered.wait()
@@ -1467,8 +1485,10 @@ class TestAdd:
             async def close(self) -> None:
                 pass
 
-        index_manager._optimizer = cast(ImageOptimizer, ConvertingOptimizer())
-        index_manager._ocr_provider = FailingOcrProvider()
+        index_manager._image_pipeline._optimizer = cast(
+            ImageOptimizer, ConvertingOptimizer()
+        )
+        index_manager._image_pipeline._ocr_provider = FailingOcrProvider()
         source = Path(index_manager._memes_dir) / "failed.jpg"
         final_path = source.with_suffix(".webp")
         source.write_bytes(b"image")
@@ -1503,8 +1523,10 @@ class TestAdd:
             async def close(self) -> None:
                 pass
 
-        index_manager._optimizer = cast(ImageOptimizer, ConvertingOptimizer())
-        index_manager._ocr_provider = BlockingOcrProvider()
+        index_manager._image_pipeline._optimizer = cast(
+            ImageOptimizer, ConvertingOptimizer()
+        )
+        index_manager._image_pipeline._ocr_provider = BlockingOcrProvider()
         source = Path(index_manager._memes_dir) / "cancelled.jpg"
         final_path = source.with_suffix(".webp")
         source.write_bytes(b"image")
@@ -1538,8 +1560,10 @@ class TestAdd:
             async def close(self) -> None:
                 pass
 
-        index_manager._optimizer = cast(ImageOptimizer, ExistingOutputOptimizer())
-        index_manager._ocr_provider = BlockingOcrProvider()
+        index_manager._image_pipeline._optimizer = cast(
+            ImageOptimizer, ExistingOutputOptimizer()
+        )
+        index_manager._image_pipeline._ocr_provider = BlockingOcrProvider()
         source = Path(index_manager._memes_dir) / "existing-cancelled.jpg"
         source.write_bytes(b"original")
         task = asyncio.create_task(index_manager.add(source.name))
@@ -1568,8 +1592,10 @@ class TestAdd:
             async def close(self) -> None:
                 pass
 
-        index_manager._optimizer = cast(ImageOptimizer, ExistingOutputOptimizer())
-        index_manager._ocr_provider = FailingOcrProvider()
+        index_manager._image_pipeline._optimizer = cast(
+            ImageOptimizer, ExistingOutputOptimizer()
+        )
+        index_manager._image_pipeline._ocr_provider = FailingOcrProvider()
         source = Path(index_manager._memes_dir) / "existing.jpg"
         source.write_bytes(b"original")
 
@@ -1589,7 +1615,7 @@ class TestAdd:
             async def close(self) -> None:
                 pass
 
-        index_manager._ocr_provider = EmptyOcrProvider()
+        index_manager._image_pipeline._ocr_provider = EmptyOcrProvider()
         memes_dir = Path(index_manager._memes_dir)
         no_text_dir = Path(index_manager._no_text_dir)
         (memes_dir / "blank.jpg").write_bytes(b"fake")
@@ -1671,7 +1697,7 @@ class TestEditText:
     @pytest.mark.asyncio
     async def test_edit_text_refresh_active(self, index_manager: IndexManager) -> None:
         """refresh 进行中 → RefreshInProgressError。"""
-        index_manager._refresh_active = True
+        index_manager._sync_engine._refresh_active = True
 
         with pytest.raises(RefreshInProgressError):
             await index_manager.edit_text(1, "新文本")
@@ -1706,18 +1732,18 @@ class TestEditText:
         assert add_result.entry_id is not None
         eid = add_result.entry_id
 
-        assert index_manager._embedding_provider is not None
-        original_embed = index_manager._embedding_provider.embed
+        assert index_manager._image_pipeline._embedding_provider is not None
+        original_embed = index_manager._image_pipeline._embedding_provider.embed
         assert original_embed is not None
 
         async def embed_and_activate(text: str) -> list[float]:
             result = await original_embed(text)
-            index_manager._refresh_active = (
+            index_manager._sync_engine._refresh_active = (
                 True  # 在 embed 返回后、TOCTOU 检查前激活 refresh
             )
             return result
 
-        index_manager._embedding_provider.embed = embed_and_activate  # type: ignore[method-assign, ty:invalid-assignment]
+        index_manager._image_pipeline._embedding_provider.embed = embed_and_activate  # type: ignore[method-assign, ty:invalid-assignment]
 
         with pytest.raises(RefreshInProgressError):
             await index_manager.edit_text(eid, "加班")
@@ -1737,9 +1763,9 @@ class TestEditText:
 
         # 第二次检查（embed 后）
         index_manager._shutting_down = False
-        index_manager._refresh_active = False
-        assert index_manager._embedding_provider is not None
-        original_embed = index_manager._embedding_provider.embed
+        index_manager._sync_engine._refresh_active = False
+        assert index_manager._image_pipeline._embedding_provider is not None
+        original_embed = index_manager._image_pipeline._embedding_provider.embed
         assert original_embed is not None
 
         async def embed_and_shutdown(text: str) -> list[float]:
@@ -1747,7 +1773,7 @@ class TestEditText:
             index_manager._shutting_down = True  # 在 embed 返回后关闭
             return result
 
-        index_manager._embedding_provider.embed = embed_and_shutdown  # type: ignore[method-assign, ty:invalid-assignment]
+        index_manager._image_pipeline._embedding_provider.embed = embed_and_shutdown  # type: ignore[method-assign, ty:invalid-assignment]
 
         with pytest.raises(IndexAddCancelledError, match="Bot 正在关闭"):
             await index_manager.edit_text(eid, "新文本")
@@ -1829,7 +1855,7 @@ class TestSetSpeaker:
         self, index_manager: IndexManager
     ) -> None:
         """refresh 进行中 → RefreshInProgressError。"""
-        index_manager._refresh_active = True
+        index_manager._sync_engine._refresh_active = True
         with pytest.raises(RefreshInProgressError):
             await index_manager.set_speaker(1, "张三")
 
@@ -1878,14 +1904,14 @@ class TestConcurrencyAndDrain:
     async def test_add_direct_pipeline(self, index_manager: IndexManager) -> None:
         """add() 直接调用 _process_image_pipeline（mock 验证调用一次）。"""
         call_count = 0
-        original = index_manager._process_image_pipeline
+        original = index_manager._image_pipeline.process
 
         async def counting_pipeline(filename: str) -> tuple[str, str, list[float]]:
             nonlocal call_count
             call_count += 1
             return await original(filename)
 
-        index_manager._process_image_pipeline = counting_pipeline  # ty: ignore[invalid-assignment]
+        index_manager._image_pipeline.process = counting_pipeline  # ty: ignore[invalid-assignment]
 
         (Path(index_manager._memes_dir) / "test.jpg").write_bytes(b"fake")
         result = await index_manager.add("test.jpg")
@@ -1897,7 +1923,7 @@ class TestConcurrencyAndDrain:
         self, index_manager: IndexManager
     ) -> None:
         """refresh 等待 write_queue 排空后才获取写锁。"""
-        original_write = index_manager._write_entry
+        original_write = index_manager._entry_writer.write_entry
         in_flight = asyncio.Event()
 
         async def slow_write(
@@ -1920,7 +1946,7 @@ class TestConcurrencyAndDrain:
                 collection_id=collection_id,
             )
 
-        index_manager._write_entry = slow_write  # ty: ignore[invalid-assignment]
+        index_manager._entry_writer.write_entry = slow_write  # ty: ignore[invalid-assignment]
 
         (Path(index_manager._memes_dir) / "a.jpg").write_bytes(b"fake")
         _ = asyncio.create_task(index_manager.add("a.jpg"))
@@ -1941,18 +1967,18 @@ class TestConcurrencyAndDrain:
     @pytest.mark.asyncio
     async def test_write_queue_empty_no_wait(self, index_manager: IndexManager) -> None:
         """write_queue 为空时 refresh 不等待 drain。"""
-        assert index_manager._write_queue.empty()
+        assert index_manager._coordinator.write_queue.empty()
         result = await index_manager.refresh()
         assert isinstance(result, SyncResult)
 
     @pytest.mark.asyncio
     async def test_write_worker_drain_signal(self, index_manager: IndexManager) -> None:
         """Write Worker 处理完最后一条后 _write_drained.set()。"""
-        index_manager._write_drained.clear()
+        index_manager._coordinator.write_drained.clear()
         (Path(index_manager._memes_dir) / "drain.jpg").write_bytes(b"fake")
         await index_manager.add("drain.jpg")
         await asyncio.sleep(0.02)
-        assert index_manager._write_drained.is_set()
+        assert index_manager._coordinator.write_drained.is_set()
 
     @pytest.mark.asyncio
     async def test_no_concurrency_params_in_init(self) -> None:
@@ -1992,7 +2018,7 @@ class TestRefresh:
         hidden.mkdir()
         (hidden / "ignored.webp").write_bytes(b"hidden")
 
-        snapshot = index_manager._scan_meme_files()
+        snapshot = index_manager._sync_engine.scan_meme_files()
 
         assert snapshot.files == {
             "root.webp": None,
@@ -2009,7 +2035,7 @@ class TestRefresh:
         collection_dir.mkdir()
         (collection_dir / ".hidden.webp").write_bytes(b"hidden")
 
-        snapshot = index_manager._scan_meme_files()
+        snapshot = index_manager._sync_engine.scan_meme_files()
 
         assert snapshot.files == {}
         assert snapshot.directories == {"新三国"}
@@ -2023,7 +2049,7 @@ class TestRefresh:
         hidden.mkdir()
         (hidden / "ignored.webp").write_bytes(b"hidden")
 
-        snapshot = index_manager._scan_meme_files()
+        snapshot = index_manager._sync_engine.scan_meme_files()
 
         assert snapshot.files == {}
         assert snapshot.directories == set()
@@ -2044,7 +2070,7 @@ class TestRefresh:
         except OSError:
             pytest.skip("当前平台不支持创建符号链接")
 
-        snapshot = index_manager._scan_meme_files()
+        snapshot = index_manager._sync_engine.scan_meme_files()
 
         assert snapshot.files == {}
         assert snapshot.directories == set()
@@ -2135,7 +2161,7 @@ class TestRefresh:
             async def close(self) -> None:
                 pass
 
-        index_manager._ocr_provider = ConstantOcrProvider()
+        index_manager._image_pipeline._ocr_provider = ConstantOcrProvider()
         memes_dir = Path(index_manager._memes_dir)
         for name in ("甲", "乙"):
             directory = memes_dir / name
@@ -2182,7 +2208,7 @@ class TestRefresh:
             vector_store._collection_ids[entry_id] = collection_id
 
         vector_store.update_collection_id = strict_update_collection_id  # ty: ignore[invalid-assignment]
-        index_manager._embedding_provider = FailingEmbeddingProvider()
+        index_manager._image_pipeline._embedding_provider = FailingEmbeddingProvider()
         collection_dir = Path(index_manager._memes_dir) / "新三国"
         collection_dir.mkdir()
         (collection_dir / "failed.webp").write_bytes(b"image")
@@ -2265,11 +2291,11 @@ class TestRefresh:
         nested = Path(index_manager._memes_dir) / "新三国" / "截图"
         nested.mkdir(parents=True)
         (nested / "a.jpg").write_bytes(b"image")
-        index_manager._optimizer = cast(
+        index_manager._image_pipeline._optimizer = cast(
             ImageOptimizer, FakeOptimizer(output_path=str(nested / "a.webp"))
         )
 
-        final_path, _, _ = await index_manager._process_image_pipeline(
+        final_path, _, _ = await index_manager._image_pipeline.process(
             "新三国/截图/a.jpg"
         )
 
@@ -2288,7 +2314,7 @@ class TestRefresh:
             async def close(self) -> None:
                 pass
 
-        index_manager._ocr_provider = EmptyOcrProvider()
+        index_manager._image_pipeline._ocr_provider = EmptyOcrProvider()
         nested = Path(index_manager._memes_dir) / "新三国" / "截图"
         nested.mkdir(parents=True)
         (nested / "blank.webp").write_bytes(b"image")
@@ -2312,7 +2338,7 @@ class TestRefresh:
             async def close(self) -> None:
                 pass
 
-        index_manager._ocr_provider = ConstantOcrProvider()
+        index_manager._image_pipeline._ocr_provider = ConstantOcrProvider()
         nested = Path(index_manager._memes_dir) / "新三国" / "截图"
         nested.mkdir(parents=True)
         (nested / "old.webp").write_bytes(b"old")
@@ -2338,7 +2364,7 @@ class TestRefresh:
             async def close(self) -> None:
                 pass
 
-        index_manager._ocr_provider = ConstantOcrProvider()
+        index_manager._image_pipeline._ocr_provider = ConstantOcrProvider()
         memes_dir = Path(index_manager._memes_dir)
         replaced_dir = Path(index_manager._replaced_dir)
 
@@ -2449,7 +2475,7 @@ class TestRefresh:
             async def close(self) -> None:
                 pass
 
-        index_manager._ocr_provider = EmptyOcrProvider()
+        index_manager._image_pipeline._ocr_provider = EmptyOcrProvider()
         memes_dir = Path(index_manager._memes_dir)
         no_text_dir = Path(index_manager._no_text_dir)
         (memes_dir / "blank.jpg").write_bytes(b"fake")
@@ -2471,14 +2497,14 @@ async def test_scan_meme_files_called_once_per_sync(
 ) -> None:
     """sync 内 _scan_meme_files 仅调用一次（phase1/phase2 复用同一快照）。"""
     call_count = 0
-    original = index_manager._scan_meme_files
+    original = index_manager._sync_engine.scan_meme_files
 
     def counting_scan() -> FileSystemSnapshot:
         nonlocal call_count
         call_count += 1
         return original()
 
-    index_manager._scan_meme_files = counting_scan  # type: ignore[assignment, ty:invalid-assignment]
+    index_manager._sync_engine.scan_meme_files = counting_scan  # type: ignore[assignment, ty:invalid-assignment]
     await index_manager.refresh()
     assert call_count == 1
 
@@ -2577,7 +2603,7 @@ class TestSemanticSearch:
             async def close(self) -> None:
                 pass
 
-        index_manager._embedding_provider = ZeroEmbeddingProvider()
+        index_manager._image_pipeline._embedding_provider = ZeroEmbeddingProvider()
         with pytest.raises(ValueError, match="零向量"):
             await index_manager.semantic_search("任意描述")
 
@@ -3129,7 +3155,7 @@ async def test_get_chroma_ids_uses_get_all_ids(
 
     vs.query = spy_query  # type: ignore[method-assign, ty:invalid-assignment]
 
-    ids = await index_manager._get_chroma_ids()
+    ids = await index_manager._sync_engine.get_chroma_ids()
     assert ids == {1, 2, 42}
 
 
@@ -3161,7 +3187,7 @@ async def test_add_timeout_cancels_enqueued_future(
         await hang_event.wait()
         raise AssertionError("不应走到这里")
 
-    index_manager._write_entry = hanging_write  # type: ignore[method-assign, ty:invalid-assignment]
+    index_manager._entry_writer.write_entry = hanging_write  # type: ignore[method-assign, ty:invalid-assignment]
 
     with pytest.raises(asyncio.TimeoutError):
         await index_manager.add("x.jpg")
@@ -3213,12 +3239,12 @@ async def test_write_worker_skips_cancelled_future(
         write_calls.append(filename)
         return AddResult(entry_id=1, reason="added", text=text)
 
-    index_manager._write_entry = spy_write  # type: ignore[method-assign, ty:invalid-assignment]
+    index_manager._entry_writer.write_entry = spy_write  # type: ignore[method-assign, ty:invalid-assignment]
 
-    await index_manager._write_queue.put(skip_req)
-    await index_manager._write_queue.put(normal_req)
+    await index_manager._coordinator.write_queue.put(skip_req)
+    await index_manager._coordinator.write_queue.put(normal_req)
 
-    index_manager._ensure_write_worker()
+    index_manager._coordinator.ensure_worker()
     # 让 worker 有机会处理两个请求
     await asyncio.sleep(0.05)
 
@@ -3300,7 +3326,7 @@ class TestPipelineFinalFilename:
             embedding_provider=FakeEmbeddingProvider(),
             optimizer=cast(ImageOptimizer, opt),
         )
-        final_fn, text, _ = await im._process_image_pipeline("a.jpg")
+        final_fn, text, _ = await im._image_pipeline.process("a.jpg")
         assert final_fn == "a.webp"
         assert text == "hello"
 
@@ -3322,7 +3348,7 @@ class TestPipelineFinalFilename:
             embedding_provider=FakeEmbeddingProvider(),
             optimizer=cast(ImageOptimizer, opt),
         )
-        final_fn, text, _ = await im._process_image_pipeline("a.jpg")
+        final_fn, text, _ = await im._image_pipeline.process("a.jpg")
         assert final_fn == "a.jpg"
 
     @pytest.mark.asyncio
@@ -3341,7 +3367,7 @@ class TestPipelineFinalFilename:
             embedding_provider=FakeEmbeddingProvider(),
             optimizer=cast(ImageOptimizer, opt),
         )
-        final_fn, text, _ = await im._process_image_pipeline("a.jpg")
+        final_fn, text, _ = await im._image_pipeline.process("a.jpg")
         assert final_fn == "a.jpg"
         assert text == "hello"
 
@@ -3363,7 +3389,7 @@ class TestPipelineFinalFilename:
             embedding_provider=FakeEmbeddingProvider(),
             optimizer=cast(ImageOptimizer, opt),
         )
-        final_fn, text, emb = await im._process_image_pipeline("a.jpg")
+        final_fn, text, emb = await im._image_pipeline.process("a.jpg")
         assert final_fn == "a.webp"
         assert text == ""
         assert emb == []

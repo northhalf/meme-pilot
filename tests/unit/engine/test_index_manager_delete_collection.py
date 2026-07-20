@@ -64,7 +64,9 @@ async def test_delete_collection_removes_directory_db_and_resets_scope(
 
 
 @pytest.mark.asyncio
-async def test_delete_collection_accepts_numeric_id(index_manager: IndexManager) -> None:
+async def test_delete_collection_accepts_numeric_id(
+    index_manager: IndexManager,
+) -> None:
     """按编号删除合集。"""
     result = await index_manager.create_collection("编号合集")
     deleted = await index_manager.delete_collection(str(result.collection.id))
@@ -145,9 +147,7 @@ async def test_delete_collection_db_failure_restores_directory(
 
     assert target.is_dir()
     assert index_manager._metadata_store.get_collection(cid) is not None
-    assert any(
-        record.levelno == logging.CRITICAL for record in caplog.records
-    )
+    assert any(record.levelno == logging.CRITICAL for record in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -155,7 +155,7 @@ async def test_delete_collection_rejected_while_refresh_active(
     index_manager: IndexManager,
 ) -> None:
     await index_manager.create_collection("刷新中")
-    index_manager._refresh_active = True
+    index_manager._sync_engine._refresh_active = True
     with pytest.raises(RefreshInProgressError):
         await index_manager.delete_collection("刷新中")
 

@@ -62,7 +62,6 @@ from .index_types import (
     SetSpeakerResult,
     SyncResult,
     WriteOp,
-    _OptimizerLockEntry,
     _WriteRequest,
 )
 from .rwlock import IndexRwLock
@@ -123,14 +122,13 @@ class IndexManager:
         _memes_dir: 表情包图片目录。
         _no_text_dir: 无文字图目录。
         _deleted_dir: 已删除图目录。
-        _ocr_provider / _embedding_provider / _optimizer: providers（property 转发至
-            ImagePipeline，保留测试 rebind）。
         _keyword_searcher: 关键词搜索器，由 IndexManager 持锁后调用。
         _rwlock: 读写锁，写者优先。
-        _refresh_active: 是否有 refresh 正在执行写锁内的同步。
         _shutting_down: 是否正在关闭。
-        _write_drained: 无排队且无执行中写请求时 set；refresh 等待后获取写锁。
-        _image_pipeline: 压缩 -> OCR -> Embedding 管道与 optimizer 锁表的协作者。
+        _image_pipeline: 压缩 -> OCR -> Embedding 管道与 optimizer 锁表的协作者，
+            持有 optimizer/ocr/embedding providers。
+        _coordinator: 写入编排协作者，持有写入队列与 write_drained Event。
+        _sync_engine: 索引刷新协作者，持有 _refresh_active / _refresh_task 状态。
     """
 
     def __init__(
@@ -184,8 +182,7 @@ class IndexManager:
         else:
             self._replaced_dir = Path(memes_dir).parent / "memes_replaced"
         # ImagePipeline 持有 optimizer/ocr/embedding providers 与 optimizer 锁表；
-        # 门面通过 _optimizer/_ocr_provider/_embedding_provider property 转发，
-        # 保留测试对门面实例属性 rebind 的能力（property setter 同步写回 pipeline）。
+        # 门面与同包协作者直接读写其实例属性。
         self._image_pipeline = ImagePipeline(
             optimizer=optimizer,
             ocr_provider=ocr_provider,
@@ -226,9 +223,8 @@ class IndexManager:
         )
 
         # _WriteCoordinator 收口全部写入编排：worker 循环 + queue + WriteOp 字典派发
-        # + 七个 _execute_* + move 补偿。write_entry 回调用 lambda 包装门面
-        # self._write_entry，保留测试对 index_manager._write_entry 的 monkeypatch
-        # 接缝（调用时属性查找）。
+        # + 九个 _execute_* + move 补偿。write_entry 回调经 lambda 指向 EntryWriter，
+        # 调用时属性查找保留测试对 entry_writer.write_entry 的 rebind。
         from .write_coordinator import _WriteCoordinator
 
         write_drained = asyncio.Event()
@@ -242,15 +238,14 @@ class IndexManager:
             replaced_dir=self._replaced_dir,
             rwlock=self._rwlock,
             write_drained=write_drained,
-            write_entry=lambda *a, **kw: self._write_entry(*a, **kw),
+            write_entry=lambda *a, **kw: self._entry_writer.write_entry(*a, **kw),
             validate_collection_selection_locked=self._validate_collection_selection_locked,
         )
 
         # SyncEngine 承接 refresh 全流程的 phase 编排（扫描 -> 一致性 -> 删除 ->
-        # 合集 -> 新增）。_refresh_active / _refresh_task 真实状态归 SyncEngine，
-        # 门面经 forwarding property 透传。process_image_pipeline / move_to_replaced
-        # 以 lambda 包装门面方法，保留测试对 index_manager._process_image_pipeline
-        # 与 index_manager._coordinator.move_to_replaced 的 monkeypatch 接缝。
+        # 合集 -> 新增），_refresh_active / _refresh_task 真实状态归 SyncEngine。
+        # move_to_replaced 以 lambda 包装并做调用时属性查找，保留测试对
+        # index_manager._coordinator.move_to_replaced 的 rebind。
         from .sync_engine import SyncEngine
 
         self._sync_engine = SyncEngine(
@@ -258,78 +253,8 @@ class IndexManager:
             vector_store=self._vector_store,
             memes_dir=self._memes_dir,
             image_pipeline=self._image_pipeline,
-            process_image_pipeline=lambda f: self._process_image_pipeline(f),
             move_to_replaced=lambda f: self._coordinator.move_to_replaced(f),
         )
-
-    # ------------------------------------------------------------------
-    # provider / 锁表 property 转发（保留测试 rebind 与直读）
-    # ------------------------------------------------------------------
-
-    @property
-    def _optimizer(self) -> ImageOptimizer | None:
-        """转发至 ImagePipeline.optimizer（保留测试 rebind 接缝）。"""
-        return self._image_pipeline.optimizer
-
-    @_optimizer.setter
-    def _optimizer(self, value: ImageOptimizer | None) -> None:
-        self._image_pipeline.optimizer = value
-
-    @property
-    def _ocr_provider(self) -> OcrProvider | None:
-        """转发至 ImagePipeline.ocr_provider（保留测试 rebind 接缝）。"""
-        return self._image_pipeline.ocr_provider
-
-    @_ocr_provider.setter
-    def _ocr_provider(self, value: OcrProvider | None) -> None:
-        self._image_pipeline.ocr_provider = value
-
-    @property
-    def _embedding_provider(self) -> EmbeddingProvider | None:
-        """转发至 ImagePipeline.embedding_provider（保留测试 rebind 接缝）。"""
-        return self._image_pipeline.embedding_provider
-
-    @_embedding_provider.setter
-    def _embedding_provider(self, value: EmbeddingProvider | None) -> None:
-        self._image_pipeline.embedding_provider = value
-
-    @property
-    def _optimizer_target_locks(self) -> dict[tuple[str, str], _OptimizerLockEntry]:
-        """转发至 ImagePipeline.optimizer_target_locks（测试只读断言清空）。"""
-        return self._image_pipeline.optimizer_target_locks
-
-    @property
-    def _optimizer_registry_guard(self) -> asyncio.Lock:
-        """转发至 ImagePipeline.optimizer_registry_guard（测试 acquire/release 制造取消窗口）。"""
-        return self._image_pipeline.optimizer_registry_guard
-
-    @property
-    def _write_queue(self) -> "asyncio.Queue[_WriteRequest]":
-        """转发至 _WriteCoordinator.write_queue（测试 put/read 经 property 操作 coordinator 队列）。"""
-        return self._coordinator.write_queue
-
-    @property
-    def _write_drained(self) -> asyncio.Event:
-        """转发至 _WriteCoordinator.write_drained（测试 clear/is_set 经 property 操作同一 Event）。"""
-        return self._coordinator.write_drained
-
-    @property
-    def _refresh_active(self) -> bool:
-        """转发至 SyncEngine._refresh_active（测试 rebind + 门面写入方法读取均经 property）。"""
-        return self._sync_engine._refresh_active
-
-    @_refresh_active.setter
-    def _refresh_active(self, value: bool) -> None:
-        self._sync_engine._refresh_active = value
-
-    @property
-    def _refresh_task(self) -> asyncio.Task | None:
-        """转发至 SyncEngine._refresh_task（refresh() 写入 + close()/测试读取均经 property）。"""
-        return self._sync_engine._refresh_task
-
-    @_refresh_task.setter
-    def _refresh_task(self, value: asyncio.Task | None) -> None:
-        self._sync_engine._refresh_task = value
 
     # ------------------------------------------------------------------
     # load / 查询
@@ -500,9 +425,9 @@ class IndexManager:
         """
         if self._semantic_searcher is None:
             raise RuntimeError("SemanticSearcher 未注入")
-        if self._embedding_provider is None:
+        if self._image_pipeline._embedding_provider is None:
             raise RuntimeError("EmbeddingProvider 未注入")
-        query_vector = await self._embedding_provider.embed(description)
+        query_vector = await self._image_pipeline._embedding_provider.embed(description)
         if vector_norm(query_vector) == 0:
             raise ValueError("用户描述 embedding 不能是零向量")
         async with self._rwlock.read(timeout=self.read_timeout):
@@ -661,9 +586,9 @@ class IndexManager:
         """
         if self._semantic_searcher is None:
             raise RuntimeError("SemanticSearcher 未注入")
-        if self._embedding_provider is None:
+        if self._image_pipeline._embedding_provider is None:
             raise RuntimeError("EmbeddingProvider 未注入")
-        query_vector = await self._embedding_provider.embed(description)
+        query_vector = await self._image_pipeline._embedding_provider.embed(description)
         if vector_norm(query_vector) == 0:
             raise ValueError("用户描述 embedding 不能是零向量")
         async with self._rwlock.read(timeout=self.read_timeout):
@@ -723,11 +648,11 @@ class IndexManager:
         """
         if self._shutting_down:
             raise IndexAddCancelledError("Bot 正在关闭")
-        if self._refresh_active:
+        if self._sync_engine._refresh_active:
             raise RefreshInProgressError("索引正在刷新，请稍后再试")
 
         collection_name = validate_collection_name(raw_name)
-        self._ensure_write_worker()
+        self._coordinator.ensure_worker()
         loop = asyncio.get_running_loop()
         future: asyncio.Future[CreateCollectionResult] = loop.create_future()
         req = _WriteRequest(
@@ -757,7 +682,7 @@ class IndexManager:
         """
         if self._shutting_down:
             raise IndexAddCancelledError("Bot 正在关闭")
-        if self._refresh_active:
+        if self._sync_engine._refresh_active:
             raise RefreshInProgressError("索引正在刷新，请稍后再试")
 
         # CollectionNotFoundError 由 self._collection_manager.resolve_collection
@@ -765,7 +690,7 @@ class IndexManager:
         collection = await asyncio.to_thread(
             self._collection_manager.resolve_collection, raw
         )
-        self._ensure_write_worker()
+        self._coordinator.ensure_worker()
         loop = asyncio.get_running_loop()
         future: asyncio.Future[DeleteCollectionResult] = loop.create_future()
         req = _WriteRequest(
@@ -800,7 +725,7 @@ class IndexManager:
         """
         if self._shutting_down:
             raise IndexAddCancelledError("Bot 正在关闭")
-        if self._refresh_active:
+        if self._sync_engine._refresh_active:
             raise RefreshInProgressError("索引正在刷新，请稍后再试")
 
         # CollectionNotFoundError 由 self._collection_manager.resolve_collection
@@ -809,7 +734,7 @@ class IndexManager:
         collection = await asyncio.to_thread(
             self._collection_manager.resolve_collection, raw
         )
-        self._ensure_write_worker()
+        self._coordinator.ensure_worker()
         loop = asyncio.get_running_loop()
         future: asyncio.Future[RenameCollectionResult] = loop.create_future()
         req = _WriteRequest(
@@ -858,21 +783,21 @@ class IndexManager:
         logger.info("添加图片: %s", image_path)
         if self._shutting_down:
             raise IndexAddCancelledError("Bot 正在关闭")
-        if self._refresh_active:
+        if self._sync_engine._refresh_active:
             raise RefreshInProgressError("索引正在批量刷新，请稍后再试")
 
         async with asyncio.timeout(self.add_user_timeout):
-            final_filename, text, embedding = await self._process_image_pipeline(
+            final_filename, text, embedding = await self._image_pipeline.process(
                 relative_path
             )
 
             # TOCTOU 防护
             if self._shutting_down:
                 raise IndexAddCancelledError("Bot 正在关闭")
-            if self._refresh_active:
+            if self._sync_engine._refresh_active:
                 raise RefreshInProgressError("索引正在批量刷新，请稍后再试")
 
-            self._ensure_write_worker()
+            self._coordinator.ensure_worker()
             loop = asyncio.get_running_loop()
             future = loop.create_future()
             req = _WriteRequest(
@@ -927,11 +852,11 @@ class IndexManager:
             raise IndexAddCancelledError("Bot 正在关闭")
 
         # 检查②：refresh 状态
-        if self._refresh_active:
+        if self._sync_engine._refresh_active:
             raise RefreshInProgressError("索引正在刷新，请稍后再试")
 
         # 确保 Write Worker 已启动
-        self._ensure_write_worker()
+        self._coordinator.ensure_worker()
 
         # 校验 entry 存在 + 获取旧 text（用于回滚）
         entry = await asyncio.to_thread(self._metadata_store.get_entry, entry_id)
@@ -946,13 +871,13 @@ class IndexManager:
             return result
 
         # 锁外生成新 embedding
-        assert self._embedding_provider is not None
-        new_embedding = await self._embedding_provider.embed(new_text)
+        assert self._image_pipeline._embedding_provider is not None
+        new_embedding = await self._image_pipeline._embedding_provider.embed(new_text)
 
         # 检查③：TOCTOU 防护（embed 期间 shutting_down 或 refresh 可能已激活）
         if self._shutting_down:
             raise IndexAddCancelledError("Bot 正在关闭")
-        if self._refresh_active:
+        if self._sync_engine._refresh_active:
             raise RefreshInProgressError("索引正在刷新，请稍后再试")
 
         # 提交写入任务
@@ -993,11 +918,11 @@ class IndexManager:
             raise IndexAddCancelledError("Bot 正在关闭")
 
         # 检查②：refresh 状态
-        if self._refresh_active:
+        if self._sync_engine._refresh_active:
             raise RefreshInProgressError("索引正在刷新，请稍后再试")
 
         # 确保 Write Worker 已启动
-        self._ensure_write_worker()
+        self._coordinator.ensure_worker()
 
         # 校验 entry 存在 + 获取 old_speaker
         entry = await asyncio.to_thread(self._metadata_store.get_entry, entry_id)
@@ -1005,7 +930,7 @@ class IndexManager:
         # TOCTOU 防护（get_entry 期间 shutting_down 或 refresh 可能已激活）
         if self._shutting_down:
             raise IndexAddCancelledError("Bot 正在关闭")
-        if self._refresh_active:
+        if self._sync_engine._refresh_active:
             raise RefreshInProgressError("索引正在刷新，请稍后再试")
 
         if entry is None:
@@ -1053,10 +978,10 @@ class IndexManager:
         logger.info("添加标签: entry_ids=%s, tags=%r", entry_id, tags)
         if self._shutting_down:
             raise IndexAddCancelledError("Bot 正在关闭")
-        if self._refresh_active:
+        if self._sync_engine._refresh_active:
             raise RefreshInProgressError("索引正在刷新，请稍后再试")
 
-        self._ensure_write_worker()
+        self._coordinator.ensure_worker()
 
         entry = await asyncio.to_thread(self._metadata_store.get_entry, entry_id)
         if entry is None:
@@ -1064,7 +989,7 @@ class IndexManager:
 
         if self._shutting_down:
             raise IndexAddCancelledError("Bot 正在关闭")
-        if self._refresh_active:
+        if self._sync_engine._refresh_active:
             raise RefreshInProgressError("索引正在刷新，请稍后再试")
 
         loop = asyncio.get_running_loop()
@@ -1097,14 +1022,14 @@ class IndexManager:
         logger.info("删除图片: %s", entry_ids)
         if self._shutting_down:
             raise IndexAddCancelledError("Bot 正在关闭")
-        if self._refresh_active:
+        if self._sync_engine._refresh_active:
             raise RefreshInProgressError("索引正在刷新，请稍后再试")
 
-        self._ensure_write_worker()
+        self._coordinator.ensure_worker()
 
         if self._shutting_down:
             raise IndexAddCancelledError("Bot 正在关闭")
-        if self._refresh_active:
+        if self._sync_engine._refresh_active:
             raise RefreshInProgressError("索引正在刷新，请稍后再试")
 
         loop = asyncio.get_running_loop()
@@ -1246,9 +1171,9 @@ class IndexManager:
         """
         if self._shutting_down:
             raise IndexAddCancelledError("Bot 正在关闭")
-        if self._refresh_active:
+        if self._sync_engine._refresh_active:
             raise RefreshInProgressError("索引正在刷新，请稍后再试")
-        self._ensure_write_worker()
+        self._coordinator.ensure_worker()
         loop = asyncio.get_running_loop()
         future: asyncio.Future[MoveResult] = loop.create_future()
         transaction_started = asyncio.Event()
@@ -1288,7 +1213,7 @@ class IndexManager:
 
         collection_count = len(self._metadata_store.list_collections())
 
-        if self._refresh_active:
+        if self._sync_engine._refresh_active:
             status = "正在刷新索引"
         else:
             status = "空闲"
@@ -1464,13 +1389,13 @@ class IndexManager:
         logger.info("开始刷新索引...")
         if self._shutting_down:
             raise RefreshInProgressError("Bot 正在关闭")
-        if self._refresh_active:
+        if self._sync_engine._refresh_active:
             raise RefreshInProgressError("已有刷新任务在运行")
 
-        self._refresh_active = True
-        self._refresh_task = asyncio.current_task()
+        self._sync_engine._refresh_active = True
+        self._sync_engine._refresh_task = asyncio.current_task()
         try:
-            await self._write_drained.wait()
+            await self._coordinator.write_drained.wait()
 
             async with self._rwlock.write():
                 try:
@@ -1487,13 +1412,9 @@ class IndexManager:
                 )
                 return result
         finally:
-            self._refresh_active = False
-            if self._refresh_task is asyncio.current_task():
-                self._refresh_task = None
-
-    def _ensure_write_worker(self) -> None:
-        """薄委托至 _WriteCoordinator.ensure_worker（保留测试 monkeypatch 接缝）。"""
-        self._coordinator.ensure_worker()
+            self._sync_engine._refresh_active = False
+            if self._sync_engine._refresh_task is asyncio.current_task():
+                self._sync_engine._refresh_task = None
 
     async def close(self) -> None:
         """安全关闭 IndexManager。
@@ -1511,9 +1432,12 @@ class IndexManager:
         if worker_task is not None:
             tasks_to_wait.append(worker_task)
 
-        if self._refresh_task is not None and not self._refresh_task.done():
-            self._refresh_task.cancel()
-            tasks_to_wait.append(self._refresh_task)
+        if (
+            self._sync_engine._refresh_task is not None
+            and not self._sync_engine._refresh_task.done()
+        ):
+            self._sync_engine._refresh_task.cancel()
+            tasks_to_wait.append(self._sync_engine._refresh_task)
 
         if tasks_to_wait:
             await asyncio.gather(*tasks_to_wait, return_exceptions=True)
@@ -1532,15 +1456,14 @@ class IndexManager:
 
         顺序为扫描、一致性修复、删除条目、删除消失合集、登记新合集、添加条目。
         本方法留门面以保留测试 monkeypatch 接缝（slow_refresh/hanging_sync/
-        record_refresh 替换整个方法）；phase 调用直指 SyncEngine，scan 经薄委托
-        保 monkeypatch。
+        record_refresh 替换整个方法）；phase 调用与扫描均直指 SyncEngine。
 
         Returns:
             SyncResult(added, deleted, deduped, no_text_moved, failed)。
         """
         self._memes_dir.mkdir(parents=True, exist_ok=True)
         failed: list[str] = []
-        snapshot = self._scan_meme_files()
+        snapshot = self._sync_engine.scan_meme_files()
 
         await self._sync_engine._sync_phase0_consistency(failed)
         deleted_count = await self._sync_engine._sync_phase1_delete(
@@ -1569,56 +1492,3 @@ class IndexManager:
             scopes_reset=scopes_reset,
             failed=tuple(failed),
         )
-
-    async def _get_chroma_ids(self) -> set[int]:
-        """薄委托至 SyncEngine.get_chroma_ids（保留测试直调接缝）。
-
-        实际实现（VectorStore.get_all_ids）已迁入 SyncEngine；门面保留此方法
-        供测试直调，经薄委托转发至 sync_engine。
-        """
-        return await self._sync_engine.get_chroma_ids()
-
-    async def _write_entry(
-        self,
-        filename: str,
-        text: str,
-        embedding: Sequence[float],
-        speaker: str | None = None,
-        tags: Sequence[str] | None = None,
-        *,
-        collection_id: int = 0,
-    ) -> AddResult:
-        """委托 EntryWriter.write_entry。"""
-        return await self._entry_writer.write_entry(
-            filename,
-            text,
-            embedding,
-            speaker=speaker,
-            tags=tags,
-            collection_id=collection_id,
-        )
-
-    # ------------------------------------------------------------------
-    # 管道与工具
-    # ------------------------------------------------------------------
-
-    def _scan_meme_files(self) -> FileSystemSnapshot:
-        """薄委托至 SyncEngine.scan_meme_files（保留测试 monkeypatch 接缝）。
-
-        实际扫描逻辑（os.scandir + DirEntry 缓存 + 递归合集目录）已迁入 SyncEngine；
-        门面保留此方法供 _run_sync_internal 与测试直调/monkeypatch（counting_scan），
-        经薄委托转发至 sync_engine。
-        """
-        return self._sync_engine.scan_meme_files()
-
-    async def _process_image_pipeline(
-        self, filename: str
-    ) -> tuple[str, str, list[float]]:
-        """薄委托至 ImagePipeline.process（保留测试 monkeypatch rebind 接缝）。
-
-        实际管道逻辑（压缩 -> OCR -> Embedding + optimizer 锁表）由
-        ``self._image_pipeline.process`` 承载；门面保留此方法供 ``add()``/
-        ``_sync_phase2_add`` 调用，以及测试通过 ``index_manager._process_image_pipeline
-        = fake`` 接管。
-        """
-        return await self._image_pipeline.process(filename)

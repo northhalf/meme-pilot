@@ -57,7 +57,7 @@ async def _wait_for_queue_size(index_manager: IndexManager, size: int) -> None:
         size: 期望的最小队列长度。
     """
     async with asyncio.timeout(1.0):
-        while index_manager._write_queue.qsize() < size:
+        while index_manager._coordinator.write_queue.qsize() < size:
             await asyncio.sleep(0)
 
 
@@ -282,7 +282,7 @@ async def test_database_failure_preserves_existing_directory(
 async def test_create_collection_rejected_while_refresh_active(
     index_manager: IndexManager,
 ) -> None:
-    index_manager._refresh_active = True
+    index_manager._sync_engine._refresh_active = True
 
     with pytest.raises(RefreshInProgressError):
         await index_manager.create_collection("新三国")
@@ -367,15 +367,15 @@ async def test_cancelled_queued_create_is_skipped(
     index_manager: IndexManager,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    start_worker = index_manager._ensure_write_worker
-    monkeypatch.setattr(index_manager, "_ensure_write_worker", lambda: None)
+    start_worker = index_manager._coordinator.ensure_worker
+    monkeypatch.setattr(index_manager._coordinator, "ensure_worker", lambda: None)
     task = asyncio.create_task(index_manager.create_collection("取消合集"))
     await _wait_for_queue_size(index_manager, 1)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
 
-    monkeypatch.setattr(index_manager, "_ensure_write_worker", start_worker)
+    monkeypatch.setattr(index_manager._coordinator, "ensure_worker", start_worker)
     sentinel = await index_manager.create_collection("哨兵合集")
 
     assert sentinel.collection.name == "哨兵合集"
@@ -404,8 +404,8 @@ async def test_close_cancels_in_flight_add_and_queued_create(
         await asyncio.Event().wait()
         raise AssertionError("阻塞 ADD 不应正常返回")
 
-    monkeypatch.setattr(index_manager, "_process_image_pipeline", _fake_pipeline)
-    monkeypatch.setattr(index_manager, "_write_entry", block_write)
+    monkeypatch.setattr(index_manager._image_pipeline, "process", _fake_pipeline)
+    monkeypatch.setattr(index_manager._entry_writer, "write_entry", block_write)
 
     add_task = asyncio.create_task(index_manager.add("close.webp"))
     await add_started.wait()
@@ -460,8 +460,8 @@ async def test_create_collection_waits_behind_existing_write_request(
         order.append("create")
         return original_create(name)
 
-    monkeypatch.setattr(index_manager, "_process_image_pipeline", _fake_pipeline)
-    monkeypatch.setattr(index_manager, "_write_entry", block_write)
+    monkeypatch.setattr(index_manager._image_pipeline, "process", _fake_pipeline)
+    monkeypatch.setattr(index_manager._entry_writer, "write_entry", block_write)
     monkeypatch.setattr(
         index_manager._metadata_store, "create_collection", record_create
     )
@@ -516,8 +516,8 @@ async def test_refresh_waits_for_queued_create_collection(
         order.append("refresh")
         return SyncResult()
 
-    monkeypatch.setattr(index_manager, "_process_image_pipeline", _fake_pipeline)
-    monkeypatch.setattr(index_manager, "_write_entry", block_write)
+    monkeypatch.setattr(index_manager._image_pipeline, "process", _fake_pipeline)
+    monkeypatch.setattr(index_manager._entry_writer, "write_entry", block_write)
     monkeypatch.setattr(
         index_manager._metadata_store, "create_collection", record_create
     )
@@ -554,7 +554,7 @@ async def test_refresh_waits_for_dequeued_create_blocked_before_write_lock(
     """refresh 必须等待已 dequeue 但尚未取得写锁的创建请求。"""
     order: list[str] = []
     original_create = index_manager._metadata_store.create_collection
-    start_worker = index_manager._ensure_write_worker
+    start_worker = index_manager._coordinator.ensure_worker
     lock_held = True
     create_task: asyncio.Task | None = None
     refresh_task: asyncio.Task | None = None
@@ -573,17 +573,17 @@ async def test_refresh_waits_for_dequeued_create_blocked_before_write_lock(
         record_create,
     )
     monkeypatch.setattr(index_manager, "_run_sync_internal", record_refresh)
-    monkeypatch.setattr(index_manager, "_ensure_write_worker", lambda: None)
+    monkeypatch.setattr(index_manager._coordinator, "ensure_worker", lambda: None)
     await index_manager._rwlock.acquire_write()
     try:
         create_task = asyncio.create_task(index_manager.create_collection("已取出合集"))
         await _wait_for_queue_size(index_manager, 1)
-        assert not index_manager._write_drained.is_set()
+        assert not index_manager._coordinator.write_drained.is_set()
 
-        monkeypatch.setattr(index_manager, "_ensure_write_worker", start_worker)
+        monkeypatch.setattr(index_manager._coordinator, "ensure_worker", start_worker)
         start_worker()
         async with asyncio.timeout(1.0):
-            while not index_manager._write_queue.empty():
+            while not index_manager._coordinator.write_queue.empty():
                 await asyncio.sleep(0)
 
         refresh_task = asyncio.create_task(index_manager.refresh())

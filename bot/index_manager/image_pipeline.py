@@ -2,8 +2,7 @@
 
 从 IndexManager 抽离，自包含持有 optimizer/ocr/embedding providers 与目标锁注册表，
 负责同父目录、同 stem 图片的优化互斥、外部取消的可靠传播与管线输出清理。
-门面 IndexManager 持有本类实例并薄委托 _process_image_pipeline 等方法，
-provider 与锁表经公开 property 访问（门面 property 转发保留测试 monkeypatch rebind）。
+门面 IndexManager 持有本类实例并直接调用 process 等方法。
 模块级 wait_task_through_cancellation 是通用取消辅助，供本类与 _WriteCoordinator 共用。
 """
 
@@ -46,9 +45,7 @@ async def wait_task_through_cancellation(
         try:
             await asyncio.shield(task)
         except asyncio.CancelledError:
-            external_cancel = (
-                current_task is not None and current_task.cancelling() > 0
-            )
+            external_cancel = current_task is not None and current_task.cancelling() > 0
             if external_cancel:
                 cancelled = True
                 current_task.uncancel()
@@ -101,47 +98,6 @@ class ImagePipeline:
         self._no_text_dir = no_text_dir
         self._optimizer_target_locks: dict[tuple[str, str], _OptimizerLockEntry] = {}
         self._optimizer_registry_guard = asyncio.Lock()
-
-    # ------------------------------------------------------------------
-    # 公开 provider / 锁表访问（门面转发与 SyncEngine 经此读写，不再直访私有字段）
-    # ------------------------------------------------------------------
-
-    @property
-    def optimizer(self) -> ImageOptimizer | None:
-        """图片压缩器（门面 ``_optimizer`` property 转发至此，保留测试 rebind）。"""
-        return self._optimizer
-
-    @optimizer.setter
-    def optimizer(self, value: ImageOptimizer | None) -> None:
-        self._optimizer = value
-
-    @property
-    def ocr_provider(self) -> OcrProvider | None:
-        """OCR 服务提供者（门面 ``_ocr_provider`` property 转发至此，保留测试 rebind）。"""
-        return self._ocr_provider
-
-    @ocr_provider.setter
-    def ocr_provider(self, value: OcrProvider | None) -> None:
-        self._ocr_provider = value
-
-    @property
-    def embedding_provider(self) -> EmbeddingProvider | None:
-        """Embedding 服务提供者（门面与 SyncEngine 转发读取，保留测试 rebind）。"""
-        return self._embedding_provider
-
-    @embedding_provider.setter
-    def embedding_provider(self, value: EmbeddingProvider | None) -> None:
-        self._embedding_provider = value
-
-    @property
-    def optimizer_target_locks(self) -> dict[tuple[str, str], _OptimizerLockEntry]:
-        """optimizer 目标锁注册表（只读，测试断言清空）。"""
-        return self._optimizer_target_locks
-
-    @property
-    def optimizer_registry_guard(self) -> asyncio.Lock:
-        """锁注册表守卫（测试 acquire/release 制造取消窗口）。"""
-        return self._optimizer_registry_guard
 
     @staticmethod
     def has_supported_ext(name: str) -> bool:
@@ -325,9 +281,7 @@ class ImagePipeline:
         created_output: Path | None = None
         if self._optimizer is not None:
             try:
-                result, existing_paths = await self.optimize_with_cancellation(
-                    filename
-                )
+                result, existing_paths = await self.optimize_with_cancellation(filename)
                 final_image_path = Path(result.output_path)
                 if final_image_path not in existing_paths:
                     created_output = final_image_path

@@ -1,20 +1,18 @@
 """SyncEngine - 索引刷新全流程：phase0 一致性 / phase1 删除多余 / phase2 补缺失。
 
 从 IndexManager 抽离，承接 refresh 的 phase 编排（扫描 -> 一致性 -> 删除 -> 合集 -> 新增）。
-门面 IndexManager 持有本类实例，_run_sync_internal 直指各 phase 方法；
-_scan_meme_files / _get_chroma_ids 经门面薄委托保留测试 monkeypatch 接缝。
-_refresh_active / _refresh_task 真实状态归本类，门面经 forwarding property 透传。
+门面 IndexManager 持有本类实例，_run_sync_internal 直指各 phase 方法。
+_refresh_active / _refresh_task 真实状态归本类，门面与同包协作者直接读写。
 """
 
 import asyncio
 import logging
 import os
 import shutil
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from pathlib import Path
 
 from bot.engine.metadata_store import MemeEntry, MetadataStore
-from bot.engine.protocols import EmbeddingProvider
 from bot.engine.vector_store import VectorStore
 from bot.log_context import timed
 
@@ -32,7 +30,6 @@ class SyncEngine:
         vector_store: 向量存储。
         memes_dir: 表情包图片目录。
         image_pipeline: 图片管道（phase2 处理新图、phase0 读 embedding provider）。
-        process_image_pipeline: 图片管道回调（保留门面 monkeypatch 接缝）。
         move_to_replaced: 去重归档回调（指向 coordinator.move_to_replaced）。
     """
 
@@ -42,7 +39,6 @@ class SyncEngine:
         vector_store: VectorStore,
         memes_dir: Path,
         image_pipeline: ImagePipeline,
-        process_image_pipeline: Callable[[str], Awaitable[tuple[str, str, list[float]]]],
         move_to_replaced: Callable[[str], str],
     ) -> None:
         """初始化 SyncEngine。
@@ -52,22 +48,15 @@ class SyncEngine:
             vector_store: 向量存储实例。
             memes_dir: 表情包图片目录路径。
             image_pipeline: 图片管道实例。
-            process_image_pipeline: 图片处理回调（filename -> (final_filename, text, embedding)）。
             move_to_replaced: 去重归档回调（filename -> 归档路径）。
         """
         self._metadata_store = metadata_store
         self._vector_store = vector_store
         self._memes_dir = memes_dir
         self._image_pipeline = image_pipeline
-        self._process_image_pipeline = process_image_pipeline
         self._move_to_replaced = move_to_replaced
         self._refresh_active = False
         self._refresh_task: asyncio.Task | None = None
-
-    @property
-    def _embedding_provider(self) -> EmbeddingProvider | None:
-        """转发至 ImagePipeline.embedding_provider（保留测试 rebind 接缝）。"""
-        return self._image_pipeline.embedding_provider
 
     @timed(logger, "索引刷新-阶段0")
     async def _sync_phase0_consistency(self, failed: list[str]) -> None:
@@ -98,7 +87,7 @@ class SyncEngine:
             if not text:
                 continue
             try:
-                vec = await self._embedding_provider.embed(text)  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
+                vec = await self._image_pipeline._embedding_provider.embed(text)  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
             except Exception as exc:
                 logger.error("阶段0 重 embed 失败: id=%s, error=%s", eid, exc)
                 failed.append(entries[eid].image_path)
@@ -151,7 +140,7 @@ class SyncEngine:
             if not entry.text:
                 continue
             try:
-                vec = await self._embedding_provider.embed(entry.text)  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
+                vec = await self._image_pipeline._embedding_provider.embed(entry.text)  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
             except Exception as exc:
                 logger.error("阶段0 全量重建 embed 失败: id=%s, error=%s", eid, exc)
                 failed.append(entry.image_path)
@@ -292,7 +281,7 @@ class SyncEngine:
         logger.info("开始并行处理 %d 张新增图片", len(new_files))
 
         raw = await asyncio.gather(
-            *(self._process_image_pipeline(filename) for filename in new_files),
+            *(self._image_pipeline.process(filename) for filename in new_files),
             return_exceptions=True,
         )
 
@@ -460,9 +449,9 @@ class SyncEngine:
                 if entry.is_file(follow_symlinks=False):
                     if not ImagePipeline.has_supported_ext(name):
                         continue
-                    relative_path = os.path.relpath(
-                        entry.path, memes_root
-                    ).replace(os.sep, "/")
+                    relative_path = os.path.relpath(entry.path, memes_root).replace(
+                        os.sep, "/"
+                    )
                     files[relative_path] = collection_name
                     has_image = True
                 elif entry.is_dir(follow_symlinks=False):
