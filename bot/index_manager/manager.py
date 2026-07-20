@@ -1626,12 +1626,3 @@ class IndexManager:
         = fake`` 接管。
         """
         return await self._image_pipeline.process(filename)
-
-    def _move_to_no_text(self, filename: str) -> str:
-        """薄委托至 ImagePipeline.move_to_no_text（与 coordinator.move_to_replaced 一致保留 rebind）。
-
-        实际移图逻辑由 ``self._image_pipeline.move_to_no_text`` 承载；EntryWriter 的
-        ``move_to_no_text`` 回调经 ``lambda f: self._image_pipeline.move_to_no_text(f)``
-        直接指向 pipeline，此门面方法仅供 ``_sync_phase2_add`` 与未来 rebind 使用。
-        """
-        return self._image_pipeline.move_to_no_text(filename)

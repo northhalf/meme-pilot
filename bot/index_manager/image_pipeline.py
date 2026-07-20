@@ -2,7 +2,7 @@
 
 从 IndexManager 抽离，自包含持有 optimizer/ocr/embedding providers 与目标锁注册表，
 负责同父目录、同 stem 图片的优化互斥、外部取消的可靠传播与管线输出清理。
-门面 IndexManager 持有本类实例并薄委托 _process_image_pipeline/_move_to_no_text 等方法，
+门面 IndexManager 持有本类实例并薄委托 _process_image_pipeline 等方法，
 provider 与锁表经公开 property 访问（门面 property 转发保留测试 monkeypatch rebind）。
 模块级 wait_task_through_cancellation 是通用取消辅助，供本类与 _WriteCoordinator 共用。
 """
