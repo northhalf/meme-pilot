@@ -11,7 +11,7 @@ import pylcs
 
 from bot.log_context import timed
 
-from .metadata_store import MemeEntry, MetadataStore
+from .metadata_store import MemeEntry
 from .types import SearchResult
 
 logger = logging.getLogger(__name__)
@@ -77,18 +77,15 @@ class KeywordSearcher:
 
     def __init__(
         self,
-        metadata_store: MetadataStore,
         threshold: float = 60.0,
         limit: int | None = None,
     ) -> None:
         """初始化关键词搜索引擎。
 
         Args:
-            metadata_store: 元数据存储，需实现 get_all_entries() 方法。
             threshold: 最低相似度阈值，默认 60。
             limit: 最大返回结果数；None 表示返回全部匹配，默认 None。
         """
-        self._metadata_store = metadata_store
         self._threshold = threshold
         self._limit = limit
 
@@ -237,26 +234,3 @@ class KeywordSearcher:
             len(results) if self._limit is None else min(len(results), self._limit),
         )
         return results[: self._limit]
-
-    def search(self, keyword: str) -> list[SearchResult]:
-        """根据关键词搜索表情包。
-
-        在全部条目上执行两层匹配（逻辑同 search_in）：
-        1. 精确子串层：用「原始输入去所有空白、保留助词」的关键词做子串匹配；
-           命中则只返回包含该子串的条目（similarity=100.0）。
-        2. LCS 模糊回退层：仅当第一层未命中时启用，用「去助词+去空白」的关键词
-           走现有 LCS 模糊匹配（阈值 60，全量匹配）。
-
-        Args:
-            keyword: 用户输入的搜索关键词。
-
-        Note:
-            调用方必须已持有读锁，保证读取期间 MetadataStore 快照不被并发写入修改。
-            IndexManager.search() 负责持锁。该方法委托 search_in，先获取全量条目快照再调用。
-
-        Returns:
-            按相似度降序排列的搜索结果列表；limit=None 时返回全部匹配，否则最多返回 limit 条。
-            无匹配时返回空列表。
-        """
-        entries = self._metadata_store.get_all_entries()
-        return self.search_in(entries, keyword)

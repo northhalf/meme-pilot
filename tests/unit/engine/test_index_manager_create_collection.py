@@ -200,43 +200,6 @@ async def test_create_collection_rejects_non_directory_path(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("path_kind", ["symlink", "fifo", "directory"])
-async def test_create_collection_rejects_directory_replaced_before_sqlite(
-    index_manager: IndexManager,
-    monkeypatch: pytest.MonkeyPatch,
-    path_kind: str,
-) -> None:
-    """SQLite 写入前目录身份变化时拒绝登记且不删除替换路径。"""
-    target = index_manager._memes_dir / "身份变化"
-    identity_calls = 0
-    replacement_identity: tuple[int, int] | None = None
-
-    def identity_with_replacement(path: Path) -> tuple[int, int]:
-        nonlocal identity_calls, replacement_identity
-        identity_calls += 1
-        if identity_calls == 2:
-            replacement_identity = _replace_target_directory(target, path_kind)
-        path_stat = os.lstat(path)
-        if not stat.S_ISDIR(path_stat.st_mode):
-            raise CollectionPathConflictError(path.name)
-        return path_stat.st_dev, path_stat.st_ino
-
-    monkeypatch.setattr(
-        index_manager._coordinator,
-        "_get_collection_directory_identity",
-        identity_with_replacement,
-        raising=False,
-    )
-
-    with pytest.raises(CollectionCreateError):
-        await index_manager.create_collection("身份变化")
-
-    assert identity_calls == 2
-    assert index_manager._metadata_store.get_collection_by_name("身份变化") is None
-    _assert_replacement_survives(target, path_kind, replacement_identity)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("path_kind", ["symlink", "fifo", "directory"])
 async def test_database_failure_does_not_remove_replaced_directory(
     index_manager: IndexManager,
     monkeypatch: pytest.MonkeyPatch,
@@ -270,9 +233,7 @@ async def test_database_failure_does_not_remove_replaced_directory(
         await index_manager.create_collection("补偿身份变化")
 
     assert rmdir_calls == []
-    assert (
-        index_manager._metadata_store.get_collection_by_name("补偿身份变化") is None
-    )
+    assert index_manager._metadata_store.get_collection_by_name("补偿身份变化") is None
     _assert_replacement_survives(target, path_kind, replacement_identity)
     critical_record = next(
         record
@@ -466,9 +427,7 @@ async def test_close_cancels_in_flight_add_and_queued_create(
     assert isinstance(create_result, IndexAddCancelledError)
     assert close_result is None
     assert not (index_manager._memes_dir / "关闭排队合集").exists()
-    assert (
-        index_manager._metadata_store.get_collection_by_name("关闭排队合集") is None
-    )
+    assert index_manager._metadata_store.get_collection_by_name("关闭排队合集") is None
 
 
 @pytest.mark.asyncio
@@ -617,9 +576,7 @@ async def test_refresh_waits_for_dequeued_create_blocked_before_write_lock(
     monkeypatch.setattr(index_manager, "_ensure_write_worker", lambda: None)
     await index_manager._rwlock.acquire_write()
     try:
-        create_task = asyncio.create_task(
-            index_manager.create_collection("已取出合集")
-        )
+        create_task = asyncio.create_task(index_manager.create_collection("已取出合集"))
         await _wait_for_queue_size(index_manager, 1)
         assert not index_manager._write_drained.is_set()
 

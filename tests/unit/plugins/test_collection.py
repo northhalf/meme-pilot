@@ -61,10 +61,6 @@ def _matcher() -> MagicMock:
     return matcher
 
 
-def _bot() -> MagicMock:
-    return MagicMock()
-
-
 def _scope(user_id: str = "12345") -> ChatScope:
     return ChatScope(user_id=int(user_id), chat_type="private", chat_id=int(user_id))
 
@@ -97,7 +93,7 @@ async def test_create_success_keeps_current_selection() -> None:
         patch.object(collection.session_manager, "deactivate_chat") as deactivate,
         patch.object(collection, "get_index_manager", return_value=manager),
     ):
-        await handle_collection(_bot(), _event(), matcher, _args("create 新三国"))
+        await handle_collection(_event(), matcher, _args("create 新三国"))
 
     manager.create_collection.assert_awaited_once_with("新三国")
     text = extract_message_text(matcher.finish.await_args.args[0])
@@ -121,7 +117,7 @@ async def test_existing_directory_success_adds_refresh_hint() -> None:
         patch.object(collection.session_manager, "deactivate_chat") as deactivate,
         patch.object(collection, "get_index_manager", return_value=manager),
     ):
-        await handle_collection(_bot(), _event(), matcher, _args("create 新三国"))
+        await handle_collection(_event(), matcher, _args("create 新三国"))
 
     text = extract_message_text(matcher.finish.await_args.args[0])
     assert "已登记现有目录" in text
@@ -148,7 +144,7 @@ async def test_invalid_subcommand_replies_usage(raw: str, expected: str) -> None
         patch.object(collection.session_manager, "activate_chat", return_value=True),
         patch.object(collection.session_manager, "deactivate_chat") as deactivate,
     ):
-        await handle_collection(_bot(), _event(), matcher, _args(raw))
+        await handle_collection(_event(), matcher, _args(raw))
 
     assert extract_message_text(matcher.finish.await_args.args[0]) == expected
     deactivate.assert_called_once_with(_scope())
@@ -161,7 +157,7 @@ async def test_unauthorized_user_is_silently_ignored() -> None:
         patch.object(collection, "is_authorized", return_value=False),
         patch.object(collection, "get_index_manager") as get_manager,
     ):
-        await handle_collection(_bot(), _event("999"), matcher, _args("create 新三国"))
+        await handle_collection(_event("999"), matcher, _args("create 新三国"))
 
     matcher.finish.assert_awaited_once_with(None)
     get_manager.assert_not_called()
@@ -177,7 +173,7 @@ async def test_unauthorized_group_user_is_silently_ignored() -> None:
         patch.object(collection.session_manager, "activate_chat") as activate,
         patch.object(collection, "get_index_manager") as get_manager,
     ):
-        await handle_collection(_bot(), event, matcher, _args("create 新三国"))
+        await handle_collection(event, matcher, _args("create 新三国"))
 
     assert event.group_id == 98765
     assert event.message_id == 88
@@ -195,7 +191,7 @@ async def test_group_chat_rejected_before_activation() -> None:
         patch.object(collection.session_manager, "activate_chat") as activate,
     ):
         await handle_collection(
-            _bot(), _event(message_type="group"), matcher, _args("create 新三国")
+            _event(message_type="group"), matcher, _args("create 新三国")
         )
 
     activate.assert_not_called()
@@ -212,7 +208,7 @@ async def test_active_session_rejects_new_command() -> None:
         patch.object(collection.session_manager, "activate_chat", return_value=False),
         patch.object(collection, "get_index_manager") as get_manager,
     ):
-        await handle_collection(_bot(), _event(), matcher, _args("create 新三国"))
+        await handle_collection(_event(), matcher, _args("create 新三国"))
 
     assert "已有命令在处理中" in extract_message_text(matcher.finish.await_args.args[0])
     get_manager.assert_not_called()
@@ -261,7 +257,7 @@ async def test_domain_errors_have_fixed_messages_and_cleanup(
         patch.object(collection.session_manager, "deactivate_chat") as deactivate,
         patch.object(collection, "get_index_manager", return_value=manager),
     ):
-        await handle_collection(_bot(), _event(), matcher, _args("create 新三国"))
+        await handle_collection(_event(), matcher, _args("create 新三国"))
 
     assert extract_message_text(matcher.finish.await_args.args[0]) == expected
     assert "internal path" not in expected
@@ -282,7 +278,7 @@ async def test_unexpected_error_does_not_leak_details_and_cleanup() -> None:
         patch.object(collection.session_manager, "deactivate_chat") as deactivate,
         patch.object(collection, "get_index_manager", return_value=manager),
     ):
-        await handle_collection(_bot(), _event(), matcher, _args("create 新三国"))
+        await handle_collection(_event(), matcher, _args("create 新三国"))
 
     text = extract_message_text(matcher.finish.await_args.args[0])
     assert text == "合集创建失败，请检查日志后重试"
@@ -304,7 +300,7 @@ async def test_cancelled_create_propagates_and_cleanup() -> None:
         patch.object(collection, "get_index_manager", return_value=manager),
         pytest.raises(asyncio.CancelledError),
     ):
-        await handle_collection(_bot(), _event(), matcher, _args("create 新三国"))
+        await handle_collection(_event(), matcher, _args("create 新三国"))
 
     deactivate.assert_called_once_with(_scope())
 
@@ -327,7 +323,7 @@ async def test_delete_success_replies_summary() -> None:
         patch.object(collection.session_manager, "deactivate_chat") as deactivate,
         patch.object(collection, "get_index_manager", return_value=manager),
     ):
-        await handle_collection(_bot(), _event(), matcher, _args("delete 新三国"))
+        await handle_collection(_event(), matcher, _args("delete 新三国"))
 
     manager.delete_collection.assert_awaited_once_with("新三国")
     text = extract_message_text(matcher.finish.await_args.args[0])
@@ -349,7 +345,7 @@ async def test_delete_success_without_scope_reset_omits_line() -> None:
         patch.object(collection.session_manager, "deactivate_chat"),
         patch.object(collection, "get_index_manager", return_value=manager),
     ):
-        await handle_collection(_bot(), _event(), matcher, _args("delete 3"))
+        await handle_collection(_event(), matcher, _args("delete 3"))
 
     manager.delete_collection.assert_awaited_once_with("3")
     text = extract_message_text(matcher.finish.await_args.args[0])
@@ -392,7 +388,7 @@ async def test_delete_errors_have_fixed_messages(
         patch.object(collection.session_manager, "deactivate_chat"),
         patch.object(collection, "get_index_manager", return_value=manager),
     ):
-        await handle_collection(_bot(), _event(), matcher, _args(f"delete {target}"))
+        await handle_collection(_event(), matcher, _args(f"delete {target}"))
 
     assert extract_message_text(matcher.finish.await_args.args[0]) == expected
     assert "internal" not in expected
@@ -418,9 +414,7 @@ async def test_rename_success_replies_summary() -> None:
         patch.object(collection.session_manager, "deactivate_chat") as deactivate,
         patch.object(collection, "get_index_manager", return_value=manager),
     ):
-        await handle_collection(
-            _bot(), _event(), matcher, _args("rename 新三国 旧三国")
-        )
+        await handle_collection(_event(), matcher, _args("rename 新三国 旧三国"))
 
     manager.rename_collection.assert_awaited_once_with("新三国", "旧三国")
     text = extract_message_text(matcher.finish.await_args.args[0])
@@ -467,9 +461,7 @@ async def test_rename_errors_have_fixed_messages(
         patch.object(collection.session_manager, "deactivate_chat"),
         patch.object(collection, "get_index_manager", return_value=manager),
     ):
-        await handle_collection(
-            _bot(), _event(), matcher, _args("rename 新三国 旧三国")
-        )
+        await handle_collection(_event(), matcher, _args("rename 新三国 旧三国"))
 
     assert extract_message_text(matcher.finish.await_args.args[0]) == expected
     assert "internal" not in expected

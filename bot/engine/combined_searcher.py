@@ -9,10 +9,8 @@ import logging
 import random
 from itertools import groupby
 
-from bot.log_context import timed
-
 from .keyword_searcher import KeywordSearcher
-from .metadata_store import MemeEntry, MetadataStore
+from .metadata_store import MemeEntry
 from .types import SearchResult
 
 logger = logging.getLogger(__name__)
@@ -22,22 +20,18 @@ class CombinedSearcher:
     """组合搜索引擎。
 
     Attributes:
-        _metadata_store: 元数据存储提供者，需实现 get_all_entries()。
         _keyword_searcher: 关键词搜索器，用于子集上的关键词匹配。
     """
 
     def __init__(
         self,
-        metadata_store: MetadataStore,
         keyword_searcher: KeywordSearcher,
     ) -> None:
         """初始化组合搜索引擎。
 
         Args:
-            metadata_store: 元数据存储提供者。
             keyword_searcher: 关键词搜索器。
         """
-        self._metadata_store = metadata_store
         self._keyword_searcher = keyword_searcher
 
     @staticmethod
@@ -66,36 +60,6 @@ class CombinedSearcher:
                 continue
             result[eid] = entry
         return result
-
-    @timed(logger, "组合搜索")
-    def search(
-        self,
-        keyword: str | None,
-        speakers: list[str],
-        tags: list[str] | None = None,
-    ) -> list[SearchResult]:
-        """按关键词/说话人/标签组合检索（全库兼容包装）。
-
-        Args:
-            keyword: 关键词；None 或空串表示纯过滤（不跑关键词匹配）。
-            speakers: 说话人列表（OR，精确相等）；空列表表示不过滤。
-            tags: 标签列表（AND，区分大小写）；None 或空列表表示不过滤。
-
-        Note:
-            调用方必须已持有读锁。IndexManager.search_combined() 负责持锁。
-
-        Returns:
-            有关键词时按相似度降序；无关键词时按 entry_id 升序。无匹配返回空列表。
-        """
-        tags = tags or []
-        logger.debug(
-            "组合检索入口: keyword=%r, speakers=%r, tags=%r",
-            keyword,
-            speakers,
-            tags,
-        )
-        entries = self._metadata_store.get_all_entries()
-        return self.search_in(entries, keyword, speakers, tags=tags)
 
     def search_in(
         self,

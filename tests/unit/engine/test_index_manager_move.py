@@ -94,9 +94,7 @@ async def _assert_old_state(
     assert manager._metadata_store.get_entry(old_entry.id) == old_entry
     assert (manager._memes_dir / old_entry.image_path).read_bytes() == b"source"
     assert not (manager._memes_dir / target_relative_path).exists()
-    assert await manager._vector_store.snapshot_records(
-        [old_entry.id]
-    ) == [old_vector]
+    assert await manager._vector_store.snapshot_records([old_entry.id]) == [old_vector]
 
 
 @pytest.mark.asyncio
@@ -179,6 +177,8 @@ async def test_prepare_move_has_domain_errors_for_missing_source_and_same_target
 
     with pytest.raises(MemeNotFoundError):
         await index_manager.prepare_move(scope, "999", "0")
+    with pytest.raises(CollectionNotFoundError):
+        await index_manager.prepare_move(scope, "1", "999")
     with pytest.raises(ValueError, match="已属于目标合集"):
         await index_manager.prepare_move(scope, "1", source.name)
 
@@ -188,7 +188,7 @@ async def test_prepare_move_has_domain_errors_for_missing_source_and_same_target
 
 
 @pytest.mark.asyncio
-async def test_preview_move_returns_estimated_public_id(
+async def test_prepare_move_returns_estimated_public_id(
     index_manager: IndexManager,
 ) -> None:
     source = index_manager._metadata_store.create_collection("新三国")
@@ -199,8 +199,10 @@ async def test_preview_move_returns_estimated_public_id(
         "文本",
         collection_id=source.id,
     )
+    scope = ChatScope(user_id=1, chat_type="private", chat_id=1)
+    index_manager._metadata_store.set_selected_collection(scope, source.id)
 
-    preview = await index_manager.preview_move(entry_id, target.id)
+    preview = await index_manager.prepare_move(scope, "1", target.name)
 
     assert preview.entry_id == entry_id
     assert preview.old_public_id == MemePublicId(source.id, 1)
@@ -208,26 +210,6 @@ async def test_preview_move_returns_estimated_public_id(
     assert preview.target_collection_id == target.id
     assert preview.target_collection_name == target.name
     assert preview.expected_public_id == MemePublicId(target.id, 1)
-
-
-@pytest.mark.asyncio
-async def test_preview_move_rejects_missing_entry_target_and_same_collection(
-    index_manager: IndexManager,
-) -> None:
-    source = index_manager._metadata_store.create_collection("源")
-    entry_id = await _add_entry(
-        index_manager,
-        "源/a.webp",
-        "文本",
-        collection_id=source.id,
-    )
-
-    with pytest.raises(ValueError, match="entry_id=999 不存在"):
-        await index_manager.preview_move(999, 0)
-    with pytest.raises(CollectionNotFoundError):
-        await index_manager.preview_move(entry_id, 999)
-    with pytest.raises(ValueError, match="已属于目标合集"):
-        await index_manager.preview_move(entry_id, source.id)
 
 
 @pytest.mark.asyncio
@@ -259,7 +241,9 @@ async def test_move_preserves_internal_id_and_moves_to_collection_root(
     assert persisted.image_path == "甄嬛传/a.webp"
     assert persisted.collection_id == target.id
     assert persisted.local_id == 1
-    assert await index_manager._vector_store.get_collection_ids() == {entry_id: target.id}
+    assert await index_manager._vector_store.get_collection_ids() == {
+        entry_id: target.id
+    }
 
 
 @pytest.mark.asyncio
@@ -322,7 +306,9 @@ async def test_move_recomputes_local_id_at_execution(
         "源文本",
         collection_id=source.id,
     )
-    preview = await index_manager.preview_move(source_id, target.id)
+    scope = ChatScope(user_id=1, chat_type="private", chat_id=1)
+    index_manager._metadata_store.set_selected_collection(scope, source.id)
+    preview = await index_manager.prepare_move(scope, "1", target.name)
     await _add_entry(
         index_manager,
         "目标/occupied.webp",
@@ -381,7 +367,9 @@ async def test_move_rejects_reused_internal_and_public_source_identity(
     assert index_manager._metadata_store.get_entry(replacement_id) == replacement
     assert (index_manager._memes_dir / "源/b.webp").read_bytes() == b"replacement"
     assert not (index_manager._memes_dir / "目标/b.webp").exists()
-    assert await index_manager._vector_store.get_collection_ids() == {replacement_id: source.id}
+    assert await index_manager._vector_store.get_collection_ids() == {
+        replacement_id: source.id
+    }
 
 
 @pytest.mark.asyncio
@@ -397,7 +385,9 @@ async def test_move_rejects_target_id_reused_by_different_name(
         "文本",
         collection_id=source.id,
     )
-    preview = await index_manager.preview_move(entry_id, target.id)
+    scope = ChatScope(user_id=1, chat_type="private", chat_id=1)
+    index_manager._metadata_store.set_selected_collection(scope, source.id)
+    preview = await index_manager.prepare_move(scope, "1", target.name)
     index_manager._metadata_store.delete_collection_and_reset_scopes(target.id)
     replacement = index_manager._metadata_store.create_collection("新目标")
     assert replacement.id == target.id
@@ -615,11 +605,7 @@ async def test_move_restores_final_snapshot_when_sqlite_update_fails(
     )
     old_entry = index_manager._metadata_store.get_entry(entry_id)
     assert old_entry is not None
-    old_vector = (
-        await index_manager._vector_store.snapshot_records(
-            [entry_id]
-        )
-    )[0]
+    old_vector = (await index_manager._vector_store.snapshot_records([entry_id]))[0]
     metadata_store = index_manager._metadata_store
     original_update = metadata_store.update
     calls = 0
@@ -681,11 +667,7 @@ async def test_move_restores_final_snapshot_when_chroma_update_fails(
     )
     old_entry = index_manager._metadata_store.get_entry(entry_id)
     assert old_entry is not None
-    old_vector = (
-        await index_manager._vector_store.snapshot_records(
-            [entry_id]
-        )
-    )[0]
+    old_vector = (await index_manager._vector_store.snapshot_records([entry_id]))[0]
     original_update = index_manager._vector_store.update_collection_id
     calls = 0
 
@@ -731,11 +713,7 @@ async def test_move_restores_file_when_secure_move_succeeds_then_raises(
     )
     old_entry = index_manager._metadata_store.get_entry(entry_id)
     assert old_entry is not None
-    old_vector = (
-        await index_manager._vector_store.snapshot_records(
-            [entry_id]
-        )
-    )[0]
+    old_vector = (await index_manager._vector_store.snapshot_records([entry_id]))[0]
     calls = 0
 
     def move_then_fail(
@@ -854,11 +832,7 @@ async def test_move_compensates_when_persisted_result_read_fails(
     )
     old_entry = index_manager._metadata_store.get_entry(entry_id)
     assert old_entry is not None
-    old_vector = (
-        await index_manager._vector_store.snapshot_records(
-            [entry_id]
-        )
-    )[0]
+    old_vector = (await index_manager._vector_store.snapshot_records([entry_id]))[0]
     original_get_entry = index_manager._metadata_store.get_entry
     calls = 0
 
@@ -994,11 +968,7 @@ async def test_move_cancellation_waits_for_compensation(
     )
     old_entry = index_manager._metadata_store.get_entry(entry_id)
     assert old_entry is not None
-    old_vector = (
-        await index_manager._vector_store.snapshot_records(
-            [entry_id]
-        )
-    )[0]
+    old_vector = (await index_manager._vector_store.snapshot_records([entry_id]))[0]
     original_update = index_manager._vector_store.update_collection_id
     entered = asyncio.Event()
     release = asyncio.Event()
@@ -1024,7 +994,9 @@ async def test_move_cancellation_waits_for_compensation(
     persisted = index_manager._metadata_store.get_entry(entry_id)
     assert persisted is not None
     assert persisted.collection_id == target.id
-    assert await index_manager._vector_store.get_collection_ids() == {entry_id: target.id}
+    assert await index_manager._vector_store.get_collection_ids() == {
+        entry_id: target.id
+    }
     assert not (index_manager._memes_dir / old_entry.image_path).exists()
     assert (index_manager._memes_dir / "目标/a.webp").read_bytes() == b"source"
     assert old_vector.entry_id == entry_id

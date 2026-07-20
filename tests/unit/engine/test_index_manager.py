@@ -109,7 +109,7 @@ class FakeMetadataStore:
                 return eid
         return None
 
-    def find_next_id(self) -> int:
+    def _find_next_id(self) -> int:
         if not self._entries:
             return 1
         ids = set(self._entries)
@@ -134,9 +134,6 @@ class FakeMetadataStore:
         if collection_id is None:
             return len(self._entries)
         return len(self._entries_by_collection.get(collection_id, {}))
-
-    def get_all_text(self) -> list[tuple[int, str]]:
-        return [(eid, e.text) for eid, e in sorted(self._entries.items())]
 
     def create_collection(self, name: str) -> MemeCollection:
         collection_id = 1 if not self._collections else max(self._collections) + 1
@@ -189,7 +186,7 @@ class FakeMetadataStore:
         *,
         collection_id: int = 0,
     ) -> int:
-        eid = self.find_next_id()
+        eid = self._find_next_id()
         local_id = self.find_next_local_id(collection_id)
         self._entries[eid] = MemeEntry(
             id=eid,
@@ -439,14 +436,14 @@ def index_manager(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     memes_dir.mkdir()
     metadata_store = cast(MetadataStore, FakeMetadataStore())
     vector_store = cast(VectorStore, FakeVectorStore())
-    keyword_searcher = KeywordSearcher(metadata_store)
+    keyword_searcher = KeywordSearcher()
     embedding_provider = MockEmbeddingProvider()
-    random_searcher = RandomSearcher(metadata_store, keyword_searcher)
+    random_searcher = RandomSearcher(keyword_searcher)
     semantic_searcher = SemanticSearcher(metadata_store, vector_store)
     from bot.engine.collection_manager import CollectionManager
     from bot.engine.combined_searcher import CombinedSearcher
 
-    combined_searcher = CombinedSearcher(metadata_store, keyword_searcher)
+    combined_searcher = CombinedSearcher(keyword_searcher)
     collection_manager = CollectionManager(metadata_store)
 
     manager = IndexManager(
@@ -920,7 +917,9 @@ class TestAdd:
         # 第二次替换：再次把同名 old.jpg 移入 memes_replaced/
         # 通过手动调用 move_to_replaced 模拟同名冲突
         (Path(index_manager._memes_dir) / "old.jpg").write_bytes(b"3")
-        archived = await asyncio.to_thread(index_manager._coordinator.move_to_replaced, "old.jpg")
+        archived = await asyncio.to_thread(
+            index_manager._coordinator.move_to_replaced, "old.jpg"
+        )
         assert archived == str(replaced_dir / "old_1.jpg")
         assert (replaced_dir / "old_1.jpg").exists()
 
@@ -2266,7 +2265,9 @@ class TestRefresh:
         nested = Path(index_manager._memes_dir) / "新三国" / "截图"
         nested.mkdir(parents=True)
         (nested / "a.jpg").write_bytes(b"image")
-        index_manager._optimizer = cast(ImageOptimizer, FakeOptimizer(output_path=str(nested / "a.webp")))
+        index_manager._optimizer = cast(
+            ImageOptimizer, FakeOptimizer(output_path=str(nested / "a.webp"))
+        )
 
         final_path, _, _ = await index_manager._process_image_pipeline(
             "新三国/截图/a.jpg"
@@ -2916,6 +2917,7 @@ class TestCollectionSearch:
 
         assert len(results) == 1
         assert results[0].collection_id == second.id
+
 
 # ---------------------------------------------------------------------------
 # Task 6: 合集管理方法直接测试

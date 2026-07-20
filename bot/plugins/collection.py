@@ -1,10 +1,9 @@
 """/collection 命令插件 - 管理表情包合集（create/delete/rename）。"""
 
 import logging
-from typing import TYPE_CHECKING
 
 from nonebot import on_command
-from nonebot.adapters.onebot.v11 import Bot, Message, MessageEvent
+from nonebot.adapters.onebot.v11 import Message, MessageEvent
 from nonebot.matcher import Matcher
 from nonebot.params import CommandArg
 from nonebot.rule import to_me
@@ -31,9 +30,6 @@ from bot.index_manager import (
 )
 from bot.log_context import generate_request_id, set_request_id
 from bot.session import ChatScope, session_manager
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 _USAGE_CREATE = "用法：/collection create <名称>"
@@ -110,7 +106,6 @@ def _format_rename_success(result: RenameCollectionResult) -> str:
 
 @collection_cmd.handle()
 async def handle_collection(
-    bot: Bot,
     event: MessageEvent,
     matcher: Matcher,
     args: Message = CommandArg(),
@@ -118,12 +113,10 @@ async def handle_collection(
     """处理合集 create/delete/rename 子命令。
 
     Args:
-        bot: OneBot V11 Bot 实例。
         event: 私聊或群聊消息事件。
         matcher: NoneBot2 Matcher 实例。
         args: 命令后的完整参数消息。
     """
-    _ = bot
     user_id = event.get_user_id()
     scope = ChatScope.from_event(event)
     request_id = generate_request_id()
@@ -173,8 +166,6 @@ async def _handle_create(event: MessageEvent, matcher: Matcher, text: str) -> No
         await reply_utils.finish(event, matcher, _USAGE_CREATE)
         return
     manager = get_index_manager()
-    if manager is None:
-        return
     try:
         result = await manager.create_collection(parts[1])
     except InvalidCollectionNameError:
@@ -221,8 +212,6 @@ async def _handle_delete(event: MessageEvent, matcher: Matcher, text: str) -> No
         await reply_utils.finish(event, matcher, _USAGE_DELETE)
         return
     manager = get_index_manager()
-    if manager is None:
-        return
     target = parts[1]
     try:
         result = await manager.delete_collection(target)
@@ -272,8 +261,6 @@ async def _handle_rename(event: MessageEvent, matcher: Matcher, text: str) -> No
         return
     _, source_raw, new_name = parts
     manager = get_index_manager()
-    if manager is None:
-        return
     try:
         result = await manager.rename_collection(source_raw, new_name)
     except InvalidCollectionNameError:

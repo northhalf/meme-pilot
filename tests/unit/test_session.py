@@ -259,7 +259,7 @@ class TestExecuteCancel:
 
         other_task = asyncio.create_task(long_running())
         session_manager.activate_chat(scope, "add", matcher)
-        session_manager.set_current_task(scope, other_task)
+        session_manager.get_or_create_chat(scope).current_task = other_task
 
         result = await session_manager.execute_cancel(scope, event)
         assert result is True

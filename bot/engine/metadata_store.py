@@ -409,16 +409,6 @@ class MetadataStore:
         with self._lock:
             return self._text_to_id.get((collection_id, text))
 
-    def find_next_id(self) -> int:
-        """查找内部 id 的最小正整数空洞。
-
-        Returns:
-            可分配的最小内部 id。
-        """
-        with self._lock:
-            row = self._require_conn().execute(_FIND_NEXT_ID_SQL).fetchone()
-            return int(row["next_id"])
-
     def entry_count(self) -> int:
         """返回全库条目总数。
 
@@ -427,16 +417,6 @@ class MetadataStore:
         """
         with self._lock:
             return len(self._entries)
-
-    def get_all_text(self) -> list[tuple[int, str]]:
-        """返回全部内部 id 与文本。
-
-        Returns:
-            按内部 id 升序排列的 ``(id, text)`` 列表。
-        """
-        with self._lock:
-            rows = self._require_conn().execute("SELECT id, text FROM meme ORDER BY id")
-            return [(int(row["id"]), str(row["text"])) for row in rows]
 
     def list_collections(self) -> list[MemeCollection]:
         """按编号升序返回全部普通合集。

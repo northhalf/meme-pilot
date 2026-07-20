@@ -18,7 +18,7 @@ import threading
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from numbers import Real
-from typing import Any, overload
+from typing import Any
 
 import chromadb
 
@@ -547,9 +547,7 @@ class VectorStore:
         logger.debug("向量查询返回 %d 个候选", len(result))
         return result
 
-    def _rebuild_all_sync(
-        self, items: list[tuple[int, list[float], int]]
-    ) -> None:
+    def _rebuild_all_sync(self, items: list[tuple[int, list[float], int]]) -> None:
         """同步全量重建，并写入每条记录的合集 metadata。
 
         Args:
@@ -573,44 +571,25 @@ class VectorStore:
                     ],
                 )
 
-    @overload
-    async def rebuild_all(self, items: list[tuple[int, list[float]]]) -> None: ...
-
-    @overload
-    async def rebuild_all(self, items: list[tuple[int, list[float], int]]) -> None: ...
-
     async def rebuild_all(
         self,
-        items: list[tuple[int, list[float]]] | list[tuple[int, list[float], int]],
+        items: list[tuple[int, list[float], int]],
     ) -> None:
         """全量重建 collection 并写入合集 metadata。
 
-        三元组是正式合集感知契约。为等待 Task 6 更新现有同步路径，过渡期仍
-        接受二元组，并按根目录 `collection_id=0` 规范化后写入。
-
         Args:
-            items: `(entry_id, embedding, collection_id)` 列表，或过渡兼容的
-                `(entry_id, embedding)` 列表；为空时仅重建空 collection。
+            items: `(entry_id, embedding, collection_id)` 列表；为空时仅重建空
+                collection。
 
         Raises:
-            ValueError: 元组形式混用，或任一 ID、embedding、collection_id
-                不合法。全部校验在清空前完成。
+            ValueError: 任一 ID、embedding 或 collection_id 不合法。全部校验在
+                清空前完成。
         """
-        arities = {len(item) for item in items}
-        if not arities.issubset({2, 3}):
-            raise ValueError("rebuild_all 每条记录必须是二元组或三元组")
-        if len(arities) > 1:
-            raise ValueError("rebuild_all 不能混合二元组和三元组")
-
         prepared: list[tuple[int, list[float], int]] = []
         seen_ids: set[int] = set()
         embedding_dimension: int | None = None
         for item in items:
-            if len(item) == 2:
-                entry_id, embedding = item
-                collection_id = 0
-            else:
-                entry_id, embedding, collection_id = item
+            entry_id, embedding, collection_id = item
             validated_entry_id = _validate_entry_id(entry_id)
             if validated_entry_id in seen_ids:
                 raise ValueError(f"rebuild_all entry_id 重复: {validated_entry_id}")
@@ -677,64 +656,6 @@ class VectorStore:
             int(raw_id): _copy_stored_metadata(metadata)
             for raw_id, metadata in zip(ids, metadatas, strict=True)
         }
-
-    async def get_metadatas(self) -> dict[int, VectorMetadata]:
-        """读取全部完整 metadata，并返回独立副本。
-
-        Returns:
-            entry_id 到 metadata 的映射；原无 metadata 映射为 `{}`。
-
-        Raises:
-            RuntimeError: Chroma 返回结果形状或 metadata 不合法。
-        """
-        return await asyncio.to_thread(self._get_metadatas_sync)
-
-    def _update_metadata_sync(self, entry_id: int, metadata: VectorMetadata) -> None:
-        """同步完整覆盖一条已存在记录的 metadata。
-
-        Args:
-            entry_id: 待更新的索引 id。
-            metadata: 已校验并复制的完整 metadata。
-
-        Raises:
-            ValueError: entry_id 不存在。
-            RuntimeError: Chroma 返回结果形状无效。
-        """
-        with self._lock:
-            collection = self._require_collection()
-            existing = collection.get(ids=[str(entry_id)], include=["metadatas"])
-            ids, metadatas = self._parse_metadata_result(existing)
-            if not ids:
-                raise ValueError(f"向量 id={entry_id} 不存在")
-            if ids != [str(entry_id)]:
-                raise RuntimeError("Chroma 返回了非请求 id")
-            existing_metadata = _copy_stored_metadata(metadatas[0])
-            update_payload: dict[str, str | int | float | bool | None] = {
-                key: None for key in existing_metadata.keys() - metadata.keys()
-            }
-            update_payload.update(metadata)
-            if not update_payload:
-                return
-            collection.update(ids=[str(entry_id)], metadatas=[update_payload])
-
-    async def update_metadata(self, entry_id: int, metadata: VectorMetadata) -> None:
-        """完整覆盖一条已存在记录的 metadata。
-
-        Args:
-            entry_id: 待更新的索引 id。
-            metadata: 完整 metadata，不与存储层共享别名。
-
-        Raises:
-            ValueError: entry_id 不合法、不存在或 metadata 类型不合法。
-            RuntimeError: Chroma 返回结果形状无效。
-        """
-        validated_entry_id = _validate_entry_id(entry_id)
-        metadata_copy = _copy_metadata(metadata)
-        await asyncio.to_thread(
-            self._update_metadata_sync,
-            validated_entry_id,
-            metadata_copy,
-        )
 
     def _get_collection_ids_sync(self) -> dict[int, int | None]:
         """同步读取全部记录的合集编号。

@@ -215,16 +215,6 @@ class SessionManager:
 
     # ── Task 生命周期管理 ──
 
-    def set_current_task(self, scope: ChatScope, task: asyncio.Task | None) -> None:
-        """显式设置作用域的 current_task。
-
-        Args:
-            scope: 聊天作用域。
-            task: 要设置的异步任务，或 None。
-        """
-        chat = self.get_or_create_chat(scope)
-        chat.current_task = task
-
     def reset_current_task(self, scope: ChatScope) -> None:
         """快速将 current_task 设为 None。
 

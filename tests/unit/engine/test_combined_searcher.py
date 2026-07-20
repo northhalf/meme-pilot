@@ -1,21 +1,11 @@
 """CombinedSearcher 单元测试。"""
 
-from typing import cast
-from unittest.mock import MagicMock
-
 import pytest
 
 from bot.engine.combined_searcher import CombinedSearcher
 from bot.engine.keyword_searcher import KeywordSearcher
-from bot.engine.metadata_store import MemeEntry, MetadataStore
+from bot.engine.metadata_store import MemeEntry
 from bot.engine.types import MemePublicId, SearchResult
-
-
-def MockMetadataStore(entries: dict[int, MemeEntry] | None = None) -> MetadataStore:
-    """构造模拟 MetadataStore，get_all_entries 返回预定义的 entries 字典。"""
-    mock = MagicMock()
-    mock.get_all_entries.return_value = entries or {}
-    return cast(MetadataStore, mock)
 
 
 @pytest.fixture
@@ -48,127 +38,202 @@ def sample_entries() -> dict[int, MemeEntry]:
 
 
 @pytest.fixture
-def combined(sample_entries: dict[int, MemeEntry]) -> CombinedSearcher:
-    md = MockMetadataStore(sample_entries)
-    return CombinedSearcher(md, KeywordSearcher(md))
+def combined() -> CombinedSearcher:
+    return CombinedSearcher(KeywordSearcher())
 
 
 class TestSpeakerFilter:
-    def test_single_speaker_exact(self, combined: CombinedSearcher) -> None:
-        results = combined.search(None, ["小明"], [])
+    def test_single_speaker_exact(
+        self,
+        combined: CombinedSearcher,
+        sample_entries: dict[int, MemeEntry],
+    ) -> None:
+        results = combined.search_in(sample_entries, None, ["小明"], [])
         assert {r.entry_id for r in results} == {1, 3}
         assert all(r.speaker == "小明" for r in results)
 
-    def test_multiple_speakers_or(self, combined: CombinedSearcher) -> None:
-        results = combined.search(None, ["小明", "小红"], [])
+    def test_multiple_speakers_or(
+        self,
+        combined: CombinedSearcher,
+        sample_entries: dict[int, MemeEntry],
+    ) -> None:
+        results = combined.search_in(sample_entries, None, ["小明", "小红"], [])
         assert {r.entry_id for r in results} == {1, 2, 3}
 
-    def test_speaker_case_sensitive(self, combined: CombinedSearcher) -> None:
-        assert combined.search(None, ["tom"], []) == []  # "Tom" != "tom"
+    def test_speaker_case_sensitive(
+        self,
+        combined: CombinedSearcher,
+        sample_entries: dict[int, MemeEntry],
+    ) -> None:
+        assert (
+            combined.search_in(sample_entries, None, ["tom"], []) == []
+        )  # "Tom" != "tom"
 
-    def test_speaker_none_not_matched(self, combined: CombinedSearcher) -> None:
+    def test_speaker_none_not_matched(
+        self,
+        combined: CombinedSearcher,
+        sample_entries: dict[int, MemeEntry],
+    ) -> None:
         """speaker=None 的条目不被 @ 命中。"""
-        results = combined.search(None, ["小明"], [])
+        results = combined.search_in(sample_entries, None, ["小明"], [])
         assert 4 not in {r.entry_id for r in results}
 
-    def test_speaker_no_match_returns_empty(self, combined: CombinedSearcher) -> None:
-        assert combined.search(None, ["不存在"], []) == []
+    def test_speaker_no_match_returns_empty(
+        self,
+        combined: CombinedSearcher,
+        sample_entries: dict[int, MemeEntry],
+    ) -> None:
+        assert combined.search_in(sample_entries, None, ["不存在"], []) == []
 
 
 class TestTagFilter:
-    def test_single_tag(self, combined: CombinedSearcher) -> None:
-        results = combined.search(None, [], ["加班"])
+    def test_single_tag(
+        self,
+        combined: CombinedSearcher,
+        sample_entries: dict[int, MemeEntry],
+    ) -> None:
+        results = combined.search_in(sample_entries, None, [], ["加班"])
         assert {r.entry_id for r in results} == {1, 2, 3}
 
-    def test_multiple_tags_and(self, combined: CombinedSearcher) -> None:
-        results = combined.search(None, [], ["加班", "吐槽"])
+    def test_multiple_tags_and(
+        self,
+        combined: CombinedSearcher,
+        sample_entries: dict[int, MemeEntry],
+    ) -> None:
+        results = combined.search_in(sample_entries, None, [], ["加班", "吐槽"])
         assert {r.entry_id for r in results} == {1}
 
-    def test_tag_case_sensitive(self, combined: CombinedSearcher) -> None:
-        assert combined.search(None, [], ["Animal"]) == []  # "animal" != "Animal"
+    def test_tag_case_sensitive(
+        self,
+        combined: CombinedSearcher,
+        sample_entries: dict[int, MemeEntry],
+    ) -> None:
+        assert (
+            combined.search_in(sample_entries, None, [], ["Animal"]) == []
+        )  # "animal" != "Animal"
 
-    def test_tag_not_exist_returns_empty(self, combined: CombinedSearcher) -> None:
-        assert combined.search(None, [], ["不存在的标签"]) == []
+    def test_tag_not_exist_returns_empty(
+        self,
+        combined: CombinedSearcher,
+        sample_entries: dict[int, MemeEntry],
+    ) -> None:
+        assert combined.search_in(sample_entries, None, [], ["不存在的标签"]) == []
 
-    def test_duplicate_tags_deduped(self, combined: CombinedSearcher) -> None:
+    def test_duplicate_tags_deduped(
+        self,
+        combined: CombinedSearcher,
+        sample_entries: dict[int, MemeEntry],
+    ) -> None:
         """重复 tag 不影响 AND 判定。"""
-        results = combined.search(None, [], ["加班", "加班"])
+        results = combined.search_in(sample_entries, None, [], ["加班", "加班"])
         assert {r.entry_id for r in results} == {1, 2, 3}
 
 
 class TestSpeakerAndTagCombined:
-    def test_speaker_and_tag_intersection(self, combined: CombinedSearcher) -> None:
-        results = combined.search(None, ["小明"], ["通知"])
+    def test_speaker_and_tag_intersection(
+        self,
+        combined: CombinedSearcher,
+        sample_entries: dict[int, MemeEntry],
+    ) -> None:
+        results = combined.search_in(sample_entries, None, ["小明"], ["通知"])
         assert {r.entry_id for r in results} == {3}
 
 
 class TestWithKeyword:
-    def test_keyword_on_subset(self, combined: CombinedSearcher) -> None:
-        results = combined.search("凌晨", ["小明"], [])
+    def test_keyword_on_subset(
+        self,
+        combined: CombinedSearcher,
+        sample_entries: dict[int, MemeEntry],
+    ) -> None:
+        results = combined.search_in(sample_entries, "凌晨", ["小明"], [])
         assert len(results) == 1
         assert results[0].entry_id == 1
         assert results[0].similarity == 100.0
 
     def test_keyword_subset_excludes_filtered_out(
-        self, combined: CombinedSearcher
+        self,
+        combined: CombinedSearcher,
+        sample_entries: dict[int, MemeEntry],
     ) -> None:
         """关键词只在过滤子集上匹配，不召回被过滤掉的条目。"""
-        results = combined.search("加班", ["小明"], [])
+        results = combined.search_in(sample_entries, "加班", ["小明"], [])
         assert {r.entry_id for r in results} == {1, 3}  # entry 2(小红) 被过滤
 
     def test_keyword_no_match_in_subset_returns_empty(
-        self, combined: CombinedSearcher
+        self,
+        combined: CombinedSearcher,
+        sample_entries: dict[int, MemeEntry],
     ) -> None:
-        assert combined.search("火星文", ["小明"], []) == []
+        assert combined.search_in(sample_entries, "火星文", ["小明"], []) == []
 
     def test_keyword_empty_string_treated_as_no_keyword(
-        self, combined: CombinedSearcher
+        self,
+        combined: CombinedSearcher,
+        sample_entries: dict[int, MemeEntry],
     ) -> None:
         """keyword='' 视为无关键词，走纯过滤分支，similarity=0.0。"""
-        results = combined.search("", ["小明"], [])
+        results = combined.search_in(sample_entries, "", ["小明"], [])
         assert {r.entry_id for r in results} == {1, 3}
         assert all(r.similarity == 0.0 for r in results)
 
     def test_keyword_shuffles_within_same_similarity(
-        self, combined: CombinedSearcher, monkeypatch: pytest.MonkeyPatch
+        self,
+        combined: CombinedSearcher,
+        sample_entries: dict[int, MemeEntry],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """有关键词：同相似度组内随机（精确子串全 100.0 单组）。"""
         monkeypatch.setattr(
             "bot.engine.combined_searcher.random.shuffle",
             lambda seq: seq.reverse(),
         )
-        results = combined.search("加班", ["小明"], [])
+        results = combined.search_in(sample_entries, "加班", ["小明"], [])
         # speaker 小明 -> {1,3}；精确子串「加班」命中二者，全 100.0 单组，反转后 [3,1]
         assert [r.entry_id for r in results] == [3, 1]
         assert all(r.similarity == 100.0 for r in results)
 
 
 class TestNoKeywordBranch:
-    def test_no_keyword_returns_all_entries(self, combined: CombinedSearcher) -> None:
+    def test_no_keyword_returns_all_entries(
+        self,
+        combined: CombinedSearcher,
+        sample_entries: dict[int, MemeEntry],
+    ) -> None:
         """无关键词：返回全部过滤命中条目（顺序随机，仅校验集合与数量）。"""
-        results = combined.search(None, ["小明", "小红"], [])
+        results = combined.search_in(sample_entries, None, ["小明", "小红"], [])
         assert {r.entry_id for r in results} == {1, 2, 3}
         assert len(results) == 3
 
     def test_no_keyword_shuffles_via_random(
-        self, combined: CombinedSearcher, monkeypatch: pytest.MonkeyPatch
+        self,
+        combined: CombinedSearcher,
+        sample_entries: dict[int, MemeEntry],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """无关键词：确实调用 random.shuffle 打乱（monkeypatch 反转验证）。"""
         monkeypatch.setattr(
             "bot.engine.combined_searcher.random.shuffle",
             lambda seq: seq.reverse(),
         )
-        results = combined.search(None, ["小明", "小红"], [])
+        results = combined.search_in(sample_entries, None, ["小明", "小红"], [])
         # filtered.values() 迭代序为 [1,2,3]，反转后 [3,2,1]
         assert [r.entry_id for r in results] == [3, 2, 1]
         assert all(r.similarity == 0.0 for r in results)
 
-    def test_similarity_zero(self, combined: CombinedSearcher) -> None:
-        results = combined.search(None, [], ["加班"])
+    def test_similarity_zero(
+        self,
+        combined: CombinedSearcher,
+        sample_entries: dict[int, MemeEntry],
+    ) -> None:
+        results = combined.search_in(sample_entries, None, [], ["加班"])
         assert all(r.similarity == 0.0 for r in results)
 
-    def test_carries_metadata(self, combined: CombinedSearcher) -> None:
-        results = combined.search(None, ["小明"], [])
+    def test_carries_metadata(
+        self,
+        combined: CombinedSearcher,
+        sample_entries: dict[int, MemeEntry],
+    ) -> None:
+        results = combined.search_in(sample_entries, None, ["小明"], [])
         r1 = next(r for r in results if r.entry_id == 1)
         assert r1.speaker == "小明"
         assert r1.tags == ("吐槽", "加班")
@@ -176,12 +241,17 @@ class TestNoKeywordBranch:
 
 class TestEmptyEntries:
     def test_empty_store_returns_empty(self) -> None:
-        md = MockMetadataStore({})
-        combined = CombinedSearcher(md, KeywordSearcher(md))
-        assert combined.search("加班", ["小明"], ["加班"]) == []
+        combined = CombinedSearcher(KeywordSearcher())
+        assert combined.search_in({}, "加班", ["小明"], ["加班"]) == []
 
-    def test_filter_to_empty_returns_empty(self, combined: CombinedSearcher) -> None:
-        assert combined.search(None, ["小明"], ["萌宠"]) == []  # 小明无萌宠 tag
+    def test_filter_to_empty_returns_empty(
+        self,
+        combined: CombinedSearcher,
+        sample_entries: dict[int, MemeEntry],
+    ) -> None:
+        assert (
+            combined.search_in(sample_entries, None, ["小明"], ["萌宠"]) == []
+        )  # 小明无萌宠 tag
 
 
 class TestPackageExport:
@@ -190,12 +260,6 @@ class TestPackageExport:
         from bot.engine import CombinedSearcher as Exported
 
         assert Exported is CombinedSearcher
-
-    def test_app_state_has_get_combined_searcher(self) -> None:
-        """app_state 应提供 get_combined_searcher。"""
-        from bot.app_state import get_combined_searcher
-
-        assert callable(get_combined_searcher)
 
 
 class TestSearchIn:
@@ -213,8 +277,7 @@ class TestSearchIn:
                 collection_name="新三国",
             )
         }
-        metadata_store = MockMetadataStore({})
-        combined = CombinedSearcher(metadata_store, KeywordSearcher(metadata_store))
+        combined = CombinedSearcher(KeywordSearcher())
 
         results = combined.search_in(entries, None, [], ["三国"])
 
@@ -232,19 +295,12 @@ class TestSearchIn:
                 collection_name="新三国",
             ),
         }
-        metadata_store = MockMetadataStore(entries)
-        combined = CombinedSearcher(metadata_store, KeywordSearcher(metadata_store))
+        combined = CombinedSearcher(KeywordSearcher())
 
         results = combined.search_in(entries, "丞相", [], [])
 
         assert [result.entry_id for result in results] == [2]
         assert results[0].public_id == MemePublicId(1, 1)
-
-    def test_search_delegates_to_search_in(self, combined: CombinedSearcher) -> None:
-        """search() 作为全库兼容包装委托给 search_in()。"""
-        results = combined.search("凌晨", ["小明"], [])
-        assert len(results) == 1
-        assert results[0].entry_id == 1
 
 
 class TestCollectionIdentity:
@@ -262,8 +318,7 @@ class TestCollectionIdentity:
                 collection_name="新三国",
             ),
         }
-        metadata_store = MockMetadataStore(entries)
-        combined = CombinedSearcher(metadata_store, KeywordSearcher(metadata_store))
+        combined = CombinedSearcher(KeywordSearcher())
 
         results = combined.search_in(entries, None, [], ["三国"])
 

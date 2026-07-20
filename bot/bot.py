@@ -114,10 +114,10 @@ async def _on_startup() -> None:
     collection_manager = CollectionManager(metadata_store)
 
     # 5. 创建搜索服务（IndexManager 内部持锁后委托调用）
-    keyword_searcher = KeywordSearcher(metadata_store)
-    random_searcher = RandomSearcher(metadata_store, keyword_searcher)
+    keyword_searcher = KeywordSearcher()
+    random_searcher = RandomSearcher(keyword_searcher)
     semantic_searcher = SemanticSearcher(metadata_store, vector_store)
-    combined_searcher = CombinedSearcher(metadata_store, keyword_searcher)
+    combined_searcher = CombinedSearcher(keyword_searcher)
 
     # 6. 创建 IndexManager 并加载索引
     memes_dir = str(MEMES_DIR)
@@ -144,15 +144,9 @@ async def _on_startup() -> None:
     init_app(
         index_manager=index_manager,
         metadata_store=metadata_store,
-        vector_store=vector_store,
         ocr_service=ocr_service,
         embedding_service=embedding_service,
-        image_optimizer=image_optimizer,
         keyword_searcher=keyword_searcher,
-        random_searcher=random_searcher,
-        semantic_searcher=semantic_searcher,
-        combined_searcher=combined_searcher,
-        collection_manager=collection_manager,
     )
     logger.info("MemePilot 服务已注册，正在等待预热与索引同步完成...")
 

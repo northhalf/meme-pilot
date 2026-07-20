@@ -1057,12 +1057,9 @@ class TestDeleteCollectionAndResetScopes:
         assert reloaded.get_collection_by_name("待删除") is None
         assert reloaded.get_collection(replacement.id) == replacement
         assert all(
-            reloaded.get_selected_collection(_scope(*key)) == 0
-            for key in reset_keys
+            reloaded.get_selected_collection(_scope(*key)) == 0 for key in reset_keys
         )
-        assert (
-            reloaded.get_selected_collection(_scope(*unrelated_key)) == unrelated.id
-        )
+        assert reloaded.get_selected_collection(_scope(*unrelated_key)) == unrelated.id
         reloaded.close()
 
     def test_delete_collection_with_entries_is_rejected(
@@ -1272,8 +1269,7 @@ class TestDeleteCollectionAndResetScopes:
         assert store.get_collection(collection.id) == collection
         assert store.get_collection_by_name(collection.name) == collection
         assert all(
-            store.get_selected_collection(_scope(*key)) == collection.id
-            for key in keys
+            store.get_selected_collection(_scope(*key)) == collection.id for key in keys
         )
         assert (
             real_conn.execute(
@@ -1434,37 +1430,22 @@ class TestAddAndGet:
         assert store.get_id_by_text("不在") is None
 
 
-class TestFindNextId:
-    def test_empty_returns_1(self, store: MetadataStore) -> None:
-        assert store.find_next_id() == 1
+class TestAddIdAllocation:
+    """add() 的内部 id 分配：复用最小正整数空洞（SQL 内联于 add）。"""
 
-    def test_sequential_no_holes(self, store: MetadataStore) -> None:
-        store.add("a.jpg", "甲")
-        store.add("b.jpg", "乙")
-        store.add("c.jpg", "丙")
-        assert store.find_next_id() == 4
-
-    def test_reuses_smallest_hole(self, store: MetadataStore) -> None:
+    def test_add_reuses_smallest_hole(self, store: MetadataStore) -> None:
         store.add_with_id(1, "a.jpg", "甲")
         store.add_with_id(3, "c.jpg", "丙")
         store.add_with_id(5, "e.jpg", "戊")
-        assert store.find_next_id() == 2
+        assert store.add("f.jpg", "己") == 2
 
-    def test_reuses_hole_after_delete(self, store: MetadataStore) -> None:
-        store.add_with_id(1, "a.jpg", "甲")
-        store.add_with_id(2, "b.jpg", "乙")
-        store.add_with_id(4, "d.jpg", "丁")
-        assert store.find_next_id() == 3
-
-    def test_head_hole_returns_1(self, store: MetadataStore) -> None:
-        """表头空洞：最小 id 从 3 开始，应返回 1。"""
+    def test_add_reuses_head_hole(self, store: MetadataStore) -> None:
+        """表头空洞：最小 id 从 3 开始，add 应分配 1。"""
         store.add_with_id(3, "c.jpg", "丙")
-        assert store.find_next_id() == 1
+        assert store.add("d.jpg", "丁") == 1
 
-    def test_find_next_id_ignores_non_positive_dirty_rows(
-        self, store: MetadataStore
-    ) -> None:
-        """最小空洞查询只基于正内部 ID。"""
+    def test_add_ignores_non_positive_dirty_rows(self, store: MetadataStore) -> None:
+        """最小空洞分配只基于正内部 ID。"""
         conn = store._conn
         assert conn is not None
         conn.execute(
@@ -1474,7 +1455,7 @@ class TestFindNextId:
         )
         conn.commit()
 
-        assert store.find_next_id() == 1
+        assert store.add("a.jpg", "甲") == 1
 
     @pytest.mark.parametrize("entry_id", [0, -1])
     def test_add_with_id_rejects_non_positive_id(

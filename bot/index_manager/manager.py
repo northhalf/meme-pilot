@@ -1218,35 +1218,6 @@ class IndexManager:
                 include_source_snapshot=True,
             )
 
-    async def preview_move(
-        self,
-        entry_id: int,
-        target_collection_id: int,
-    ) -> MovePreview:
-        """预览跨合集移动，不预留目标局部编号。
-
-        Args:
-            entry_id: 源条目的内部 ID。
-            target_collection_id: 目标合集编号，0 表示全局根目录。
-
-        Returns:
-            包含当前公开 ID 与预计新公开 ID 的只读快照。
-
-        Raises:
-            ValueError: 源条目不存在或已属于目标合集。
-            CollectionNotFoundError: 目标普通合集不存在。
-            asyncio.TimeoutError: 等待读锁超时。
-        """
-        async with self._rwlock.read(timeout=self.read_timeout):
-            entry = await asyncio.to_thread(self._metadata_store.get_entry, entry_id)
-            if entry is None:
-                raise ValueError(f"entry_id={entry_id} 不存在")
-            return await asyncio.to_thread(
-                self._preview_move_locked,
-                entry,
-                target_collection_id,
-            )
-
     async def move(
         self,
         entry_id: int,
@@ -1319,9 +1290,7 @@ class IndexManager:
             key=lambda item: (-item[1], item[0] or ""),
         )[:10]
 
-        collection_count = len(
-            getattr(self._metadata_store, "list_collections", lambda: [])()
-        )
+        collection_count = len(self._metadata_store.list_collections())
 
         if self._refresh_active:
             status = "正在刷新索引"

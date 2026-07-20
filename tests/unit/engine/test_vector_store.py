@@ -352,14 +352,6 @@ class TestRebuildAll:
 
         assert store.count() == 0
 
-    async def test_rebuild_all_accepts_legacy_pairs_as_root_metadata(
-        self, store: VectorStore
-    ) -> None:
-        """过渡期二元组调用应按根目录 collection_id=0 重建。"""
-        await store.rebuild_all([(10, [1.0, 0.0])])
-
-        assert await store.get_collection_ids() == {10: 0}
-
     @pytest.mark.parametrize("invalid_collection_id", [True, 1.0, -1])
     async def test_rebuild_all_rejects_invalid_collection_id_before_clearing(
         self,
@@ -419,22 +411,6 @@ class TestRebuildAll:
 
         assert await store.get_all_ids() == {1}
 
-    async def test_rebuild_all_rejects_mixed_pair_and_triple_items_before_clearing(
-        self,
-        store: VectorStore,
-    ) -> None:
-        """二元与三元记录混用存在歧义，应在清空前整体拒绝。"""
-        await store.upsert(1, [1.0, 0.0])
-
-        mixed_items = cast(
-            list[tuple[int, list[float]]],
-            [(2, [0.0, 1.0]), (3, [1.0, 1.0], 3)],
-        )
-        with pytest.raises(ValueError, match="不能混合"):
-            await store.rebuild_all(mixed_items)
-
-        assert await store.get_all_ids() == {1}
-
     async def test_rebuild_all_rejects_duplicate_ids_before_clearing(
         self,
         store: VectorStore,
@@ -461,7 +437,7 @@ class TestRebuildAll:
 
 
 class TestMetadata:
-    """测试 metadata 读取、覆盖更新和合集编号合并更新。"""
+    """测试 metadata 读取和合集编号合并更新。"""
 
     async def test_get_collection_ids_includes_missing_metadata(
         self, store: VectorStore
@@ -472,112 +448,19 @@ class TestMetadata:
 
         assert await store.get_collection_ids() == {1: 3, 2: None}
 
-    async def test_get_metadatas_includes_missing_metadata_and_returns_copy(
-        self, store: VectorStore
-    ) -> None:
-        """metadata 缺失映射为空字典，返回值不得泄漏内部别名。"""
-        await store.upsert(1, [1.0, 0.0], collection_id=3)
-        store._require_collection().add(ids=["2"], embeddings=[[0.0, 1.0]])
-
-        first = await store.get_metadatas()
-        first[1]["collection_id"] = 99
-        first[2]["source"] = "mutated"
-
-        assert await store.get_metadatas() == {
-            1: {"collection_id": 3},
-            2: {},
-        }
-
-    async def test_update_metadata_replaces_complete_metadata(
-        self, store: VectorStore
-    ) -> None:
-        """update_metadata 应执行完整覆盖而非隐式合并。"""
-        await store.upsert(1, [1.0, 0.0], collection_id=1)
-
-        await store.update_metadata(1, {"source": "legacy", "enabled": True})
-
-        assert await store.get_metadatas() == {1: {"source": "legacy", "enabled": True}}
-        assert await store.get_collection_ids() == {1: None}
-
-    async def test_update_metadata_copies_input(self, store: VectorStore) -> None:
-        """更新后修改输入字典不得改变已存 metadata。"""
-        await store.upsert(1, [1.0, 0.0])
-        metadata: VectorMetadata = {"source": "legacy"}
-
-        await store.update_metadata(1, metadata)
-        metadata["source"] = "mutated"
-
-        assert await store.get_metadatas() == {1: {"source": "legacy"}}
-
-    async def test_update_metadata_can_clear_all_metadata(
-        self, store: VectorStore
-    ) -> None:
-        """空字典完整覆盖应删除全部已有 metadata。"""
-        await store.upsert(1, [1.0, 0.0], collection_id=1)
-
-        await store.update_metadata(1, {})
-
-        assert await store.get_metadatas() == {1: {}}
-
-    async def test_update_metadata_empty_to_empty_is_noop(
-        self, store: VectorStore
-    ) -> None:
-        """Chroma 不接受空更新；原值和目标均为空时应安全 no-op。"""
-        store._require_collection().add(ids=["1"], embeddings=[[1.0, 0.0]])
-
-        await store.update_metadata(1, {})
-
-        assert await store.get_metadatas() == {1: {}}
-
-    async def test_update_metadata_rejects_missing_id(self, store: VectorStore) -> None:
-        """更新不存在记录应抛 ValueError。"""
-        with pytest.raises(ValueError, match="不存在"):
-            await store.update_metadata(999, {"source": "legacy"})
-
-    @pytest.mark.parametrize("invalid_entry_id", [True, 0, -1, 1.0])
-    async def test_update_metadata_rejects_invalid_entry_id(
-        self,
-        store: VectorStore,
-        invalid_entry_id: bool | float | int,
-    ) -> None:
-        """metadata 更新应拒绝 bool、零、负数和非整数 ID。"""
-        with pytest.raises(ValueError, match="entry_id 必须是正整数"):
-            await store.update_metadata(
-                cast(int, invalid_entry_id),
-                {"source": "legacy"},
-            )
-
-    @pytest.mark.parametrize(
-        "invalid_metadata",
-        [
-            {1: "value"},
-            {"source": None},
-            {"source": ["legacy"]},
-        ],
-    )
-    async def test_update_metadata_rejects_invalid_types(
-        self,
-        store: VectorStore,
-        invalid_metadata: dict[object, object],
-    ) -> None:
-        """metadata 应只接受字符串键和 Chroma 标量值。"""
-        await store.upsert(1, [1.0, 0.0])
-
-        with pytest.raises(ValueError):
-            await store.update_metadata(1, cast(VectorMetadata, invalid_metadata))
-
     async def test_update_collection_id_preserves_embedding_and_other_metadata(
         self, store: VectorStore
     ) -> None:
         """只替换 collection_id 时应保留向量和其他 metadata。"""
         await store.upsert(1, [1.0, 0.0], collection_id=1)
-        await store.update_metadata(1, {"collection_id": 1, "source": "legacy"})
+        store._require_collection().update(
+            ids=["1"], metadatas=[{"collection_id": 1, "source": "legacy"}]
+        )
 
         await store.update_collection_id(1, 2)
 
-        assert await store.get_metadatas() == {
-            1: {"collection_id": 2, "source": "legacy"}
-        }
+        restored = await store.snapshot_records([1])
+        assert restored[0].metadata == {"collection_id": 2, "source": "legacy"}
         hits = await store.query([1.0, 0.0], n_results=1, collection_id=2)
         assert hits[0].entry_id == 1
         assert hits[0].similarity == pytest.approx(1.0)
@@ -627,7 +510,7 @@ class TestMetadata:
         with pytest.raises((ValueError, RuntimeError)):
             await store.get_collection_ids()
 
-    @pytest.mark.parametrize("method_name", ["get_metadatas", "get_collection_ids"])
+    @pytest.mark.parametrize("method_name", ["get_collection_ids"])
     async def test_metadata_reads_reject_mismatched_result_shape(
         self, store: VectorStore, method_name: str
     ) -> None:
@@ -700,8 +583,8 @@ class TestSnapshotAndRestore:
 
         await store.restore_records(snapshot)
 
-        assert await store.get_metadatas() == {1: {}}
         restored = await store.snapshot_records([1])
+        assert restored[0].metadata == {}
         assert restored[0].embedding == pytest.approx([1.0, 0.0])
 
     async def test_restore_replaces_embedding_and_metadata(

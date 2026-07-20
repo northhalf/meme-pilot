@@ -16,7 +16,10 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from bot.engine.collection_manager import CollectionNotFoundError, validate_collection_name
+from bot.engine.collection_manager import (
+    CollectionNotFoundError,
+    validate_collection_name,
+)
 from bot.engine.metadata_store import MemeEntry, MetadataStore
 from bot.engine.types import GLOBAL_COLLECTION_NAME, CollectionSelection, MemeCollection
 from bot.engine.utils import (
@@ -357,9 +360,7 @@ class _WriteCoordinator:
             raise CollectionPathConflictError(target.name)
         return target_stat.st_dev, target_stat.st_ino
 
-    def _execute_create_collection(
-        self, raw_name: str
-    ) -> CreateCollectionResult:
+    def _execute_create_collection(self, raw_name: str) -> CreateCollectionResult:
         """在写锁内创建目录并登记合集。
 
         Args:
@@ -404,32 +405,6 @@ class _WriteCoordinator:
             raise
 
         try:
-            current_identity = self._get_collection_directory_identity(target)
-        except CollectionPathConflictError as identity_exc:
-            if created_directory:
-                logger.critical(
-                    "SQLite 写入前合集目录身份发生变化: name=%r",
-                    name,
-                    exc_info=True,
-                )
-                raise CollectionCreateError("创建合集目录身份发生变化") from identity_exc
-            raise
-        if current_identity != directory_identity:
-            if created_directory:
-                try:
-                    raise OSError("SQLite 写入前合集目录身份发生变化")
-                except OSError as identity_exc:
-                    logger.critical(
-                        "SQLite 写入前合集目录身份发生变化: name=%r",
-                        name,
-                        exc_info=True,
-                    )
-                    raise CollectionCreateError(
-                        "创建合集目录身份发生变化"
-                    ) from identity_exc
-            raise CollectionPathConflictError(name)
-
-        try:
             collection = self._metadata_store.create_collection(name)
         except Exception:
             if created_directory:
@@ -439,7 +414,9 @@ class _WriteCoordinator:
                             target
                         )
                     except CollectionPathConflictError as identity_exc:
-                        raise OSError("目录回滚前合集目录身份发生变化") from identity_exc
+                        raise OSError(
+                            "目录回滚前合集目录身份发生变化"
+                        ) from identity_exc
                     if cleanup_identity != directory_identity:
                         raise OSError("目录回滚前合集目录身份发生变化")
                     target.rmdir()
@@ -539,16 +516,12 @@ class _WriteCoordinator:
                         f"合集目录非空，无法删除: {collection.name}"
                     )
         except OSError as exc:
-            raise CollectionDeleteError(
-                f"检查合集目录失败: {collection.name}"
-            ) from exc
+            raise CollectionDeleteError(f"检查合集目录失败: {collection.name}") from exc
 
         try:
             target.rmdir()
         except OSError as exc:
-            raise CollectionDeleteError(
-                f"删除合集目录失败: {collection.name}"
-            ) from exc
+            raise CollectionDeleteError(f"删除合集目录失败: {collection.name}") from exc
 
         try:
             reset_count = await asyncio.to_thread(
@@ -575,9 +548,7 @@ class _WriteCoordinator:
                     exc,
                     exc_info=True,
                 )
-            raise CollectionDeleteError(
-                f"删除合集 DB 失败: {collection.name}"
-            ) from exc
+            raise CollectionDeleteError(f"删除合集 DB 失败: {collection.name}") from exc
 
         logger.info(
             "合集删除完成: id=%d, name=%r, reset_scopes=%d",
@@ -689,9 +660,7 @@ class _WriteCoordinator:
                 exc,
                 exc_info=True,
             )
-            raise CollectionCreateError(
-                "重命名合集目录失败"
-            ) from exc
+            raise CollectionCreateError("重命名合集目录失败") from exc
 
         logger.info(
             "合集重命名完成: id=%d, old=%r, new=%r, entries=%d",
@@ -936,9 +905,7 @@ class _WriteCoordinator:
             raise ValueError("MOVE 请求缺少 transaction_started")
         req.transaction_started.set()
         move_task = asyncio.create_task(self._execute_move(req))
-        result, move_error, cancelled = await wait_task_through_cancellation(
-            move_task
-        )
+        result, move_error, cancelled = await wait_task_through_cancellation(move_task)
         if move_error is not None:
             raise move_error
         if cancelled:
