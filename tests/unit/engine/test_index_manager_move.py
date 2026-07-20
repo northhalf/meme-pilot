@@ -1,7 +1,6 @@
 """IndexManager 移动预览与补偿式移动测试。"""
 
 import asyncio
-import os
 from pathlib import Path
 from typing import Any
 
@@ -22,11 +21,7 @@ from bot.index_manager import (
     MemeMoveSourceExpiredError,
 )
 from bot.engine.metadata_store import MemeEntry, MetadataStore
-from bot.engine.utils import (
-    SecureMoveError,
-    get_regular_file_identity,
-    secure_move_file,
-)
+from bot.engine.utils import get_regular_file_identity
 from bot.engine.types import GLOBAL_COLLECTION_NAME, MemePublicId
 from bot.engine.vector_store import VectorRecord, VectorStore
 from bot.session import ChatScope
@@ -486,50 +481,6 @@ async def test_move_rejects_source_directory(
 
 
 @pytest.mark.asyncio
-async def test_move_rejects_target_directory_replaced_by_symlink(
-    index_manager: IndexManager,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    source = index_manager._metadata_store.create_collection("源")
-    target = index_manager._metadata_store.create_collection("目标")
-    entry_id = await _add_entry(
-        index_manager,
-        "源/a.webp",
-        "文本",
-        collection_id=source.id,
-        content=b"source",
-    )
-    target_dir = index_manager._memes_dir / "目标"
-    target_dir.mkdir()
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    original_open = os.open
-    replaced = False
-
-    def replacing_open(path, flags, mode=0o777, *, dir_fd=None):
-        nonlocal replaced
-        fd = original_open(path, flags, mode, dir_fd=dir_fd)
-        if not replaced and path == "目标" and flags & os.O_DIRECTORY:
-            replaced = True
-            target_dir.rmdir()
-            target_dir.symlink_to(outside, target_is_directory=True)
-        return fd
-
-    monkeypatch.setattr(os, "open", replacing_open)
-
-    with pytest.raises(MemeMoveError):
-        await index_manager.move(entry_id, target.id)
-
-    persisted = index_manager._metadata_store.get_entry(entry_id)
-    assert persisted is not None
-    assert persisted.collection_id == source.id
-    assert (index_manager._memes_dir / "源/a.webp").read_bytes() == b"source"
-    assert not (outside / "a.webp").exists()
-    assert not (outside / "a_2.webp").exists()
-
-
-@pytest.mark.asyncio
 async def test_move_rejects_source_symlink_escape(
     index_manager: IndexManager,
     tmp_path: Path,
@@ -698,73 +649,6 @@ async def test_move_restores_final_snapshot_when_chroma_update_fails(
 
 
 @pytest.mark.asyncio
-async def test_move_restores_file_when_secure_move_succeeds_then_raises(
-    index_manager: IndexManager,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    source = index_manager._metadata_store.create_collection("源")
-    target = index_manager._metadata_store.create_collection("目标")
-    entry_id = await _add_entry(
-        index_manager,
-        "源/a.webp",
-        "文本",
-        collection_id=source.id,
-        content=b"source",
-    )
-    old_entry = index_manager._metadata_store.get_entry(entry_id)
-    assert old_entry is not None
-    old_vector = (await index_manager._vector_store.snapshot_records([entry_id]))[0]
-    calls = 0
-
-    def move_then_fail(
-        root_dir: Path,
-        source_relative_path: Path,
-        target_relative_dir: Path,
-        *,
-        first_suffix: int = 1,
-        target_filename: str | None = None,
-        expected_source_identity: tuple[int, int, int] | None = None,
-    ):
-        nonlocal calls
-        calls += 1
-        result = secure_move_file(
-            root_dir,
-            source_relative_path,
-            target_relative_dir,
-            first_suffix=first_suffix,
-            target_filename=target_filename,
-            expected_source_identity=expected_source_identity,
-        )
-        if calls == 1:
-            raise SecureMoveError(
-                "move committed then failed",
-                relative_path=result.relative_path,
-                target_created=result.target_created,
-                source_removed=result.source_removed,
-                target_dir_created=result.target_dir_created,
-                target_identity=result.target_identity,
-            )
-        return result
-
-    monkeypatch.setattr(
-        "bot.index_manager.write_coordinator.secure_move_file",
-        move_then_fail,
-    )
-
-    with pytest.raises(MemeMoveError):
-        await index_manager.move(entry_id, target.id)
-
-    await _assert_old_state(
-        index_manager,
-        old_entry,
-        old_vector,
-        target_relative_path="目标/a.webp",
-    )
-    assert (index_manager._memes_dir / "目标").is_dir()
-    assert list((index_manager._memes_dir / "目标").iterdir()) == []
-
-
-@pytest.mark.asyncio
 async def test_move_compensation_preserves_competitor_and_target_original(
     index_manager: IndexManager,
     monkeypatch: pytest.MonkeyPatch,
@@ -779,40 +663,49 @@ async def test_move_compensation_preserves_competitor_and_target_original(
         content=b"original",
     )
     source_path = index_manager._memes_dir / "源/a.webp"
-    target_path = index_manager._memes_dir / "目标/a.webp"
     vector_store = index_manager._vector_store
     old_vector = (await vector_store.snapshot_records([entry_id]))[0]
-    original_unlink = os.unlink
-    original_fsync = os.fsync
-    source_parent = source_path.parent
-    source_parent_identity = (
-        source_parent.stat().st_dev,
-        source_parent.stat().st_ino,
-    )
+    metadata_store = index_manager._metadata_store
+    original_update = metadata_store.update
+    calls = 0
 
-    def unlink_then_recreate(path, *, dir_fd=None):
-        original_unlink(path, dir_fd=dir_fd)
-        if path == "a.webp" and dir_fd is not None:
+    def failing_update(
+        target_entry_id: int,
+        *,
+        image_path: str | None = None,
+        text: str | None = None,
+        speaker: str | None = None,
+        tags: list[str] | None = None,
+        collection_id: int | None = None,
+        local_id: int | None = None,
+    ) -> bool:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
             source_path.write_bytes(b"competitor")
+            raise RuntimeError("sqlite failed")
+        return original_update(
+            target_entry_id,
+            image_path=image_path,
+            text=text,
+            speaker=speaker,
+            tags=tags,
+            collection_id=collection_id,
+            local_id=local_id,
+        )
 
-    def fail_source_dir_fsync(fd: int) -> None:
-        current = os.fstat(fd)
-        if (current.st_dev, current.st_ino) == source_parent_identity:
-            raise OSError("source dir fsync failed")
-        original_fsync(fd)
-
-    monkeypatch.setattr(os, "unlink", unlink_then_recreate)
-    monkeypatch.setattr(os, "fsync", fail_source_dir_fsync)
+    monkeypatch.setattr(metadata_store, "update", failing_update)
 
     with pytest.raises(MemeMoveError):
         await index_manager.move(entry_id, target.id)
 
-    persisted = index_manager._metadata_store.get_entry(entry_id)
+    persisted = metadata_store.get_entry(entry_id)
     assert persisted is not None
     assert persisted.collection_id == source.id
     assert persisted.image_path == "源/a.webp"
-    assert source_path.read_bytes() == b"competitor"
-    assert target_path.read_bytes() == b"original"
+    assert source_path.read_bytes() == b"original"
+    assert (index_manager._memes_dir / "源/a_1.webp").read_bytes() == b"competitor"
+    assert not (index_manager._memes_dir / "目标/a.webp").exists()
     assert await vector_store.snapshot_records([entry_id]) == [old_vector]
 
 

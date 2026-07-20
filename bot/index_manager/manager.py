@@ -26,11 +26,7 @@ from bot.engine.types import (
     MemePublicId,
     SearchResult,
 )
-from bot.engine.utils import (
-    SecureMoveError,
-    get_regular_file_identity,
-    vector_norm,
-)
+from bot.engine.utils import get_regular_file_identity, vector_norm
 from bot.engine.vector_store import VectorStore
 from bot.log_context import timed
 from bot.session import ChatScope
@@ -1154,7 +1150,7 @@ class IndexManager:
                     self._memes_dir,
                     Path(entry.image_path),
                 )
-            except SecureMoveError as exc:
+            except OSError as exc:
                 raise MemeMoveSourceExpiredError("源表情包文件已变化") from exc
             source_snapshot = MoveSourceSnapshot(entry, file_identity)
         return MovePreview(

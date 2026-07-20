@@ -22,13 +22,7 @@ from bot.engine.collection_manager import (
 )
 from bot.engine.metadata_store import MemeEntry, MetadataStore
 from bot.engine.types import GLOBAL_COLLECTION_NAME, CollectionSelection, MemeCollection
-from bot.engine.utils import (
-    SecureMoveError,
-    SecureMoveResult,
-    get_regular_file_identity,
-    resolve_unique_filename,
-    secure_move_file,
-)
+from bot.engine.utils import get_regular_file_identity, resolve_unique_filename
 from bot.engine.vector_store import VectorRecord, VectorStore
 
 from .image_pipeline import wait_task_through_cancellation
@@ -950,7 +944,7 @@ class _WriteCoordinator:
         target_collection_id: int,
         target_name: str,
     ) -> tuple[Path, Path]:
-        """解析安全 helper 使用的源路径与目标目录相对路径。
+        """解析移动使用的源路径与目标目录相对路径。
 
         Args:
             old_entry: 移动前条目快照。
@@ -985,6 +979,36 @@ class _WriteCoordinator:
             Path(".") if target_collection_id == 0 else Path(target_name)
         )
         return Path(old_entry.image_path), target_relative_dir
+
+    def _move_file(
+        self,
+        source_relative_path: Path,
+        target_relative_dir: Path,
+        expected_source_identity: tuple[int, int, int],
+    ) -> Path:
+        """裸 shutil.move 移动文件，目标重名时追加序号。
+
+        Args:
+            source_relative_path: memes/ 下的源相对路径。
+            target_relative_dir: memes/ 下的目标目录相对路径；``Path('.')`` 表示根目录。
+            expected_source_identity: 要求源文件匹配的设备号、inode 与元数据变更时间。
+
+        Returns:
+            落盘后的目标相对路径。
+
+        Raises:
+            OSError: 源文件身份已变化或文件操作失败。
+        """
+        if (
+            get_regular_file_identity(self._memes_dir, source_relative_path)
+            != expected_source_identity
+        ):
+            raise OSError("源文件身份与预期移动目标不一致")
+        target_dir = self._memes_dir / target_relative_dir
+        target_dir.mkdir(parents=True, exist_ok=True)
+        dst = resolve_unique_filename(target_dir, source_relative_path.name)
+        shutil.move(str(self._memes_dir / source_relative_path), str(dst))
+        return dst.relative_to(self._memes_dir)
 
     async def _execute_move(self, req: _WriteRequest) -> MoveResult:
         """在写锁内执行文件、SQLite 与 Chroma 的补偿式移动。
@@ -1021,7 +1045,7 @@ class _WriteCoordinator:
                 self._memes_dir,
                 source_relative_path,
             )
-        except SecureMoveError as exc:
+        except OSError as exc:
             if req.expected_source is not None:
                 raise MemeMoveSourceExpiredError("源表情包文件已变化") from exc
             raise MemeMoveError(str(exc)) from exc
@@ -1060,18 +1084,16 @@ class _WriteCoordinator:
         )
         vector_store = self._vector_store
         old_vector_records = await vector_store.snapshot_records([old_entry.id])
-        move_state: SecureMoveResult | SecureMoveError | None = None
+        moved_relative_path: Path | None = None
 
         try:
-            move_state = await asyncio.to_thread(
-                secure_move_file,
-                self._memes_dir,
+            moved_relative_path = await asyncio.to_thread(
+                self._move_file,
                 source_relative_path,
                 target_relative_dir,
-                first_suffix=1,
-                expected_source_identity=source_identity,
+                source_identity,
             )
-            new_relative_path = move_state.relative_path.as_posix()
+            new_relative_path = moved_relative_path.as_posix()
             updated = await asyncio.to_thread(
                 self._metadata_store.update,
                 old_entry.id,
@@ -1092,12 +1114,10 @@ class _WriteCoordinator:
             if persisted_entry is None:
                 raise RuntimeError("移动完成后无法读取持久条目")
         except BaseException as exc:
-            if isinstance(exc, SecureMoveError):
-                move_state = exc
             compensation_errors = await self._compensate_move(
                 old_entry,
                 old_vector_records,
-                move_state,
+                moved_relative_path,
             )
             if compensation_errors:
                 logger.critical(
@@ -1121,14 +1141,14 @@ class _WriteCoordinator:
         self,
         old_entry: MemeEntry,
         old_vector_records: list[VectorRecord],
-        move_state: SecureMoveResult | SecureMoveError | None,
+        moved_relative_path: Path | None,
     ) -> list[str]:
         """恢复移动前的 SQLite、文件与完整 Chroma 快照。
 
         Args:
             old_entry: 移动前 SQLite 条目快照。
             old_vector_records: 移动前完整向量快照。
-            move_state: 安全文件 helper 返回或抛出的最终状态。
+            moved_relative_path: 已落盘的目标相对路径；None 表示文件尚未移动。
 
         Returns:
             补偿或最终复核失败信息；空列表表示完整恢复。
@@ -1149,7 +1169,7 @@ class _WriteCoordinator:
             await asyncio.to_thread(
                 self._restore_move_file,
                 old_entry,
-                move_state,
+                moved_relative_path,
             )
         except BaseException as exc:
             errors.append(f"文件恢复失败: {exc}")
@@ -1173,8 +1193,8 @@ class _WriteCoordinator:
             source_path = self._memes_dir / old_entry.image_path
             if not source_path.is_file() or source_path.is_symlink():
                 errors.append("源文件最终状态不一致")
-            if move_state is not None and move_state.relative_path is not None:
-                target_path = self._memes_dir / move_state.relative_path
+            if moved_relative_path is not None:
+                target_path = self._memes_dir / moved_relative_path
                 if target_path.exists() or target_path.is_symlink():
                     errors.append("目标文件最终仍存在")
         except BaseException as exc:
@@ -1190,31 +1210,30 @@ class _WriteCoordinator:
     def _restore_move_file(
         self,
         old_entry: MemeEntry,
-        move_state: SecureMoveResult | SecureMoveError | None,
+        moved_relative_path: Path | None,
     ) -> None:
-        """使用同一安全 helper 按最终状态恢复源文件。
+        """将已落盘的目标文件移回源目录项，竞争文件让位保留。
+
+        源目录项在移动后被其他文件占用时，先把占用者移到不冲突的序号名，
+        再把原文件移回原始路径，保证 SQLite 恢复后路径与内容一致。
 
         Args:
             old_entry: 移动前条目快照。
-            move_state: 安全移动 helper 的最终状态。
+            moved_relative_path: 已落盘的目标相对路径；None 表示文件尚未移动。
 
         Raises:
-            OSError: 无法恢复源文件或清理目标目录。
+            OSError: 无法恢复源文件。
         """
-        if move_state is None or move_state.relative_path is None:
+        if moved_relative_path is None:
             return
         source_path = self._memes_dir / old_entry.image_path
-        if move_state.source_removed:
-            source_parent = Path(old_entry.image_path).parent
-            restore_result = secure_move_file(
-                self._memes_dir,
-                move_state.relative_path,
-                source_parent,
-                target_filename=Path(old_entry.image_path).name,
-                expected_source_identity=move_state.target_identity,
+        if source_path.exists() or source_path.is_symlink():
+            competitor_dst = resolve_unique_filename(
+                source_path.parent,
+                source_path.name,
             )
-            if restore_result.relative_path != Path(old_entry.image_path):
-                raise OSError("源文件未恢复到原目录项")
+            shutil.move(str(source_path), str(competitor_dst))
+        shutil.move(str(self._memes_dir / moved_relative_path), str(source_path))
         if not source_path.is_file() or source_path.is_symlink():
             raise OSError("源文件恢复后不是普通文件")
 
