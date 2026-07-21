@@ -256,8 +256,8 @@ class TestHandleDelete:
             assert matcher.send.await_count == 1
             msg = matcher.send.await_args[0][0]
             assert "确认删除以下表情包" in extract_message_text(msg)
-            assert "0.42, 加班心累时的表情包" in extract_message_text(msg)
-            assert "0.43, 当你的老板说今天要加班" in extract_message_text(msg)
+            assert "0.42，加班心累时的表情包" in extract_message_text(msg)
+            assert "0.43，当你的老板说今天要加班" in extract_message_text(msg)
             assert matcher.state["entry_ids"] == [42, 43]
             assert matcher.state["public_ids"] == {
                 42: MemePublicId(0, 42),
@@ -304,7 +304,7 @@ class TestPublicIdDelete:
             )  # type: ignore[arg-type]
 
         summary = extract_message_text(matcher.send.await_args[0][0])
-        assert "1.3, 甲" in summary
+        assert "1.3，甲" in summary
         assert "未找到 ID：2.999" in summary
         assert matcher.state["entry_ids"] == [85]
         assert matcher.state["not_found_public_ids"] == ["2.999"]
@@ -441,9 +441,9 @@ class TestPublicIdDelete:
             86: MemePublicId(2, 1),
         }
         summary = extract_message_text(matcher.send.await_args[0][0])
-        assert "1.3, 甲" in summary
-        assert summary.count("1.3, 甲") == 1
-        assert "2.1, 乙" in summary
+        assert "1.3，甲" in summary
+        assert summary.count("1.3，甲") == 1
+        assert "2.1，乙" in summary
 
     def test_result_merges_parse_and_racing_not_found_in_order(self) -> None:
         """最终结果应先展示解析期未找到，再展示执行竞态未找到。"""

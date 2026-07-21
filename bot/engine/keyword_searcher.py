@@ -1,6 +1,6 @@
 """关键词模糊搜索模块。
 
-对 MetadataStore 中的 OCR 文本（按英文逗号拼接存储）使用 LCS（最长公共子序列）进行匹配，匹配时去除逗号分隔符。
+对 MetadataStore 中的 OCR 文本（按中文逗号拼接存储）使用 LCS（最长公共子序列）进行匹配，匹配时去除逗号分隔符。
 """
 
 import logging
@@ -49,24 +49,25 @@ def _strip_all_whitespace(text: str) -> str:
 
 
 def _strip_ocr_delimiter(text: str) -> str:
-    """去除 OCR 文本中的英文逗号分隔符，用于关键词匹配。
+    """去除 OCR 文本中的逗号分隔符，用于关键词匹配。
 
-    OCR 文本按英文逗号拼接存储（见 image_pipeline），匹配时需还原为无分隔符
+    OCR 文本按中文逗号拼接存储（见 image_pipeline），匹配时需还原为无分隔符
     的纯文本，使去空白关键词的子串/LCS 命中行为与旧版去空白存储一致。
+    既有索引数据仍为英文逗号拼接（未做数据迁移），故两种逗号一并去除。
 
     Args:
-        text: OCR 文本（英文逗号分隔）。
+        text: OCR 文本（中文或英文逗号分隔）。
 
     Returns:
-        去除英文逗号后的字符串。
+        去除逗号后的字符串。
     """
-    return text.replace(",", "")
+    return text.replace(",", "").replace("，", "")
 
 
 class KeywordSearcher:
     """关键词模糊搜索引擎。
 
-    使用 LCS 对 OCR 文本进行匹配（OCR 文本按英文逗号拼接存储，匹配时忽略逗号分隔符）：
+    使用 LCS 对 OCR 文本进行匹配（OCR 文本按中文逗号拼接存储，匹配时忽略逗号分隔符）：
     - 关键词是 OCR 文本的子串时，相似度为 100（精确命中）。
     - 否则按 LCS 长度与关键词长度的比值计算相似度。
 
@@ -111,7 +112,7 @@ class KeywordSearcher:
 
         Args:
             keyword: 搜索关键词（已去助词去空格）。
-            text: 去除英文逗号分隔符后的 OCR 文本。
+            text: 去除逗号分隔符后的 OCR 文本。
 
         Returns:
             相似度分数，0-100。
@@ -126,7 +127,7 @@ class KeywordSearcher:
     ) -> list[SearchResult]:
         """第一层：精确子串匹配。
 
-        用「原始输入去所有空白、保留助词」的关键词对 OCR 文本（去除英文逗号
+        用「原始输入去所有空白、保留助词」的关键词对 OCR 文本（去除逗号
         分隔符后）做子串判定，命中条目 similarity=100.0。
 
         Args:
@@ -149,7 +150,7 @@ class KeywordSearcher:
     ) -> list[SearchResult]:
         """第二层：LCS 模糊回退。
 
-        用「去助词+去空白」的关键词对 OCR 文本（去除英文逗号分隔符后）走 LCS
+        用「去助词+去空白」的关键词对 OCR 文本（去除逗号分隔符后）走 LCS
         模糊匹配，阈值过滤 + 降序排序 +「存在 100 分只保留 100 分」规则。
 
         Args:

@@ -117,9 +117,9 @@ async def handle_addtag(
             )
 
             # 确认消息（纯文本，不发送原图）
-            current_tags_text = ", ".join(entry.tags) if entry.tags else "(无)"
+            current_tags_text = "，".join(entry.tags) if entry.tags else "(无)"
             current_tags_set = set(entry.tags)
-            new_tags_text = ", ".join(
+            new_tags_text = "，".join(
                 [tag for tag in tags if tag not in current_tags_set]
             )
             await reply_utils.send(
@@ -214,10 +214,10 @@ async def got_confirm(
                             "/addtag 成功: entry_id=%s, tags=%r", entry_id, tags
                         )
                         added_text = (
-                            ", ".join(result.added_tags) if result.added_tags else "无"
+                            "，".join(result.added_tags) if result.added_tags else "无"
                         )
                         all_text = (
-                            ", ".join(result.all_tags) if result.all_tags else "无"
+                            "，".join(result.all_tags) if result.all_tags else "无"
                         )
                         await reply_utils.finish(
                             event,

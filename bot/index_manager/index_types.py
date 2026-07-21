@@ -421,7 +421,7 @@ class AddResult:
     Attributes:
         entry_id: 分配/复用的索引 ID（int）；无文字移图场景为 None。
         reason: 结果类别：added / replaced / no_text。
-        text: OCR 文本（按英文逗号拼接）。
+        text: OCR 文本（按中文逗号拼接）。
         public_id: 新增或替换后持久条目的公开 ID；无文字时为 None。
         collection_name: 新增或替换后持久条目的合集名称；无文字时为 None。
         replaced_image_path: reason="replaced" 时为被替换旧图路径，否则 None。

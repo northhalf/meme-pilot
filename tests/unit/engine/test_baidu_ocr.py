@@ -182,7 +182,7 @@ class TestBaiduOcrRequests:
 
         result = await service.ocr(str(image))
 
-        assert result == "加,班,心,累"
+        assert result == "加，班，心，累"
         token_call, ocr_call = client.post.call_args_list
         assert token_call.args[0].endswith("/oauth/2.0/token")
         assert ocr_call.args[0].endswith(BAIDU_OCR_ENDPOINTS[ocr_type])

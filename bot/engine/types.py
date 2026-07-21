@@ -98,7 +98,7 @@ class SearchResult:
     Attributes:
         entry_id: 索引 id（int）。
         image_path: memes/ 目录下相对路径。
-        text: OCR 文本（按英文逗号拼接）。
+        text: OCR 文本（按中文逗号拼接）。
         similarity: 相似度分数，0-100。
         speaker: 说话人，可能为 None。
         tags: 标记词元组（不可变）。

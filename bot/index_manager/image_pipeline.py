@@ -306,7 +306,7 @@ class ImagePipeline:
         except Exception as exc:
             self.cleanup_pipeline_output(created_output)
             raise OcrError(f"OCR 调用失败: {filename}") from exc
-        text = ",".join(text.split())  # 按空白分割后以英文逗号拼接
+        text = "，".join(text.split())  # 按空白分割后以中文逗号拼接
         if not text:
             # 空文本不 embed，由下游 no_text 分支移图
             # （避免 provider 对空串抛 ValueError 导致 no_text 分支不可达）

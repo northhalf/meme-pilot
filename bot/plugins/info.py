@@ -75,7 +75,7 @@ def _build_detail_message(entry: MemeEntry) -> Message | str:
     # speaker 与 tags 同时为空时不展示这两个字段，避免孤立的“无”占位
     if entry.speaker or entry.tags:
         speaker_text = entry.speaker if entry.speaker else "无"
-        tags_text = ", ".join(entry.tags) if entry.tags else "无"
+        tags_text = "，".join(entry.tags) if entry.tags else "无"
         text_lines.append(f"说话人：{speaker_text}")
         text_lines.append(f"标签：{tags_text}")
     text = "\n".join(text_lines)

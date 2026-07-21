@@ -168,8 +168,8 @@ class TestPresentCandidates:
         assert "candidates" in cmd.state
         assert "selection_id" in cmd.state
         sent_text = extract_message_text(cmd.send.call_args[0][0])
-        assert "1. 甲 -- 0.1, 全局, 小明, 吐槽" in sent_text
-        assert "2. 乙 -- 0.2, 全局, 无, 搞笑" in sent_text
+        assert "1. 甲 -- 0.1，全局，小明，吐槽" in sent_text
+        assert "2. 乙 -- 0.2，全局，无，搞笑" in sent_text
         _mock_create_selection.assert_called_once()
         _mock_timeout.assert_called_once()
 
@@ -218,7 +218,7 @@ class TestPresentCandidates:
         )
 
         sent_text = extract_message_text(cmd.send.call_args[0][0])
-        assert "1. 甲 -- 0.1, 全局, 82%" in sent_text
+        assert "1. 甲 -- 0.1，全局，82%" in sent_text
 
     @pytest.mark.asyncio
     @patch("bot.plugins._search_utils.session_manager.create_selection")
@@ -807,7 +807,7 @@ class TestFormatMetadataLine:
 
         assert (
             format_metadata_line(MemePublicId(1, 3), "新三国", "曹操", ["吐槽"])
-            == "1.3, 新三国, 曹操, 吐槽"
+            == "1.3，新三国，曹操，吐槽"
         )
 
     def test_global_entry_uses_global_name(self) -> None:
@@ -817,7 +817,7 @@ class TestFormatMetadataLine:
         # speaker 与 tags 同时为空时省略「无」占位，仅展示公开 ID 与合集
         assert (
             format_metadata_line(MemePublicId(0, 42), "全局", None, [])
-            == "0.42, 全局"
+            == "0.42，全局"
         )
 
 
@@ -1025,7 +1025,7 @@ class TestHandleGotSelectionPagination:
         matcher.send.assert_awaited_once()
         matcher.finish.assert_awaited_once()
         finished_text = extract_message_text(matcher.finish.call_args[0][0])
-        assert "0.7, 全局, 小明" in finished_text
+        assert "0.7，全局，小明" in finished_text
         assert "%" not in finished_text
 
 

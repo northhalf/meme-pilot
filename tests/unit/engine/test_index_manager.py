@@ -590,8 +590,8 @@ async def test_add_comma_joins_multi_token_ocr_text(
     result = await index_manager.add("comma.jpg")
     assert result.reason == "added"
     assert result.entry_id is not None
-    # 按空白分割后以英文逗号拼接，而非旧版去除所有空白
-    assert result.text == "加,班,心,累"
+    # 按空白分割后以中文逗号拼接，而非旧版去除所有空白
+    assert result.text == "加，班，心，累"
 
 
 @pytest.mark.asyncio

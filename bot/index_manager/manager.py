@@ -834,7 +834,7 @@ class IndexManager:
 
         Args:
             entry_id: 要修改的索引 id。
-            new_text: 新的 OCR 文本（调用方已按英文逗号拼接）。
+            new_text: 新的 OCR 文本（调用方已按中文逗号拼接）。
 
         Returns:
             EditTextResult 描述修改结果。

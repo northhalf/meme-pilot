@@ -130,7 +130,7 @@ async def handle_refresh(bot: Bot, event: MessageEvent, matcher: Matcher) -> Non
 
             if result.failed:
                 shown = result.failed[:10]
-                lines.append(f"失败文件: {', '.join(shown)}")
+                lines.append(f"失败文件: {'，'.join(shown)}")
 
             session_manager.deactivate_chat(scope)
             await reply_utils.finish(event, matcher, "\n".join(lines))

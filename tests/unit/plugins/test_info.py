@@ -347,7 +347,7 @@ class TestHandleInfoDetail:
             assert "文件名：test.jpg" in text
             assert "大小：1.50 KiB" in text
             assert "说话人：小明" in text
-            assert "标签：吐槽, 加班" in text
+            assert "标签：吐槽，加班" in text
 
     @pytest.mark.asyncio
     @patch("bot.plugins.info.resolve_entry_argument", new_callable=AsyncMock)

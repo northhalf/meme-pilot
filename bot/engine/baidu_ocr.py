@@ -469,7 +469,7 @@ class BaiduOcrService:
             image_path: 图片文件路径。
 
         Returns:
-            按空白分割后以英文逗号拼接的识别文本。
+            按空白分割后以中文逗号拼接的识别文本。
 
         Raises:
             FileNotFoundError: 图片不存在。
@@ -492,7 +492,7 @@ class BaiduOcrService:
                 lines = _extract_pp_ocrv6_lines(payload, self._text_score)
             else:
                 lines = _extract_legacy_lines(payload, self._text_score)
-            full_text = ",".join(" ".join(lines).split())
+            full_text = "，".join(" ".join(lines).split())
             logger.debug(
                 "百度 OCR 完成: type=%s, file=%s, chars=%d",
                 self._ocr_type,

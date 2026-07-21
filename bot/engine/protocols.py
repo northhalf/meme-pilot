@@ -31,7 +31,7 @@ class EmbeddingProvider(Protocol):
 
 
 class OcrProvider(Protocol):
-    """OCR 服务提供者协议。ocr() 返回按空白分割后以英文逗号拼接的文本。"""
+    """OCR 服务提供者协议。ocr() 返回按空白分割后以中文逗号拼接的文本。"""
 
     async def ocr(self, image_path: str) -> str: ...
 

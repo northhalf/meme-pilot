@@ -140,7 +140,7 @@ async def handle_delete(
 
             lines = ["确认删除以下表情包？回复「确认」、「yes」或「y」执行删除，回复其他内容取消。"]
             for entry in entries:
-                lines.append(f"{entry.public_id}, {_truncate_text(entry.text)}")
+                lines.append(f"{entry.public_id}，{_truncate_text(entry.text)}")
             if not_found_public_ids:
                 lines.append("未找到 ID：" + "、".join(not_found_public_ids))
 

@@ -93,7 +93,7 @@ def format_metadata_line(
         parts = [str(public_id), collection_name, speaker if speaker else "无", *tags]
     else:
         parts = [str(public_id), collection_name]
-    return ", ".join(parts)
+    return "，".join(parts)
 
 
 def resolve_selection(
@@ -196,7 +196,7 @@ async def present_candidates(
         meta = format_metadata_line(r.public_id, r.collection_name, r.speaker, r.tags)
         if options.show_similarity:
             sim_pct = _similarity_percent(r.similarity, options.similarity_scale)
-            lines.append(f"{i}. {r.text} -- {meta}, {sim_pct}%")
+            lines.append(f"{i}. {r.text} -- {meta}，{sim_pct}%")
         else:
             lines.append(f"{i}. {r.text} -- {meta}")
     lines.append(f"回复编号即可 (1-{len(candidates)})")
