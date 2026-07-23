@@ -45,7 +45,14 @@ QUERY_FILTER_OPTIONS = PresentOptions(
 
 QUERY_USAGE = "/query <关键词> [@说话人] [#标签...]"
 
-query_cmd = on_command("query", rule=to_me(), priority=5, block=True, aliases={"q"})
+query_cmd = on_command(
+    "query",
+    rule=to_me(),
+    priority=5,
+    block=True,
+    aliases={"q"},
+    force_whitespace=True,
+)
 
 
 def _parse_args(text: str) -> tuple[str, list[str], list[str]]:

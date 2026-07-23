@@ -36,7 +36,14 @@ from bot.session import ChatScope, session_manager, timeout_session
 
 logger = logging.getLogger(__name__)
 
-move_cmd = on_command("move", rule=to_me(), priority=5, block=True, aliases={"mv"})
+move_cmd = on_command(
+    "move",
+    rule=to_me(),
+    priority=5,
+    block=True,
+    aliases={"mv"},
+    force_whitespace=True,
+)
 
 
 @move_cmd.handle()

@@ -17,15 +17,29 @@ from tests.conftest import extract_message_text
 _mock_cmd = MagicMock()
 _mock_cmd.handle.return_value = lambda fn: fn
 _mock_cmd.got.return_value = lambda fn: fn
+_mock_on_command = MagicMock(return_value=_mock_cmd)
 
 with (
-    patch("nonebot.on_command", return_value=_mock_cmd),
+    patch("nonebot.on_command", _mock_on_command),
     patch("nonebot.params.Arg", return_value="CONFIRM_ARG_SENTINEL"),
 ):
     from bot.plugins.addtag import (
         got_confirm,
         handle_addtag,
     )
+
+
+class TestAddtagCommandRegistration:
+    """测试 /addtag 命令注册边界。"""
+
+    def test_requires_whitespace_boundary(self) -> None:
+        """命令带参数时必须以空白分隔，避免误匹配前缀相近的文本。"""
+        registration = _mock_on_command.call_args
+
+        assert registration is not None
+        assert registration.args[0] == "addtag"
+        assert registration.kwargs["aliases"] == {"at"}
+        assert registration.kwargs.get("force_whitespace") is True
 
 
 async def _await_handler(result: Any | Awaitable[Any]) -> Any:

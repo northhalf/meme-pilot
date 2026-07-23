@@ -39,7 +39,9 @@ from bot.session import ChatScope, session_manager
 
 logger = logging.getLogger(__name__)
 
-rand_cmd = on_command("rand", rule=to_me(), priority=5, block=True)
+rand_cmd = on_command(
+    "rand", rule=to_me(), priority=5, block=True, force_whitespace=True
+)
 
 
 @rand_cmd.handle()

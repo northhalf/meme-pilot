@@ -66,9 +66,9 @@ def _scope(event: MagicMock) -> ChatScope:
 
 
 def test_switch_matcher_registration() -> None:
-    """命令注册应使用统一优先级、阻断和 to_me 规则。"""
+    """命令注册应使用统一优先级、阻断、to_me 规则与空白边界。"""
     _on_command.assert_called_once_with(
-        "switch", rule=_mock_rule, priority=5, block=True
+        "switch", rule=_mock_rule, priority=5, block=True, force_whitespace=True
     )
 
 

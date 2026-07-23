@@ -41,7 +41,12 @@ from bot.session import ChatScope, session_manager, timeout_session
 logger = logging.getLogger(__name__)
 
 setspeaker_cmd = on_command(
-    "setspeaker", rule=to_me(), priority=5, block=True, aliases={"sp"}
+    "setspeaker",
+    rule=to_me(),
+    priority=5,
+    block=True,
+    aliases={"sp"},
+    force_whitespace=True,
 )
 
 

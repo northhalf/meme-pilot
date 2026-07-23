@@ -31,7 +31,7 @@ SIM_OPTIONS = PresentOptions(
     show_similarity=True, similarity_scale="ratio", next_trigger=NEXT_PAGE_TRIGGER
 )
 
-sim_cmd = on_command("sim", rule=to_me(), priority=5, block=True)
+sim_cmd = on_command("sim", rule=to_me(), priority=5, block=True, force_whitespace=True)
 
 
 @sim_cmd.handle()

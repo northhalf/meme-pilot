@@ -38,7 +38,9 @@ _USAGE_RENAME = "用法：/collection rename <旧编号|名称> <新名称>"
 _USAGE = _USAGE_CREATE  # 未知子命令兜底用 create 用法
 _INVALID_NAME = "合集名称无效：不能为空、不能包含空白或路径字符，也不能使用保留名称"
 
-collection_cmd = on_command("collection", rule=to_me(), priority=5, block=True)
+collection_cmd = on_command(
+    "collection", rule=to_me(), priority=5, block=True, force_whitespace=True
+)
 
 
 def _format_create_success(result: CreateCollectionResult) -> str:

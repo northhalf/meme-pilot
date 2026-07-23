@@ -78,6 +78,7 @@ def test_collection_matcher_registration_has_no_aliases() -> None:
     assert kwargs["rule"] is _to_me_rule
     assert kwargs["priority"] == 5
     assert kwargs["block"] is True
+    assert kwargs["force_whitespace"] is True
     assert "aliases" not in kwargs
 
 

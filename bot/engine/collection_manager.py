@@ -43,9 +43,7 @@ class InvalidCollectionNameError(ValueError):
     """合集名称不能映射为安全的单层目录名。"""
 
 
-_RESERVED_COLLECTION_NAMES = frozenset(
-    {GLOBAL_COLLECTION_NAME, ALL_COLLECTIONS_NAME}
-)
+_RESERVED_COLLECTION_NAMES = frozenset({GLOBAL_COLLECTION_NAME, ALL_COLLECTIONS_NAME})
 
 
 def validate_collection_name(raw: str) -> str:

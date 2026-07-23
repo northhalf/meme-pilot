@@ -50,9 +50,7 @@ async def _seed_collection_with_entry(
     cid = result.collection.id
     target = index_manager._memes_dir / name
     (target / "a.webp").write_bytes(b"x")
-    eid = index_manager._metadata_store.add(
-        f"{name}/a.webp", "文字", collection_id=cid
-    )
+    eid = index_manager._metadata_store.add(f"{name}/a.webp", "文字", collection_id=cid)
     return result.collection, eid
 
 
@@ -95,9 +93,9 @@ async def test_rename_collection_accepts_numeric_id(
     """按编号重命名。"""
     collection, _ = await _seed_collection_with_entry(index_manager, "编号合集")
     await index_manager.rename_collection(str(collection.id), "新名")
-    assert index_manager._metadata_store.get_collection(collection.id) == MemeCollection(
-        collection.id, "新名"
-    )
+    assert index_manager._metadata_store.get_collection(
+        collection.id
+    ) == MemeCollection(collection.id, "新名")
 
 
 @pytest.mark.asyncio
@@ -113,9 +111,9 @@ async def test_rename_collection_rejects_duplicate_target(
 
     assert caught.value.collection.name == "甄嬛传"
     assert (index_manager._memes_dir / "新三国").is_dir()
-    assert index_manager._metadata_store.get_collection(collection.id) == MemeCollection(
-        collection.id, "新三国"
-    )
+    assert index_manager._metadata_store.get_collection(
+        collection.id
+    ) == MemeCollection(collection.id, "新三国")
 
 
 @pytest.mark.asyncio
@@ -130,9 +128,9 @@ async def test_rename_collection_rejects_existing_target_directory(
         await index_manager.rename_collection("新三国", "未登记目录")
 
     assert (index_manager._memes_dir / "新三国").is_dir()
-    assert index_manager._metadata_store.get_collection(collection.id) == MemeCollection(
-        collection.id, "新三国"
-    )
+    assert index_manager._metadata_store.get_collection(
+        collection.id
+    ) == MemeCollection(collection.id, "新三国")
 
 
 @pytest.mark.asyncio

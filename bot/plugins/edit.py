@@ -40,7 +40,14 @@ from bot.session import ChatScope, session_manager, timeout_session
 
 logger = logging.getLogger(__name__)
 
-edit_cmd = on_command("edittext", rule=to_me(), priority=5, block=True, aliases={"e"})
+edit_cmd = on_command(
+    "edittext",
+    rule=to_me(),
+    priority=5,
+    block=True,
+    aliases={"e"},
+    force_whitespace=True,
+)
 
 
 @edit_cmd.handle()

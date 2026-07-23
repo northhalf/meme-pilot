@@ -37,7 +37,9 @@ from bot.session import ChatScope, session_manager
 
 logger = logging.getLogger(__name__)
 
-info_cmd = on_command("info", rule=to_me(), priority=5, block=True)
+info_cmd = on_command(
+    "info", rule=to_me(), priority=5, block=True, force_whitespace=True
+)
 
 
 def _build_detail_message(entry: MemeEntry) -> Message | str:

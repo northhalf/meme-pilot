@@ -816,8 +816,7 @@ class TestFormatMetadataLine:
 
         # speaker 与 tags 同时为空时省略「无」占位，仅展示公开 ID 与合集
         assert (
-            format_metadata_line(MemePublicId(0, 42), "全局", None, [])
-            == "0.42，全局"
+            format_metadata_line(MemePublicId(0, 42), "全局", None, []) == "0.42，全局"
         )
 
 

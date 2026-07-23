@@ -18,7 +18,14 @@ from bot.session import ChatScope, session_manager
 
 logger = logging.getLogger(__name__)
 
-cancel_cmd = on_command("cancel", rule=to_me(), priority=5, block=True, aliases={"c"})
+cancel_cmd = on_command(
+    "cancel",
+    rule=to_me(),
+    priority=5,
+    block=True,
+    aliases={"c"},
+    force_whitespace=True,
+)
 
 
 @cancel_cmd.handle()

@@ -9,10 +9,24 @@ from tests.conftest import _assert_has_reply, _assert_no_reply, extract_message_
 _mock_cmd = MagicMock()
 _mock_cmd.handle.return_value = lambda fn: fn
 _mock_cmd.got.return_value = lambda fn: fn
+_mock_on_command = MagicMock(return_value=_mock_cmd)
 
-with patch("nonebot.on_command", return_value=_mock_cmd):
+with patch("nonebot.on_command", _mock_on_command):
     from bot.plugins import query
     from bot.plugins.query import _parse_args, handle_query
+
+
+class TestQueryCommandRegistration:
+    """测试 /query 命令注册边界。"""
+
+    def test_requires_whitespace_boundary(self) -> None:
+        """命令带参数时必须以空白分隔，避免误匹配前缀相近的文本。"""
+        registration = _mock_on_command.call_args
+
+        assert registration is not None
+        assert registration.args[0] == "query"
+        assert registration.kwargs["aliases"] == {"q"}
+        assert registration.kwargs.get("force_whitespace") is True
 
 
 def _make_event(

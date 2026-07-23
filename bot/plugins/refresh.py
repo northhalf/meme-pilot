@@ -22,7 +22,14 @@ from bot.session import ChatScope, session_manager
 
 logger = logging.getLogger(__name__)
 
-refresh_cmd = on_command("refresh", rule=to_me(), priority=5, block=True, aliases={"r"})
+refresh_cmd = on_command(
+    "refresh",
+    rule=to_me(),
+    priority=5,
+    block=True,
+    aliases={"r"},
+    force_whitespace=True,
+)
 
 
 @refresh_cmd.handle()

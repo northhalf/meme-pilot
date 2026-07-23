@@ -97,9 +97,7 @@ def test_collection_constants_distinguish_storage_and_selection_names() -> None:
         ("合集_01", "合集_01"),
     ],
 )
-def test_validate_collection_name_accepts_safe_names(
-    raw: str, expected: str
-) -> None:
+def test_validate_collection_name_accepts_safe_names(raw: str, expected: str) -> None:
     assert validate_collection_name(raw) == expected
 
 

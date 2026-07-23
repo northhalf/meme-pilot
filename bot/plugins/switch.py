@@ -18,7 +18,9 @@ from bot.session import ChatScope, session_manager
 
 logger = logging.getLogger(__name__)
 
-switch_cmd = on_command("switch", rule=to_me(), priority=5, block=True)
+switch_cmd = on_command(
+    "switch", rule=to_me(), priority=5, block=True, force_whitespace=True
+)
 
 
 def _format_collection_list(summaries: list[CollectionSummary]) -> str:

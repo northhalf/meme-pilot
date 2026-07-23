@@ -39,7 +39,14 @@ from bot.session import ChatScope, session_manager, timeout_session
 
 logger = logging.getLogger(__name__)
 
-addtag_cmd = on_command("addtag", rule=to_me(), priority=5, block=True, aliases={"at"})
+addtag_cmd = on_command(
+    "addtag",
+    rule=to_me(),
+    priority=5,
+    block=True,
+    aliases={"at"},
+    force_whitespace=True,
+)
 
 
 @addtag_cmd.handle()

@@ -37,7 +37,14 @@ from bot.session import ChatScope, session_manager, timeout_session
 
 logger = logging.getLogger(__name__)
 
-delete_cmd = on_command("del", rule=to_me(), priority=5, block=True, aliases={"d"})
+delete_cmd = on_command(
+    "del",
+    rule=to_me(),
+    priority=5,
+    block=True,
+    aliases={"d"},
+    force_whitespace=True,
+)
 
 
 def _truncate_text(text: str, limit: int = 30) -> str:
@@ -138,7 +145,9 @@ async def handle_delete(
                 await reply_utils.finish(event, matcher, "未找到任何表情包")
                 return
 
-            lines = ["确认删除以下表情包？回复「确认」、「yes」或「y」执行删除，回复其他内容取消。"]
+            lines = [
+                "确认删除以下表情包？回复「确认」、「yes」或「y」执行删除，回复其他内容取消。"
+            ]
             for entry in entries:
                 lines.append(f"{entry.public_id}，{_truncate_text(entry.text)}")
             if not_found_public_ids:
